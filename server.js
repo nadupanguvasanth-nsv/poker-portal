@@ -1,5 +1,5 @@
 'use strict';
-// Poker portal server. No dependencies: plain Node http + server-sent events.
+// Smart Buddies server. No dependencies: plain Node http + server-sent events.
 // Game state lives in memory. Private cards are only ever sent to their owner.
 const http = require('http');
 const fs = require('fs');
@@ -386,5 +386,5 @@ setInterval(() => {
   for (const [code, t] of tables) if (!t.clients.size && Date.now() - (t.log.length ? t.log[t.log.length - 1].at : t.createdAt) > 12 * 3600e3) tables.delete(code);
 }, 600e3).unref();
 
-if (require.main === module) server.listen(PORT, () => console.log('Poker portal listening on ' + PORT));
+if (require.main === module) server.listen(PORT, () => console.log('Smart Buddies listening on ' + PORT));
 module.exports = { server, tables, routes };

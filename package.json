@@ -1,5 +1,5 @@
 {
-  "name": "poker-portal",
+  "name": "smart-buddies",
   "version": "1.0.0",
   "description": "Private poker table for friends with virtual chips",
   "scripts": { "start": "node server.js" },
