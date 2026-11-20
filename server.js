@@ -55,7 +55,7 @@ function makeTable(adminName, settings) {
     code: newCode(), createdAt: Date.now(), settings: cleanSettings(settings),
     players: new Map(), order: new Array(10).fill(null), adminId: null,
     hand: null, handNo: 0, running: false, buttonSeat: -1,
-    pending: [], log: [], clients: new Map(), timer: null, nextTimer: null,
+    pending: [], notes: [], log: [], clients: new Map(), timer: null, nextTimer: null,
     deadline: 0, lastResult: null, closed: false, forceVariant: null, variant: 'none', vmark: null, special: false,
     sessionNo: 0, sessionEndsAt: 0, sessionEnding: false, draw: null, drawUntil: 0,
     ended: false, ending: false, joins: [], departed: [], sessLog: [],
@@ -168,6 +168,7 @@ function viewFor(t, pid) {
     result: t.lastResult,
     log: t.log.slice(-12),
     pending: can(t, me, 'bank') ? t.pending : t.pending.filter((r) => r.playerId === pid),
+    notes: can(t, me, 'bank') ? (t.notes || []) : [],
     ledger: me.ledger.slice(-30),
     history: me.history, sessions: sessionRows(t.sessLog, me.history, me.ledger, me.stack + me.queued),
   };
@@ -528,6 +529,26 @@ const routes = {
     }
     if (t.pending.some((r) => r.playerId === p.id)) throw httpErr(400, 'You already have a request waiting');
     t.pending.push({ id: rid(4), playerId: p.id, name: p.name, amount, at: Date.now() });
+    broadcast(t);
+    return { ok: true };
+  },
+  note(b) { // a player sends a short request to the admin
+    const { t, p } = auth(b);
+    const text = String(b.text || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    if (!text) throw httpErr(400, 'Write a short message first');
+    if (p.id === t.adminId) throw httpErr(400, 'You are the admin');
+    t.notes = t.notes || [];
+    if (Date.now() - (p.lastNote || 0) < 5000) throw httpErr(429, 'Wait a few seconds before sending another');
+    p.lastNote = Date.now();
+    t.notes = t.notes.filter((n) => n.playerId !== p.id || n.text !== text);
+    t.notes.push({ id: rid(4), playerId: p.id, name: p.name, text, at: Date.now() });
+    if (t.notes.length > 30) t.notes.shift();
+    broadcast(t);
+    return { ok: true };
+  },
+  notedone(b) {
+    const { t, p } = auth(b); need(t, p, 'bank');
+    t.notes = (t.notes || []).filter((n) => n.id !== b.noteId);
     broadcast(t);
     return { ok: true };
   },

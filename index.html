@@ -93,9 +93,14 @@ function fmt(n){return Number(n).toLocaleString('en-US');}
 
 // ---- scale the 390x844 stage to any phone ----
 function fit(){
-  var w=window.innerWidth,h=window.innerHeight,k=Math.min(w/390,h/844);
+  var w=window.innerWidth,h=window.innerHeight;
+  // keep the table clear of the phone's status bar when the app runs full-screen from the home screen
+  var inset=0;try{var pr=document.getElementById('sa');if(!pr){pr=document.createElement('div');pr.id='sa';pr.style.cssText='position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;padding-top:env(safe-area-inset-top)';document.body.appendChild(pr);}inset=parseFloat(getComputedStyle(pr).paddingTop)||0;
+    var full=(window.matchMedia&&(matchMedia('(display-mode: standalone)').matches||matchMedia('(display-mode: fullscreen)').matches))||navigator.standalone;
+    if(!inset&&full&&/Android/i.test(navigator.userAgent))inset=28;}catch(e){}
+  var k=Math.min(w/390,(h-inset)/844);
   var wrap=document.getElementById('wrap');
-  wrap.style.transform='translateX(-'+(195*k)+'px) scale('+k+')';wrap.style.top=Math.max(0,(h-844*k)/2)+'px';
+  wrap.style.transform='translateX(-'+(195*k)+'px) scale('+k+')';wrap.style.top=(inset+Math.max(0,(h-inset-844*k)/2))+'px';
 }
 window.addEventListener('resize',fit);fit();
 
@@ -214,7 +219,7 @@ function doCreate(){
   fetch('/api/create',{method:'POST',body:JSON.stringify({name:n,settings:{sb:val('sb'),bb:val('bb'),turnSeconds:val('ts'),minBuyin:val('mn'),maxBuyin:val('mb'),sessionMinutes:val('sm')}})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error);return j;});})
   .then(start).catch(fail);
 }
-function start(j){S.code=j.code;S.token=j.token;S.pid=j.pid;saveSession();S.sheet=false;connect();requestWake();}
+function start(j){S.toClub=false;S.code=j.code;S.token=j.token;S.pid=j.pid;saveSession();S.sheet=false;connect();requestWake();}
 
 var CX=195,CY=294,RX=150,RY=210;
 function seatXY(rel,n){var a=Math.PI/2+rel/n*2*Math.PI;return {x:CX+RX*Math.cos(a),y:CY+RY*Math.sin(a)};}
@@ -227,7 +232,7 @@ function table(){
   h+='<div class="abs" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 20px;display:flex;align-items:center;gap:12px">'+
   '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM '+esc(v.code)+'</div><div class="muted" style="margin-top:2px;font-size:13px">'+(v.handNo?'Hand '+v.handNo:'Not started')+(v.session.no?' · <span data-sess="1">'+sessLeft(v.session)+'</span>':'')+(S.online?'':' · reconnecting')+'</div></div>'+
   '<div style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #2a312d;background:#141917;font-size:13px;font-weight:600;display:flex;align-items:center">'+fmt(v.settings.sb)+' / '+fmt(v.settings.bb)+'</div>'+
-  '<button aria-label="Table menu" onclick="S.sheet=true;render()" style="width:44px;height:44px;border:0;background:transparent;padding:0;display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f2efe6" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'+(me.isAdmin&&v.pending.length?'<span style="position:absolute;margin:-18px -14px 0 0;width:10px;height:10px;border-radius:5px;background:#d2454d"></span>':'')+'</button></div>';
+  '<button aria-label="Table menu" onclick="S.sheet=true;render()" style="position:relative;width:44px;height:44px;border:0;background:transparent;padding:0;display:flex;align-items:center;justify-content:center">'+(me.can.bank&&((v.pending||[]).length+(v.notes||[]).length)?'<span style="position:absolute;right:4px;top:4px;min-width:18px;height:18px;border-radius:9px;background:#d2454d;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px">'+((v.pending||[]).length+(v.notes||[]).length)+'</span>':'')+'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f2efe6" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'+(me.isAdmin&&v.pending.length?'<span style="position:absolute;margin:-18px -14px 0 0;width:10px;height:10px;border-radius:5px;background:#d2454d"></span>':'')+'</button></div>';
   // felt
   h+='<div class="abs" style="left:45px;top:84px;width:300px;height:420px;border-radius:150px/210px;background:radial-gradient(ellipse at 50% 45%,#176046 0%,#0f3b2c 70%);border:7px solid #2b2017;box-shadow:inset 0 0 0 2px rgba(216,180,92,.35),0 20px 50px rgba(0,0,0,.55)"></div>';
   var pot=hand?hand.pot:0;
@@ -361,7 +366,16 @@ function showdownPanel(v){
   return p+'</div></div>';
 }
 
-function waitingBox(v){
+function waitActions(v){
+  var me=v.you,b='display:flex;gap:8px;margin-top:14px';
+  var bt=function(label,fn){return '<button class="btn ghost" style="flex:1;height:44px;font-size:13px" onclick="'+fn+'">'+label+'</button>';};
+  var h='<div style="'+b+'">'+bt('Menu','S.sheet=true;render()');
+  if(!me.isAdmin&&!v.session.ended)h+=bt('Message admin','S.sheet=true;S.focusNote=1;render()');
+  if(S.mtoken&&S.cv)h+=bt('Club home','S.toClub=true;render()');
+  return h+'</div>';
+}
+function waitingBox(v){var x=waitingBox0(v);return x?x+waitActions(v):x;}
+function waitingBox0(v){
   var hand=v.hand,me=v.you,msg='';
   if(v.session.ended){return '<div class="disp" style="font-size:28px">The game is over</div><div class="muted small" style="margin:6px 0 14px">Thanks for playing.</div>'+(v.settlement?mySettle(v)+'<div class="muted small" style="margin:0 0 12px">'+(me.member?'Your full statement for the whole game is being sent to your WhatsApp.':'Your full statement for the whole game is ready.')+'</div><button class="btn" style="margin-bottom:8px" onclick="getStatement()">Download my full statement (PDF)</button><button class="btn ghost" style="margin-bottom:8px" onclick="S.sheet=true;render()">My statement</button>':'')+(me.can.start?'<button class="btn" onclick="doStart()">Start a new game</button>':'');}
   if(me.ghost){return '<div class="disp" style="font-size:28px">You left early</div><div class="muted small" style="margin:6px 0 0">Your seat keeps paying blinds until the end of session '+me.ghostUntil+(me.ghostEndsAt?' (about '+clock(me.ghostEndsAt)+')':'')+'. The admin can release you early in an emergency.</div>';}
@@ -442,6 +456,15 @@ function sheet(){
   h+='<div class="row" style="margin-top:8px"><div style="flex:1"><div class="muted small">ROOM CODE</div><div class="disp gold" style="font-size:34px;letter-spacing:.2em">'+esc(v.code)+'</div></div><button class="btn line" style="width:auto;padding:0 16px;height:44px;font-size:14px" onclick="share()">Share</button></div>';
   h+=specialBlock(v,me);
   h+=sessionBlock(v,me);
+  if(!me.isAdmin){
+    h+='<div class="h2" id="noteh">MESSAGE THE ADMIN</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'+
+      ['Please start the game','I need a short break','I need chips','Please call time'].map(function(m){return '<button class="btn line" style="width:auto;height:38px;padding:0 12px;font-size:13px" onclick="sendNote(\''+m+'\')">'+m+'</button>';}).join('')+'</div>'+
+      '<div style="display:flex;gap:8px"><input id="notetx" maxlength="140" placeholder="Write your own message" style="flex:1;height:48px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;padding:0 14px;font-family:inherit;min-width:0"><button class="btn" style="width:90px" onclick="sendNote(document.getElementById(\'notetx\').value)">Send</button></div>';
+  }
+  if(me.can.bank&&(v.notes||[]).length){
+    h+='<div class="h2">REQUESTS FROM PLAYERS</div>';
+    v.notes.forEach(function(n){h+='<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(n.name)+'</div><div class="muted small" style="white-space:normal">'+esc(n.text)+'</div></div><button class="btn line" style="width:auto;height:38px;padding:0 14px;font-size:13px" onclick="api(\'notedone\',{noteId:\''+n.id+'\'}).catch(fail)">Done</button></div>';});
+  }
   // buy-in
   if(!(me.ghost||me.approved===false)){
   h+='<div class="h2">'+(me.isAdmin?'BUY IN FOR YOURSELF':'REQUEST CHIPS')+'</div>';
@@ -565,6 +588,7 @@ function adjust(pid,name){var a=prompt('Chips to add for '+name+' (use a minus s
 function saveSettings(){api('settings',{settings:{sb:val('s_sb'),bb:val('s_bb'),turnSeconds:val('s_ts'),sessionMinutes:val('s_sm'),minBuyin:val('s_mn'),maxBuyin:val('s_mb'),bombAnteBB:val('s_ba'),bombMax:val('s_bm'),runItMin:val('s_ri')}}).then(function(){toast('Saved');}).catch(fail);}
 function setAway(pid,away){api('setaway',{playerId:pid,away:away}).catch(fail);}
 function kick(pid,name){if(!confirm('Remove '+name+' from the table? Their chips are returned to the banker to settle.'))return;api('kick',{playerId:pid}).catch(fail);}
+function sendNote(t){t=String(t||'').trim();if(!t){toast('Write a short message first');return;}api('note',{text:t}).then(function(){toast('Sent to the admin');var i=document.getElementById('notetx');if(i)i.value='';}).catch(fail);}
 function doLeave(){var L=S.view.you.leave||{};var msg=L.free?'Leave the table and cash out your chips?':'If you leave now, your seat keeps paying the blinds (Texas Hold\'em only) until the end of session '+L.until+(L.endsAt?' (about '+clock(L.endsAt)+')':'')+'. You keep the rest of your chips. Only the admin can release you sooner, for an emergency. Leave anyway?';if(!confirm(msg))return;api('leave').then(function(){clearSession();render();}).catch(fail);}
 function forget(){clearSession();render();}
 
@@ -740,7 +764,7 @@ function membersTab(cv){
 }
 function clubScreen(){
   var cv=S.cv,me=cv.me;
-  var h='<div class="sheet" style="padding-bottom:96px"><div style="display:flex;align-items:center;justify-content:space-between"><div style="min-width:0"><div class="muted small" style="letter-spacing:.14em">'+esc(cv.club.name).toUpperCase()+'</div><div class="disp" style="font-size:36px;line-height:1.05">Hi, '+esc(me.name)+'</div></div>'+(me.isOwner?'<div class="pill2 g">ADMIN</div>':'')+'</div>';
+  var h='<div class="sheet" style="padding-bottom:96px">'+(S.view?'<button class="btn" style="margin-bottom:14px" onclick="S.toClub=false;render()">Back to the table</button>':'')+'<div style="display:flex;align-items:center;justify-content:space-between"><div style="min-width:0"><div class="muted small" style="letter-spacing:.14em">'+esc(cv.club.name).toUpperCase()+'</div><div class="disp" style="font-size:36px;line-height:1.05">Hi, '+esc(me.name)+'</div></div>'+(me.isOwner?'<div class="pill2 g">ADMIN</div>':'')+'</div>';
   if(me.isOwner&&cv.storage&&/^file/.test(cv.storage))h+='<div class="evc" style="border-color:#d8b45c"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.14em">TEMPORARY STORAGE</div><div class="muted small" style="margin-top:6px">Club data is only kept on the server and is lost when it restarts. Connect the Google Drive storage to keep it safe.</div></div>';
   if(cv.saveError)h+='<div class="evc" style="border-color:#d2454d"><div style="font-size:13px">Club data could not be saved: '+esc(cv.saveError)+'</div></div>';
   h+=(S.tab==='history'&&me.isOwner)?historyTab(cv):(S.tab==='members'&&me.manage)?membersTab(cv):gamesTab(cv);
@@ -772,11 +796,11 @@ function render(){
   if(keep&&S.view&&S.sheet&&/^(bamt|s_sb|s_bb|s_ts|s_sm)$/.test(keep.id)) return;
   if(keep&&!S.view&&/^(c_|m_|su_)/.test(keep.id)) return;
   var old=document.querySelector('.sheet'),sc=old?old.scrollTop:0;
-  var h=S.view?(table()+(S.sheet?sheet():'')):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));
+  var h=(S.view&&!(S.toClub&&S.mtoken&&S.cv))?(table()+(S.sheet?sheet():'')):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));
   h+=alertBar();
   if(S.toast) h+='<div class="toast">'+esc(S.toast)+'</div>';
   $stage.innerHTML=h;
-  var nw=document.querySelector('.sheet');if(nw)nw.scrollTop=sc;
+  var nw=document.querySelector('.sheet');if(nw)nw.scrollTop=sc;if(S.focusNote&&nw){var nh=document.getElementById('noteh');if(nh)nw.scrollTop=nh.offsetTop-20;S.focusNote=0;}
   if(keep){var e=document.getElementById(keep.id);if(e){e.value=keep.v;e.focus();try{e.setSelectionRange(keep.s,keep.s);}catch(x){}}}
 }
 // countdown bar for the player whose turn it is
