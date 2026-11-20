@@ -61,14 +61,22 @@ async function sendExternal(phone, text, env = process.env, mediaUrl) {
   const to = (wa ? 'whatsapp:' : '') + phone;
   const from = (wa && !/^whatsapp:/.test(env.TWILIO_FROM) ? 'whatsapp:' : '') + env.TWILIO_FROM;
   const base = env.TWILIO_BASE || 'https://api.twilio.com';
+  // WhatsApp only allows free-form text within 24 hours of the person's last message. With an approved
+  // template (TWILIO_TPL_TEXT = its Content SID, body "{{1}}") every message goes out as that template.
+  const form = { To: to, From: from };
+  if (wa && env.TWILIO_TPL_TEXT) {
+    const flat = (text + (mediaUrl ? ' ' + mediaUrl : '')).replace(/\s*[\r\n]+\s*/g, ' | ').replace(/ {4,}/g, '   ');
+    form.ContentSid = env.TWILIO_TPL_TEXT; form.ContentVariables = JSON.stringify({ 1: flat });
+  } else { form.Body = text; if (mediaUrl) form.MediaUrl = mediaUrl; }
   const r = await fetch(`${base}/2010-04-01/Accounts/${env.TWILIO_SID}/Messages.json`, {
     method: 'POST',
     headers: {
       Authorization: 'Basic ' + Buffer.from(env.TWILIO_SID + ':' + env.TWILIO_TOKEN).toString('base64'),
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: new URLSearchParams({ To: to, From: from, Body: text, ...(mediaUrl ? { MediaUrl: mediaUrl } : {}) }).toString(),
+    body: new URLSearchParams(form).toString(),
   });
+  if (!r.ok) console.error('Twilio refused the message:', r.status, (await r.text().catch(() => '')).slice(0, 300));
   return r.ok;
 }
 
