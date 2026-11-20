@@ -390,6 +390,12 @@ function afterHandChange(t) {
     const tp = t.players.get(h.turnId);
     const secs = tp && !tp.connected ? Math.min(t.settings.turnSeconds, DISCONNECT_TURN_SECONDS) : t.settings.turnSeconds;
     armTimer(t, secs);
+    // members who have switched on phone notifications are told it is their turn (the app stays quiet if it is open in front)
+    if (tp && tp.memberId && Date.now() - (tp.lastTurnPush || 0) > 15000) {
+      tp.lastTurnPush = Date.now();
+      const m = club.state().members[tp.memberId];
+      if (m) club.pushMember(m, { title: 'Your turn', body: `Room ${t.code}: it is your turn to act.`, tag: 'turn-' + t.code, url: '/' });
+    }
   }
   broadcast(t);
 }
@@ -806,6 +812,21 @@ const server = http.createServer(async (req, res) => {
       const who = fin.people.find((x) => x.id === target).name.replace(/[^A-Za-z0-9]+/g, '-');
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="Statement-${who}-${t.code}.pdf"`, 'Cache-Control': 'no-store' });
       return res.end(pdf);
+    }
+    if (req.method === 'GET' && (url.pathname === '/sw.js' || /^\/icon-(192|512)\.png$/.test(url.pathname))) {
+      const file = path.join(__dirname, url.pathname.slice(1));
+      if (!fs.existsSync(file)) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'image/png', 'Cache-Control': url.pathname.endsWith('.js') ? 'no-cache' : 'public, max-age=86400', 'Service-Worker-Allowed': '/' });
+      return res.end(fs.readFileSync(file));
+    }
+    if (req.method === 'GET' && url.pathname === '/manifest.webmanifest') {
+      const m = String(url.searchParams.get('m') || '').replace(/[^0-9a-f]/g, '').slice(0, 64);
+      res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify({
+        name: 'Smart Buddies', short_name: 'Smart Buddies', start_url: m ? '/?m=' + m : '/', scope: '/', display: 'standalone',
+        background_color: '#0a0c0b', theme_color: '#0a0c0b',
+        icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' }],
+      }));
     }
     const rm = req.method === 'GET' && url.pathname.match(/^\/r\/([0-9a-f]{40})\/([0-9a-f]{8})\/(in|out)$/);
     if (rm) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(club.rsvpPage(rm[1], rm[2], rm[3])); }

@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const webpush = require('./webpush');
 
 const ROLES = ['start', 'bank', 'settings', 'players', 'invite'];
 const REMIND_MS = 60 * 1000;
@@ -89,6 +90,7 @@ function createClub(ctx) {
     }
     if (err) throw err;
     if (s && s.members && s.events) state = s;
+    if (!state.vapid) { state.vapid = webpush.makeVapid(); persist(); } // keys for phone push notifications
     console.log('Club storage: ' + store.name + (state.club ? ` (club "${state.club.name}", ${Object.keys(state.members).length} members)` : ' (no club yet)'));
   }
   function persist() {
@@ -216,9 +218,22 @@ function createClub(ctx) {
     } catch (e) { return page('Sorry', esc(e.message), false); }
   }
 
+  // ----- phone push notifications -----
+  const pushSend = ctx.pushSend || webpush.send;
+  async function pushMember(m, payload) {
+    const subs = (m && m.push) || [];
+    if (!subs.length || !state.vapid) return;
+    const dead = [];
+    await Promise.all(subs.map(async (s) => {
+      try { const r = await pushSend(s, payload, state.vapid, env.PUSH_SUBJECT || 'mailto:' + (env.PUSH_EMAIL || 'admin@example.com')); if (r && r.gone) dead.push(s.endpoint); }
+      catch (e) { console.error('Push failed:', e.message); }
+    }));
+    if (dead.length) { m.push = subs.filter((s) => !dead.includes(s.endpoint)); persist(); }
+  }
   function inviteText(ev) { return `${ev.title}: ${new Date(ev.startAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: env.TZ_LABEL || 'Asia/Kolkata' })}`; }
   function tell(m, kind, text, extra) {
     push(m, 'notice', { kind, text, ...extra });
+    pushMember(m, { title: 'Smart Buddies', body: text, tag: kind + (extra && extra.eventId ? extra.eventId : ''), url: '/' });
     sendExternal(m.phone, 'Smart Buddies: ' + text, env).catch((e) => console.error('External message failed:', e.message));
   }
 
@@ -350,6 +365,38 @@ function createClub(ctx) {
       changed();
       return { state: ev.people[m.id] ? ev.people[m.id].state : 'invited' };
     },
+    'club/pushkey'(b) { auth(b); return { key: state.vapid.publicKey }; },
+    'club/pushsub'(b) {
+      const m = auth(b);
+      const s = b.sub;
+      if (!s || typeof s.endpoint !== 'string' || !(/^https:\/\//.test(s.endpoint) || (env.PUSH_ALLOW_HTTP && /^http:\/\/127\./.test(s.endpoint))) || !s.keys || !s.keys.p256dh || !s.keys.auth) throw httpErr(400, 'That notification setup is not valid');
+      m.push = (m.push || []).filter((x) => x.endpoint !== s.endpoint);
+      m.push.push({ endpoint: s.endpoint, keys: { p256dh: String(s.keys.p256dh), auth: String(s.keys.auth) }, at: Date.now() });
+      if (m.push.length > 5) m.push.splice(0, m.push.length - 5);
+      persist();
+      pushMember(m, { title: 'Smart Buddies', body: 'Notifications are on. You will hear about games and your turn.', tag: 'welcome', url: '/' });
+      return { ok: true };
+    },
+    'club/pushoff'(b) {
+      const m = auth(b);
+      m.push = (m.push || []).filter((x) => x.endpoint !== String(b.endpoint || ''));
+      persist();
+      return { ok: true };
+    },
+    'club/backup'(b) {
+      const m = auth(b); ownerOnly(m);
+      return { backup: { app: 'smart-buddies', version: 1, at: Date.now(), data: { club: state.club, members: state.members, events: state.events, history: state.history || [], vapid: state.vapid } } };
+    },
+    'club/restore'(b) {
+      const m = auth(b); ownerOnly(m);
+      const d = b.backup && b.backup.app === 'smart-buddies' && b.backup.data;
+      if (!d || !d.club || !d.members || !d.events || !d.members[d.club.ownerId]) throw httpErr(400, 'That is not a Smart Buddies backup');
+      state = { club: d.club, members: d.members, events: d.events, history: d.history || [], vapid: d.vapid || state.vapid, tables: state.tables };
+      for (const set of clients.values()) for (const res of set) { try { res.end(); } catch (e) { /* closed */ } }
+      clients.clear();
+      changed();
+      return { ok: true, members: Object.keys(state.members).length, games: Object.keys(state.events).length };
+    },
     'club/deletegame'(b) {
       const m = auth(b); ownerOnly(m);
       if (!state.history) state.history = [];
@@ -473,7 +520,7 @@ function createClub(ctx) {
     if (ev && m && !isOwner(m)) setDelegates(ev, m, roles, true);
   }
 
-  return { routes, handleEvents, load, tick, flush, setTables, getTables, viewFor, openTable, gameEnded, sendStatements, rsvpPage, saveDelegates, state: () => state, ROLES };
+  return { routes, handleEvents, load, tick, flush, setTables, getTables, pushMember, viewFor, openTable, gameEnded, sendStatements, rsvpPage, saveDelegates, state: () => state, ROLES };
 }
 
 module.exports = { createClub, fileStore, driveStore, pickStore, sendExternal, ROLES };
