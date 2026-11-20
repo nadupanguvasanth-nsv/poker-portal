@@ -197,7 +197,7 @@ function lobby(){
     '<button class="btn" style="margin-top:18px" onclick="doJoin()">Take a seat</button>'+
     '<button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'admin\';render()">Start a table as admin</button>'+(S.mtoken&&S.cv?'<button class="btn line" style="margin-top:10px" onclick="S.quick=false;render()">Back to the club</button>':'')+(S.clubExists===false?'<button class="btn line" style="margin-top:10px" onclick="S.lobbyMode=\'setup\';render()">Set up your club (first time, admin)</button>':'');
   } else if(S.lobbyMode==='setup'){
-    h+='<div style="margin-top:16px;width:100%;display:flex;flex-direction:column;gap:10px">'+dfield('su_name','CLUB NAME','Smart Buddies','maxlength="40"')+dfield('su_owner','YOUR NAME (ADMIN)','','maxlength="14"')+dfield('su_phone','YOUR PHONE (OPTIONAL)','','inputmode="tel"')+(S.needsCode?dfield('su_code','SETUP CODE','','type="password" autocomplete="off"'):'')+'</div><button class="btn" style="margin-top:16px" onclick="doSetup()">Create the club</button><button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'join\';render()">Back</button>';
+    h+='<div style="margin-top:16px;width:100%;display:flex;flex-direction:column;gap:10px">'+dfield('su_name','CLUB NAME','Smart Buddies','maxlength="40"')+dfield('su_owner','YOUR NAME (ADMIN)','SV','maxlength="14"')+dfield('su_phone','YOUR PHONE (OPTIONAL)','9894079397','inputmode="tel"')+(S.needsCode?dfield('su_code','SETUP CODE','','type="password" autocomplete="off"'):'')+'</div><button class="btn" style="margin-top:16px" onclick="doSetup()">Create the club</button><button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'join\';render()">Back</button>';
   } else {
     h+='<div style="margin-top:16px;width:100%;display:flex;flex-direction:column;gap:10px">'+
     '<div class="field"><label for="nick">YOUR NICKNAME</label><input id="nick" maxlength="14" placeholder="Admin and banker" value="'+esc(ls('poker-name'))+'"></div>'+
@@ -206,6 +206,7 @@ function lobby(){
     '<button class="btn" style="margin-top:16px" onclick="doCreate()">Open the table</button>'+
     '<button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'join\';render()">Back</button>';
   }
+  h+='<div class="muted" style="margin-top:26px;font-size:12px;letter-spacing:.06em;text-align:center">Developed by <span class="gold">Vashanth Somasundaram</span></div>';
   return h+'</div>';
 }
 function val(id){var e=document.getElementById(id);return e?e.value:'';}
@@ -232,7 +233,7 @@ function table(){
   h+='<div class="abs" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 20px;display:flex;align-items:center;gap:12px">'+
   '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM '+esc(v.code)+'</div><div class="muted" style="margin-top:2px;font-size:13px">'+(v.handNo?'Hand '+v.handNo:'Not started')+(v.session.no?' · <span data-sess="1">'+sessLeft(v.session)+'</span>':'')+(S.online?'':' · reconnecting')+'</div></div>'+
   '<div style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #2a312d;background:#141917;font-size:13px;font-weight:600;display:flex;align-items:center">'+fmt(v.settings.sb)+' / '+fmt(v.settings.bb)+'</div>'+
-  '<button aria-label="Table menu" onclick="S.sheet=true;render()" style="position:relative;width:44px;height:44px;border:0;background:transparent;padding:0;display:flex;align-items:center;justify-content:center">'+(me.can.bank&&((v.pending||[]).length+(v.notes||[]).length)?'<span style="position:absolute;right:4px;top:4px;min-width:18px;height:18px;border-radius:9px;background:#d2454d;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px">'+((v.pending||[]).length+(v.notes||[]).length)+'</span>':'')+'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f2efe6" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'+(me.isAdmin&&v.pending.length?'<span style="position:absolute;margin:-18px -14px 0 0;width:10px;height:10px;border-radius:5px;background:#d2454d"></span>':'')+'</button></div>';
+  (me.isAdmin&&!v.session.ended?'<button aria-label="'+(v.frozen?'Resume':'Stop')+'" onclick="'+(v.frozen?"api(\'unfreeze\').catch(fail)":"if(confirm(\'Stop everything exactly as it is? Nobody can act until you resume.\'))api(\'freeze\').catch(fail)")+'" style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #d2454d;background:'+(v.frozen?'#d8b45c':'#d2454d')+';color:'+(v.frozen?'#14110a':'#fff')+';font-size:12px;font-weight:700;letter-spacing:.08em">'+(v.frozen?'RESUME':'STOP')+'</button>':'')+'<button aria-label="Table menu" onclick="S.sheet=true;render()" style="position:relative;width:44px;height:44px;border:0;background:transparent;padding:0;display:flex;align-items:center;justify-content:center">'+(me.can.bank&&((v.pending||[]).length+(v.notes||[]).length)?'<span style="position:absolute;right:4px;top:4px;min-width:18px;height:18px;border-radius:9px;background:#d2454d;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px">'+((v.pending||[]).length+(v.notes||[]).length)+'</span>':'')+'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f2efe6" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'+(me.isAdmin&&v.pending.length?'<span style="position:absolute;margin:-18px -14px 0 0;width:10px;height:10px;border-radius:5px;background:#d2454d"></span>':'')+'</button></div>';
   // felt
   h+='<div class="abs" style="left:45px;top:84px;width:300px;height:420px;border-radius:150px/210px;background:radial-gradient(ellipse at 50% 45%,#176046 0%,#0f3b2c 70%);border:7px solid #2b2017;box-shadow:inset 0 0 0 2px rgba(216,180,92,.35),0 20px 50px rgba(0,0,0,.55)"></div>';
   var pot=hand?hand.pot:0;
@@ -366,17 +367,33 @@ function showdownPanel(v){
   return p+'</div></div>';
 }
 
+function needNote(v){return v.startBy?'<br>Needs '+v.minPlayers+' players with chips by '+clock(v.startBy)+' or the game is cancelled ('+v.joined+' so far).':'';}
+function freezeOverlay(){
+  var v=S.view;if(!v||!v.frozen||v.session.ended)return '';
+  var me=v.you,b='<button class="btn ghost" style="margin-top:10px" onclick="S.sheet=true;render()">Menu</button><button class="btn ghost" style="margin-top:10px" onclick="S.toClub=true;render()">Club home</button>';
+  return '<div class="abs" style="left:0;right:0;top:552px;bottom:0;z-index:15;background:#0f1211;border-top:2px solid #d2454d;padding:22px 20px;overflow:auto"><div class="disp" style="font-size:30px;color:#ff8c93">Game stopped</div>'+
+    '<div class="muted small" style="margin:6px 0 12px">'+(me.isAdmin?'Everything is frozen exactly as it is, including the clocks. Go anywhere you like, then resume.':'The admin has stopped the game for now. Everything stays as it is until the admin resumes.')+'</div>'+
+    (me.isAdmin?'<button class="btn" onclick="api(\'unfreeze\').catch(fail)">Resume the game</button>':'')+b+'</div>';
+}
+function linkScreen(){
+  return '<div class="sheet"><div style="display:flex;align-items:center;justify-content:space-between"><div class="disp" style="font-size:34px">Club home</div><button onclick="S.toClub=false;render()" aria-label="Close" style="width:44px;height:44px;border:0;background:transparent;color:#f2efe6;font-size:28px">×</button></div>'+
+    '<div class="muted small" style="margin:8px 0 14px;white-space:normal">This phone does not know who you are in the club yet. Paste your personal link (the one that ends with ?m=...) to open the members page. You only do this once.</div>'+
+    '<div class="field"><label for="lk_url">YOUR PERSONAL LINK</label><input id="lk_url" placeholder="https://poker-portal.onrender.com/?m=..."></div>'+
+    '<button class="btn" style="margin-top:12px" onclick="useLink()">Open club home</button><button class="btn ghost" style="margin-top:10px" onclick="S.toClub=false;render()">Back to the table</button></div>';
+}
+function useLink(){var x=(document.getElementById('lk_url').value||'').trim(),m=/[?&]m=([a-f0-9]+)/.exec(x)||/^([a-f0-9]{20,})$/.exec(x);if(!m){toast('That does not look like your personal link');return;}setMember(m[1]);clubConnect();render();}
 function waitActions(v){
   var me=v.you,b='display:flex;gap:8px;margin-top:14px';
   var bt=function(label,fn){return '<button class="btn ghost" style="flex:1;height:44px;font-size:13px" onclick="'+fn+'">'+label+'</button>';};
   var h='<div style="'+b+'">'+bt('Menu','S.sheet=true;render()');
   if(!me.isAdmin&&!v.session.ended)h+=bt('Message admin','S.sheet=true;S.focusNote=1;render()');
-  if(S.mtoken&&S.cv)h+=bt('Club home','S.toClub=true;render()');
+  h+=bt('Club home','S.toClub=true;render()');
   return h+'</div>';
 }
 function waitingBox(v){var x=waitingBox0(v);return x?x+waitActions(v):x;}
 function waitingBox0(v){
   var hand=v.hand,me=v.you,msg='';
+  if(v.session.cancelled){return '<div class="disp" style="font-size:28px">Game cancelled</div><div class="muted small" style="margin:6px 0 0">Fewer than '+v.minPlayers+' players joined in time. Nothing was played, so nothing is owed.</div>';}
   if(v.session.ended){return '<div class="disp" style="font-size:28px">The game is over</div><div class="muted small" style="margin:6px 0 14px">Thanks for playing.</div>'+(v.settlement?mySettle(v)+'<div class="muted small" style="margin:0 0 12px">'+(me.member?'Your full statement for the whole game is being sent to your WhatsApp.':'Your full statement for the whole game is ready.')+'</div><button class="btn" style="margin-bottom:8px" onclick="getStatement()">Download my full statement (PDF)</button><button class="btn ghost" style="margin-bottom:8px" onclick="S.sheet=true;render()">My statement</button>':'')+(me.can.start?'<button class="btn" onclick="doStart()">Start a new game</button>':'');}
   if(me.ghost){return '<div class="disp" style="font-size:28px">You left early</div><div class="muted small" style="margin:6px 0 0">Your seat keeps paying blinds until the end of session '+me.ghostUntil+(me.ghostEndsAt?' (about '+clock(me.ghostEndsAt)+')':'')+'. The admin can release you early in an emergency.</div>';}
   if(me.approved===false){return '<div class="disp" style="font-size:28px">Waiting for the admin</div><div class="muted small" style="margin:6px 0 0">The admin decides whether to let you in now that the game has started.</div>';}
@@ -386,8 +403,8 @@ function waitingBox0(v){
     return '<div class="disp" style="font-size:28px">You need chips</div><div class="muted small" style="margin:6px 0 14px">'+(me.isAdmin?'You are the banker. Buy in for yourself first.':'Ask the banker for chips. They will approve your request.')+'</div><button class="btn" onclick="S.sheet=true;render()">Buy in</button>';
   }
   if(!v.running){
-    if(me.can.start) return '<div class="disp" style="font-size:28px">'+(v.handNo?'Game paused':'Ready when you are')+'</div><div class="muted small" style="margin:6px 0 14px">'+el+' player'+(el===1?'':'s')+' with chips. You need at least 2.</div><button class="btn" '+(el<2?'disabled':'')+' onclick="doStart()">'+(v.handNo?'Resume the game':'Start the game')+'</button>';
-    return '<div class="disp" style="font-size:28px">Waiting for the admin</div><div class="muted small" style="margin-top:6px">The game starts when the admin is ready.</div>';
+    if(me.can.start) return '<div class="disp" style="font-size:28px">'+(v.handNo?'Game paused':'Ready when you are')+'</div><div class="muted small" style="margin:6px 0 14px">'+el+' player'+(el===1?'':'s')+' with chips. You need at least 2.'+needNote(v)+'</div><button class="btn" '+(el<2?'disabled':'')+' onclick="doStart()">'+(v.handNo?'Resume the game':'Start the game')+'</button>';
+    return '<div class="disp" style="font-size:28px">Waiting for the admin</div><div class="muted small" style="margin-top:6px">The game starts when the admin is ready.'+needNote(v)+'</div>';
   }
   if(hand&&!hand.finished){
     var t=v.seats.filter(function(x){return x&&x.id===hand.turnId;})[0];
@@ -454,7 +471,7 @@ function sheet(){
   var v=S.view,me=v.you,h='<div class="sheet">';
   h+='<div style="display:flex;align-items:center;justify-content:space-between"><div class="disp" style="font-size:34px">Table menu</div><button onclick="S.sheet=false;render()" aria-label="Close menu" style="width:44px;height:44px;border:0;background:transparent;color:#f2efe6;font-size:28px">×</button></div>';
   h+='<div class="row" style="margin-top:8px"><div style="flex:1"><div class="muted small">ROOM CODE</div><div class="disp gold" style="font-size:34px;letter-spacing:.2em">'+esc(v.code)+'</div></div><button class="btn line" style="width:auto;padding:0 16px;height:44px;font-size:14px" onclick="share()">Share</button></div>';
-  if(S.mtoken&&S.cv)h+='<button class="btn line" style="margin-top:12px" onclick="S.toClub=true;S.sheet=false;render()">Go to club home (members, games)</button>';
+  h+='<button class="btn line" style="margin-top:12px" onclick="S.toClub=true;S.sheet=false;render()">Go to club home (members, games)</button>';
   h+=specialBlock(v,me);
   h+=sessionBlock(v,me);
   if(!me.isAdmin){
@@ -494,7 +511,7 @@ function sheet(){
     h+='<div style="margin-top:12px">'+(v.running?'<button class="btn ghost" onclick="api(\'pause\').catch(fail)">Pause after this hand</button>':'<button class="btn" onclick="doStart();S.sheet=false;render()">'+(v.handNo?'Resume the game':'Start the game')+'</button>')+(v.session.no&&!v.session.ended?'<button class="btn ghost" style="margin-top:8px" onclick="endGame()">'+(v.session.endingGame?'Ending after this hand':'End the game')+'</button>':'')+'</div>';
   }
   if(me.can.settings){
-    h+='<div class="h2">BLINDS AND TIMER</div><div style="display:flex;gap:8px"><div class="field" style="flex:1"><label for="s_sb">SMALL</label><input id="s_sb" inputmode="numeric" value="'+v.settings.sb+'"></div><div class="field" style="flex:1"><label for="s_bb">BIG</label><input id="s_bb" inputmode="numeric" value="'+v.settings.bb+'"></div><div class="field" style="flex:1"><label for="s_ts">TIMER (S)</label><input id="s_ts" inputmode="numeric" value="'+v.settings.turnSeconds+'"></div></div><div style="display:flex;gap:8px;margin-top:8px"><div class="field" style="flex:1"><label for="s_mn">MIN BUY-IN</label><input id="s_mn" inputmode="numeric" value="'+v.settings.minBuyin+'"></div><div class="field" style="flex:1"><label for="s_mb">MAX BUY-IN</label><input id="s_mb" inputmode="numeric" value="'+v.settings.maxBuyin+'"></div></div><div style="display:flex;gap:8px;margin-top:8px"><div class="field" style="flex:1"><label for="s_ba">BOMB ANTE (BB)</label><input id="s_ba" inputmode="numeric" value="'+v.settings.bombAnteBB+'"></div><div class="field" style="flex:1"><label for="s_bm">BOMB MAX</label><input id="s_bm" inputmode="numeric" value="'+v.settings.bombMax+'"></div><div class="field" style="flex:1"><label for="s_ri">RUN-IT POT</label><input id="s_ri" inputmode="numeric" value="'+v.settings.runItMin+'"></div></div><div class="muted small" style="margin-top:4px">Run-it pot: pots at least this big can be dealt more than once. 0 turns it off.</div><div class="field" style="margin-top:8px"><label for="s_sm">SESSION LENGTH (MINUTES)</label><input id="s_sm" inputmode="numeric" value="'+v.settings.sessionMinutes+'"></div><button class="btn ghost" style="margin-top:8px" onclick="saveSettings()">Save from next hand</button>';
+    h+='<div class="h2">BLINDS AND TIMER</div><div style="display:flex;gap:8px"><div class="field" style="flex:1"><label for="s_sb">SMALL</label><input id="s_sb" inputmode="numeric" value="'+v.settings.sb+'"></div><div class="field" style="flex:1"><label for="s_bb">BIG</label><input id="s_bb" inputmode="numeric" value="'+v.settings.bb+'"></div><div class="field" style="flex:1"><label for="s_ts">TIMER (S)</label><input id="s_ts" inputmode="numeric" value="'+v.settings.turnSeconds+'"></div></div><div style="display:flex;gap:8px;margin-top:8px"><div class="field" style="flex:1"><label for="s_mn">MIN BUY-IN</label><input id="s_mn" inputmode="numeric" value="'+v.settings.minBuyin+'"></div><div class="field" style="flex:1"><label for="s_mb">MAX BUY-IN</label><input id="s_mb" inputmode="numeric" value="'+v.settings.maxBuyin+'"></div></div><div style="display:flex;gap:8px;margin-top:8px"><div class="field" style="flex:1"><label for="s_ba">BOMB ANTE (BB)</label><input id="s_ba" inputmode="numeric" value="'+v.settings.bombAnteBB+'"></div><div class="field" style="flex:1"><label for="s_bm">BOMB MAX</label><input id="s_bm" inputmode="numeric" value="'+v.settings.bombMax+'"></div><div class="field" style="flex:1"><label for="s_ri">RUN-IT POT</label><input id="s_ri" inputmode="numeric" value="'+v.settings.runItMin+'"></div></div><div class="muted small" style="margin-top:4px">Run-it pot: pots at least this big can be dealt more than once. 0 turns it off.</div><div class="field" style="margin-top:8px"><label for="s_sm">SESSION LENGTH (MINUTES)</label><input id="s_sm" inputmode="numeric" value="'+v.settings.sessionMinutes+'"></div>'+(v.settings.minPlayers!==undefined?'<div style="display:flex;gap:8px;margin-top:8px"><div class="field" style="flex:1"><label for="s_mp">MIN PLAYERS TO START</label><input id="s_mp" inputmode="numeric" value="'+v.settings.minPlayers+'"></div><div class="field" style="flex:1"><label for="s_wm">WAIT (MINUTES)</label><input id="s_wm" inputmode="numeric" value="'+v.settings.waitMinutes+'"></div></div><div class="muted small" style="margin-top:4px">A club game is cancelled if fewer players than this have chips after the wait. 0 turns it off.</div>':'')+'<button class="btn ghost" style="margin-top:8px" onclick="saveSettings()">Save from next hand</button>';
   }
   // players
   h+='<div class="h2">PLAYERS</div>';
@@ -586,7 +603,7 @@ function share(){
 function doBuyin(){var a=val('bamt');api('buyin',{amount:a}).then(function(){toast(S.view.you.isAdmin?'Chips added':'Request sent');}).catch(fail);}
 function decide(id,ok){api('approve',{reqId:id,ok:ok}).catch(fail);}
 function adjust(pid,name){var a=prompt('Chips to add for '+name+' (use a minus sign to remove):');if(a===null)return;var why=prompt('Reason (optional):')||'';api('adjust',{playerId:pid,delta:a,reason:why}).catch(fail);}
-function saveSettings(){api('settings',{settings:{sb:val('s_sb'),bb:val('s_bb'),turnSeconds:val('s_ts'),sessionMinutes:val('s_sm'),minBuyin:val('s_mn'),maxBuyin:val('s_mb'),bombAnteBB:val('s_ba'),bombMax:val('s_bm'),runItMin:val('s_ri')}}).then(function(){toast('Saved');}).catch(fail);}
+function saveSettings(){api('settings',{settings:{sb:val('s_sb'),bb:val('s_bb'),turnSeconds:val('s_ts'),sessionMinutes:val('s_sm'),minBuyin:val('s_mn'),maxBuyin:val('s_mb'),bombAnteBB:val('s_ba'),bombMax:val('s_bm'),runItMin:val('s_ri'),minPlayers:val('s_mp'),waitMinutes:val('s_wm')}}).then(function(){toast('Saved');}).catch(fail);}
 function setAway(pid,away){api('setaway',{playerId:pid,away:away}).catch(fail);}
 function kick(pid,name){if(!confirm('Remove '+name+' from the table? Their chips are returned to the banker to settle.'))return;api('kick',{playerId:pid}).catch(fail);}
 function sendNote(t){t=String(t||'').trim();if(!t){toast('Write a short message first');return;}api('note',{text:t}).then(function(){toast('Sent to the admin');var i=document.getElementById('notetx');if(i)i.value='';}).catch(fail);}
@@ -760,9 +777,11 @@ function membersTab(cv){
     if(own){h+='<div class="muted small" style="margin-top:10px">Powers are handed out per game: open a game under Games, tap Manage, and use the Powers buttons under an allotted member, or give them from the table menu during play. They end when that game ends.</div>';}
     h+='</div>';
   });
+  if(own)h+='<div class="h2">MY DETAILS</div><div style="display:flex;gap:8px"><div class="field" style="flex:1"><label for="pf_name">NAME</label><input id="pf_name" maxlength="14" value="'+esc(cv.me.name)+'"></div><div class="field" style="flex:1"><label for="pf_phone">MOBILE</label><input id="pf_phone" inputmode="tel" value="'+esc(cv.me.phone||'')+'"></div></div><button class="btn ghost" style="margin-top:8px" onclick="saveProfile()">Save my details</button>';
   if(own)h+='<div class="h2">BACKUP</div><div class="muted small" style="margin-bottom:8px">Everything about the club lives in one file in Google Drive. Keep your own copy as well. The backup holds everyone\'s sign-in links, so keep it private.</div><button class="btn ghost" style="height:46px" onclick="downloadBackup()">Download a backup</button><label class="btn ghost" style="height:46px;margin-top:8px;display:flex;align-items:center;justify-content:center;cursor:pointer">Restore from a backup file<input type="file" accept=".json,application/json" style="display:none" onchange="restoreBackup(this)"></label>';
   return h;
 }
+function saveProfile(){capi('profile',{name:document.getElementById('pf_name').value,phone:document.getElementById('pf_phone').value}).then(function(){toast('Saved');}).catch(fail);}
 function clubScreen(){
   var cv=S.cv,me=cv.me;
   var h='<div class="sheet" style="padding-bottom:96px">'+(S.view?'<button class="btn" style="margin-bottom:14px" onclick="S.toClub=false;render()">Back to the table</button>':'')+'<div style="display:flex;align-items:center;justify-content:space-between"><div style="min-width:0"><div class="muted small" style="letter-spacing:.14em">'+esc(cv.club.name).toUpperCase()+'</div><div class="disp" style="font-size:36px;line-height:1.05">Hi, '+esc(me.name)+'</div></div>'+(me.isOwner?'<div class="pill2 g">ADMIN</div>':'')+'</div>';
@@ -792,12 +811,13 @@ setInterval(function(){
 // ---- render ----
 function render(){
   var active=document.activeElement&&document.activeElement.id, keep=null;
-  if(active&&/^(room|nick|sb|bb|ts|mb|sm|bamt|s_sb|s_bb|s_ts|s_sm|c_\w+|m_\w+|su_\w+)$/.test(active)){keep={id:active,v:document.activeElement.value,s:document.activeElement.selectionStart};}
+  if(active&&/^(room|nick|sb|bb|ts|mb|sm|bamt|s_sb|s_bb|s_ts|s_sm|c_\w+|m_\w+|su_\w+|pf_\w+|lk_url)$/.test(active)){keep={id:active,v:document.activeElement.value,s:document.activeElement.selectionStart};}
   // typing in a field must never be wiped by a live update: skip re-render while an input is focused
-  if(keep&&S.view&&S.sheet&&/^(bamt|s_sb|s_bb|s_ts|s_sm)$/.test(keep.id)) return;
-  if(keep&&!S.view&&/^(c_|m_|su_)/.test(keep.id)) return;
+  if(keep&&S.view&&S.sheet&&/^(bamt|s_sb|s_bb|s_ts|s_sm|s_mp|s_wm)$/.test(keep.id)) return;
+  if(keep&&!S.view&&/^(c_|m_|su_|pf_)/.test(keep.id)) return;
+  if(keep&&keep.id==='lk_url')return;
   var old=document.querySelector('.sheet'),sc=old?old.scrollTop:0;
-  var h=(S.view&&!(S.toClub&&S.mtoken&&S.cv))?(table()+(S.sheet?sheet():'')):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));
+  var h=(S.view&&S.toClub&&!S.mtoken)?linkScreen():(S.view&&!(S.toClub&&S.mtoken&&S.cv))?(table()+(S.sheet?sheet():'')+freezeOverlay()):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));
   h+=alertBar();
   if(S.toast) h+='<div class="toast">'+esc(S.toast)+'</div>';
   $stage.innerHTML=h;

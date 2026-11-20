@@ -45,6 +45,8 @@ function cleanSettings(s = {}, old = {}) {
     bombAnteBB: clampInt(s.bombAnteBB, 1, 100, old.bombAnteBB || 5),   // bomb pot ante, in big blinds
     bombMax: clampInt(s.bombMax, 2, 10, old.bombMax || 10),            // most players in the 2-card bomb pot
     runItMin: clampInt(s.runItMin, 0, 1e9, old.runItMin || 0),         // pots at least this big can be run more than once (0 = off)
+    minPlayers: clampInt(s.minPlayers, 0, 10, old.minPlayers === undefined ? 5 : old.minPlayers), // a club game is cancelled if fewer than this have chips in time (0 = off)
+    waitMinutes: clampInt(s.waitMinutes, 1, 120, old.waitMinutes || 5),
     maxSeats: 10,
     sessionMinutes: clampInt(s.sessionMinutes, 1, 600, old.sessionMinutes || 120),
   };
@@ -147,9 +149,11 @@ function viewFor(t, pid) {
       approved: me.approved, ghost: me.ghost, ghostUntil: me.ghostUntil, ghostEndsAt: me.ghost ? sessionEnd(t, me.ghostUntil) : 0, stayUntil: me.stayUntil, callAfter: me.callAfter,
       leave: leaveInfo(t, me), callOptions: callOptions(t, me),
     },
+    frozen: !!t.frozen,
+    startBy: autoCancelDue(t) ? t.createdAt + t.settings.waitMinutes * 60000 : 0, joined: joinedCount(t), minPlayers: t.settings.minPlayers,
     session: {
       no: t.sessionNo, endsAt: t.sessionEndsAt, ending: t.sessionEnding, minutes: t.settings.sessionMinutes,
-      ended: t.ended, endingGame: t.ending, draw: Date.now() < t.drawUntil + 4000 ? t.draw : null,
+      ended: t.ended, cancelled: !!t.cancelled, endingGame: t.ending, draw: Date.now() < t.drawUntil + 4000 ? t.draw : null,
     },
     joins: can(t, me, 'players') ? t.joins : [],
     settlement: t.final && {
@@ -300,7 +304,7 @@ function callOptions(t, p) {
 }
 
 function maybeStartHand(t) {
-  if (t.closed || !t.running || t.ended || (t.hand && !t.hand.finished)) return;
+  if (t.closed || t.frozen || !t.running || t.ended || (t.hand && !t.hand.finished)) return;
   if (t.sessionNo > 0 && t.sessionEnding) { deckChange(t); if (t.ended) return; }
   if (t.sessionNo === 0) { if (dealtIn(t).length < 2) return; startSession(t); }
   const wait = t.drawUntil - Date.now();
@@ -361,6 +365,7 @@ const MISSES_BEFORE_AWAY = 2;
 // (re)start the turn clock for whoever is to act
 function armTimer(t, secs) {
   clearTimeout(t.timer);
+  if (t.frozen) return;
   t.deadline = Date.now() + secs * 1000;
   t.timer = setTimeout(() => {
     if (!t.hand || t.hand.finished) return;
@@ -380,6 +385,7 @@ function armTimer(t, secs) {
 
 function afterHandChange(t) {
   clearTimeout(t.timer);
+  if (t.frozen) return broadcast(t);
   const h = t.hand;
   if (h && h.finished) return finishHand(t);
   if (h && h.runit) {
@@ -622,8 +628,34 @@ const routes = {
     broadcast(t);
     return { ok: true };
   },
+  freeze(b) { // the main admin stops everything exactly as it is
+    const { t, p } = auth(b);
+    if (p.id !== t.adminId) throw httpErr(403, 'Only the main admin can stop the game');
+    if (t.frozen || t.ended) return { ok: true };
+    t.frozen = { at: Date.now(), left: t.deadline ? Math.max(0, t.deadline - Date.now()) : 0 };
+    clearTimeout(t.timer); clearTimeout(t.nextTimer); t.deadline = 0;
+    say(t, 'The admin stopped the game');
+    broadcast(t);
+    return { ok: true };
+  },
+  unfreeze(b) {
+    const { t, p } = auth(b);
+    if (p.id !== t.adminId) throw httpErr(403, 'Only the main admin can resume the game');
+    const f = t.frozen; if (!f) return { ok: true };
+    const dur = Date.now() - f.at;
+    t.frozen = null;
+    if (t.sessionNo > 0) t.sessionEndsAt += dur;
+    if (t.drawUntil) t.drawUntil += dur;
+    say(t, 'The admin resumed the game');
+    if (t.hand && !t.hand.finished) {
+      if (t.hand.runit) afterHandChange(t); else armTimer(t, Math.max(8, Math.ceil(f.left / 1000)));
+      broadcast(t);
+    } else { broadcast(t); if (t.running) maybeStartHand(t); }
+    return { ok: true };
+  },
   act(b) {
     const { t, p } = auth(b);
+    if (t.frozen) throw httpErr(409, 'The admin has stopped the game for now');
     if (!t.hand || t.hand.finished) throw httpErr(400, 'No hand in progress');
     try { t.hand.act(p.id, String(b.type), b.amount); }
     catch (e) { throw httpErr(400, e.message); }
@@ -634,6 +666,7 @@ const routes = {
   // vote on dealing the rest of the board once, twice or three times (big all-in pots only)
   runit(b) {
     const { t, p } = auth(b);
+    if (t.frozen) throw httpErr(409, 'The admin has stopped the game for now');
     if (!t.hand || t.hand.finished || !t.hand.runit) throw httpErr(400, 'There is no vote open');
     try { t.hand.vote(p.id, b.runs); } catch (e) { throw httpErr(400, e.message); }
     afterHandChange(t);
@@ -881,6 +914,23 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// a club game that never gets going is cancelled: not enough players with chips within the wait time
+const joinedCount = (t) => [...t.players.values()].filter((p) => p.approved && !p.leaving && p.stack + (p.queued || 0) > 0).length;
+const autoCancelDue = (t) => !!(t.eventId && !t.ended && !t.cancelled && !t.sessionNo && !t.handNo && t.settings.minPlayers > 0);
+function cancelTable(t, why) {
+  t.cancelled = true; t.running = false; t.ended = true; t.ending = false;
+  clearTimeout(t.timer); clearTimeout(t.nextTimer); t.deadline = 0;
+  say(t, why); club.cancelTable(t, why); broadcast(t);
+}
+setInterval(() => {
+  for (const t of tables.values()) {
+    try {
+      if (autoCancelDue(t) && !t.frozen && Date.now() - t.createdAt >= t.settings.waitMinutes * 60000 && joinedCount(t) < t.settings.minPlayers)
+        cancelTable(t, `Game cancelled: fewer than ${t.settings.minPlayers} players joined within ${t.settings.waitMinutes} minutes.`);
+    } catch (e) { console.error(e); }
+  }
+}, 5000).unref();
+
 // tidy up tables that nobody has touched for 12 hours
 setInterval(() => {
   for (const [code, t] of tables) if (!t.clients.size && Date.now() - (t.log.length ? t.log[t.log.length - 1].at : t.createdAt) > 12 * 3600e3) tables.delete(code);
@@ -922,7 +972,7 @@ function restoreTables() {
     if (t.final) for (const x of t.final.people) statementLinks.set(x.dl, { code, pid: x.id });
     if (o.hadHand) say(t, 'The server restarted. The hand in progress was cancelled and everyone keeps the chips they had before it.');
     else say(t, 'The server restarted. Play continues in a moment.');
-    if (t.running && !t.ended) t.nextTimer = setTimeout(() => maybeStartHand(t), Number(process.env.RESTORE_DELAY_MS || 8000));
+    if (t.running && !t.ended && !t.frozen) t.nextTimer = setTimeout(() => maybeStartHand(t), Number(process.env.RESTORE_DELAY_MS || 8000));
     n++;
   }
   if (n) console.log(`Restored ${n} live table${n === 1 ? '' : 's'} from storage`);
@@ -931,7 +981,7 @@ const ready = club.load().then(restoreTables);
 ready.catch(() => {}); // reported where it matters (startup below)
 setInterval(() => {
   for (const t of tables.values()) {
-    if (t.sessionNo > 0 && !t.ended && !t.sessionEnding && Date.now() >= t.sessionEndsAt) {
+    if (t.sessionNo > 0 && !t.ended && !t.frozen && !t.sessionEnding && Date.now() >= t.sessionEndsAt) {
       t.sessionEnding = true;
       say(t, `Session ${t.sessionNo} time is up. Deck change after this hand.`);
       broadcast(t);

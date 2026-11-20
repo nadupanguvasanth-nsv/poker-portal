@@ -131,7 +131,7 @@ function createClub(ctx) {
   const evRoles = (ev, m) => (ev.delegates && ev.delegates[m.id]) || [];
   const hasEv = (m, ev, role) => isOwner(m) || evRoles(ev, m).includes(role);
   const ownerOnly = (m) => { if (!isOwner(m)) throw httpErr(403, 'Only the admin can do that'); };
-  const cleanPhone = (p) => String(p || '').replace(/[^\d+]/g, '').slice(0, 16);
+  const cleanPhone = (p) => { const x = String(p || '').replace(/[^\d+]/g, '').slice(0, 16); return /^\d{10}$/.test(x) ? '+91' + x : x; };
   const cleanRoles = (r) => [...new Set((Array.isArray(r) ? r : []).filter((x) => ROLES.includes(x)))];
   const cleanTitle = (t) => String(t || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40) || 'Game night';
 
@@ -168,7 +168,7 @@ function createClub(ctx) {
       });
     const out = {
       club: { name: state.club.name },
-      me: { id: m.id, name: m.name, isOwner: isOwner(m), manage: isOwner(m) },
+      me: { id: m.id, name: m.name, phone: m.phone || '', isOwner: isOwner(m), manage: isOwner(m) },
       events, now: Date.now(), roles: ROLES, saveError: isOwner(m) ? lastError : '', storage: isOwner(m) ? store.name : '',
     };
     if (isOwner(m)) out.history = (state.history || []).slice().reverse().slice(0, 100);
@@ -288,6 +288,13 @@ function createClub(ctx) {
       return { mtoken: m.token };
     },
     'club/me'(b) { const m = auth(b); return viewFor(m); },
+    'club/profile'(b) { // a member changes their own name and phone
+      const m = auth(b);
+      if (b.name !== undefined && String(b.name).trim()) m.name = cleanName(b.name);
+      if (b.phone !== undefined) m.phone = cleanPhone(b.phone);
+      changed();
+      return { ok: true };
+    },
     'club/addmember'(b) {
       const o = auth(b); ownerOnly(o);
       const name = cleanName(b.name);
@@ -495,6 +502,13 @@ function createClub(ctx) {
   }
 
   // called by the table: the game is over, so every delegated power ends and the pass closes
+  function cancelTable(t, why) {
+    const ev = t.eventId && state.events[t.eventId];
+    if (!ev || ev.status === 'done' || ev.status === 'cancelled') return;
+    ev.status = 'cancelled'; ev.delegates = {};
+    changed();
+    for (const id of approvedIds(ev)) { const x = state.members[id]; if (x) tell(x, 'cancel', `${ev.title} has been cancelled. ${why}`, { eventId: ev.id }); }
+  }
   function gameEnded(t) {
     const ev = t.eventId && state.events[t.eventId];
     // keep a record of every finished game for the admin
@@ -528,7 +542,7 @@ function createClub(ctx) {
     if (ev && m && !isOwner(m)) setDelegates(ev, m, roles, true);
   }
 
-  return { routes, handleEvents, load, tick, flush, setTables, getTables, pushMember, viewFor, openTable, gameEnded, sendStatements, rsvpPage, saveDelegates, state: () => state, ROLES };
+  return { routes, handleEvents, load, tick, flush, setTables, getTables, pushMember, viewFor, openTable, gameEnded, cancelTable, sendStatements, rsvpPage, saveDelegates, state: () => state, ROLES };
 }
 
 module.exports = { createClub, fileStore, driveStore, pickStore, sendExternal, ROLES };
