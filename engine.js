@@ -53,6 +53,22 @@ function score5(cards) {
 }
 
 // Best five of any 5-7 cards (Hold'em rule)
+// the five cards that make up the best hand
+function bestFive(cards) {
+  let best = -1, pick = null;
+  const n = cards.length;
+  for (let a = 0; a < n - 4; a++)
+    for (let b = a + 1; b < n - 3; b++)
+      for (let c = b + 1; c < n - 2; c++)
+        for (let d = c + 1; d < n - 1; d++)
+          for (let x = d + 1; x < n; x++) {
+            const f = [cards[a], cards[b], cards[c], cards[d], cards[x]];
+            const s = score5(f);
+            if (s > best) { best = s; pick = f; }
+          }
+  return pick;
+}
+
 function bestScore(cards) {
   let best = -1;
   const n = cards.length;
@@ -258,7 +274,7 @@ class Hand {
     const reveal = {};
     for (const p of this.live()) {
       scores[p.id] = bestScore(p.cards.concat(this.board));
-      reveal[p.id] = { cards: p.cards.slice(), handName: categoryOf(scores[p.id]) };
+      reveal[p.id] = { cards: p.cards.slice(), handName: categoryOf(scores[p.id]), best: bestFive(p.cards.concat(this.board)) };
     }
     const won = {};
     const pots = this.buildPots().map((pot) => {
@@ -309,4 +325,4 @@ class Hand {
   }
 }
 
-module.exports = { Hand, newDeck, shuffle, score5, bestScore, categoryOf, RANKS, SUITS };
+module.exports = { Hand, newDeck, shuffle, score5, bestScore, bestFive, categoryOf, RANKS, SUITS };

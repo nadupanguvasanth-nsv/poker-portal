@@ -190,7 +190,7 @@ function finishHand(t) {
   t.deadline = 0;
   broadcast(t);
   clearTimeout(t.nextTimer);
-  t.nextTimer = setTimeout(() => maybeStartHand(t), NEXT_HAND_DELAY_MS);
+  t.nextTimer = setTimeout(() => maybeStartHand(t), r.uncontested ? NEXT_HAND_DELAY_MS : Math.max(NEXT_HAND_DELAY_MS, Math.min(NEXT_HAND_DELAY_MS * 2, 14000)));
 }
 
 function removePlayer(t, p) {
