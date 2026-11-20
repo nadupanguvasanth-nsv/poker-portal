@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { Hand } = require('./engine');
+const { createClub } = require('./club');
 
 const PORT = process.env.PORT || 3000;
 const NEXT_HAND_DELAY_MS = Number(process.env.NEXT_HAND_DELAY_MS || 7000);
@@ -90,12 +91,13 @@ function viewFor(t, pid) {
     you: {
       id: pid, name: me.name, isAdmin, seat: me.seat, stack: seats[me.seat].stack,
       queued: me.queued, bought: me.bought, inHand: seats[me.seat].inHand, away: me.away,
+      can: Object.fromEntries(ROLE_NAMES.map((r) => [r, can(t, me, r)])), member: !!me.memberId,
     },
     seats,
     hand: hv && { street: hv.street, board: hv.board, pot: hv.pot, currentBet: hv.currentBet, turnId: hv.turnId, finished: hv.finished, legal: hv.legal, deadline: t.deadline },
     result: t.lastResult,
     log: t.log.slice(-12),
-    pending: isAdmin ? t.pending : t.pending.filter((r) => r.playerId === pid),
+    pending: can(t, me, 'bank') ? t.pending : t.pending.filter((r) => r.playerId === pid),
     ledger: me.ledger.slice(-30),
     history: me.history,
   };
@@ -257,7 +259,10 @@ function auth(b) {
   for (const p of t.players.values()) if (p.token === b.token) return { t, p };
   throw httpErr(401, 'You are not at this table');
 }
-function adminOnly(t, p) { if (p.id !== t.adminId) throw httpErr(403, 'Only the admin can do that'); }
+// Powers: the admin has all of them; delegated members hold some (start, bank, settings, players).
+const ROLE_NAMES = ['start', 'bank', 'settings', 'players'];
+const can = (t, p, role) => p.id === t.adminId || (Array.isArray(p.roles) && p.roles.includes(role));
+function need(t, p, role) { if (!can(t, p, role)) throw httpErr(403, 'You do not have permission to do that'); }
 
 const routes = {
   create(b) {
@@ -268,6 +273,7 @@ const routes = {
   },
   join(b) {
     const t = getTable(b.code);
+    if (t.membersOnly) throw httpErr(403, 'This table is for invited members. Open your personal invite link.');
     const name = cleanName(b.name);
     if ([...t.players.values()].some((p) => p.name.toLowerCase() === name.toLowerCase()))
       throw httpErr(400, 'That nickname is taken at this table');
@@ -292,9 +298,10 @@ const routes = {
     return { ok: true };
   },
   approve(b) {
-    const { t, p } = auth(b); adminOnly(t, p);
+    const { t, p } = auth(b); need(t, p, 'bank');
     const i = t.pending.findIndex((r) => r.id === b.reqId);
     if (i < 0) throw httpErr(404, 'Request not found');
+    if (t.pending[i].playerId === p.id && p.id !== t.adminId) throw httpErr(403, 'Another banker must approve your own chips');
     const [r] = t.pending.splice(i, 1);
     const target = t.players.get(r.playerId);
     if (b.ok && target) {
@@ -305,9 +312,10 @@ const routes = {
     return { ok: true };
   },
   adjust(b) {
-    const { t, p } = auth(b); adminOnly(t, p);
+    const { t, p } = auth(b); need(t, p, 'bank');
     const target = t.players.get(b.playerId);
     if (!target) throw httpErr(404, 'Player not found');
+    if (target.id === p.id && p.id !== t.adminId) throw httpErr(403, 'You cannot adjust your own chips');
     const delta = clampInt(b.delta, -1e9, 1e9, 0);
     if (!delta) throw httpErr(400, 'Enter an amount');
     if (delta < 0 && target.stack + target.queued + delta < 0) throw httpErr(400, 'That is more than they hold');
@@ -318,21 +326,21 @@ const routes = {
     return { ok: true };
   },
   settings(b) {
-    const { t, p } = auth(b); adminOnly(t, p);
+    const { t, p } = auth(b); need(t, p, 'settings');
     t.settings = cleanSettings(b.settings, t.settings);
     say(t, `Blinds are now ${t.settings.sb}/${t.settings.bb} from the next hand`);
     broadcast(t);
     return { ok: true };
   },
   start(b) {
-    const { t, p } = auth(b); adminOnly(t, p);
+    const { t, p } = auth(b); need(t, p, 'start');
     t.running = true;
     say(t, 'The admin started the game');
     broadcast(t); maybeStartHand(t);
     return { ok: true };
   },
   pause(b) {
-    const { t, p } = auth(b); adminOnly(t, p);
+    const { t, p } = auth(b); need(t, p, 'start');
     t.running = false;
     say(t, 'The admin paused after this hand');
     broadcast(t);
@@ -368,7 +376,7 @@ const routes = {
     return { ok: true };
   },
   setaway(b) {
-    const { t, p } = auth(b); adminOnly(t, p);
+    const { t, p } = auth(b); need(t, p, 'players');
     const target = t.players.get(b.playerId);
     if (!target) throw httpErr(404, 'Player not found');
     target.away = !!b.away;
@@ -378,7 +386,7 @@ const routes = {
     return { ok: true };
   },
   kick(b) {
-    const { t, p } = auth(b); adminOnly(t, p);
+    const { t, p } = auth(b); need(t, p, 'players');
     const target = t.players.get(b.playerId);
     if (!target) throw httpErr(404, 'Player not found');
     if (target.id === t.adminId) throw httpErr(400, 'The banker cannot be removed');
@@ -386,6 +394,9 @@ const routes = {
     return { ok: true };
   },
 };
+
+const club = createClub({ tables, makeTable, addPlayer, broadcast, say, httpErr, cleanName, cleanSettings });
+Object.assign(routes, club.routes);
 
 function handleEvents(req, res, url) {
   const t = tables.get(String(url.searchParams.get('code') || '').toUpperCase());
@@ -422,6 +433,7 @@ const INDEX = process.env.INDEX_FILE || path.join(__dirname, 'index.html');
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
+    if (req.method === 'GET' && url.pathname === '/api/club/events') return club.handleEvents(req, res, url);
     if (req.method === 'GET' && url.pathname === '/api/events') return handleEvents(req, res, url);
     if (req.method === 'GET' && url.pathname === '/ping') { res.writeHead(200); return res.end('ok'); }
     if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
@@ -448,5 +460,13 @@ setInterval(() => {
   for (const [code, t] of tables) if (!t.clients.size && Date.now() - (t.log.length ? t.log[t.log.length - 1].at : t.createdAt) > 12 * 3600e3) tables.delete(code);
 }, 600e3).unref();
 
-if (require.main === module) server.listen(PORT, () => console.log('Smart Buddies listening on ' + PORT));
-module.exports = { server, tables, routes };
+const ready = club.load();
+ready.catch(() => {}); // reported where it matters (startup below)
+const clubTimer = setInterval(() => { try { club.tick(); } catch (e) { console.error(e); } }, 5000);
+clubTimer.unref();
+
+if (require.main === module) {
+  ready.then(() => server.listen(PORT, () => console.log('Smart Buddies listening on ' + PORT)))
+    .catch((e) => { console.error('Not starting: the club data could not be read (' + e.message + '). Check DRIVE_SCRIPT_URL and DRIVE_SECRET.'); process.exit(1); });
+}
+module.exports = { server, tables, routes, club, ready };

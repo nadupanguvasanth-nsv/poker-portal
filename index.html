@@ -62,6 +62,16 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .toast{position:absolute;left:20px;right:20px;top:60px;z-index:40;padding:12px 14px;border-radius:12px;background:#2a1417;border:1px solid #d2454d;font-size:13px}
 .poster{border-radius:10px;overflow:hidden;border:1px solid #d8b45c;box-shadow:0 12px 28px rgba(0,0,0,.6);flex:none}
 .poster img{width:100%;height:100%;object-fit:cover;display:block}
+.evc{border:1px solid #2a312d;background:#141917;border-radius:16px;padding:14px;margin-top:12px}
+.evc.off{opacity:.5}
+.pill2{font-size:10px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:999px;border:1px solid #2a312d;color:#a3aba5;white-space:nowrap}
+.pill2.g{border-color:#d8b45c;color:#d8b45c}
+.pass{margin-top:12px;border:1px solid #d8b45c;border-radius:14px;padding:14px;background:linear-gradient(135deg,#1d1a0d,#12402f)}
+.tabs{position:absolute;left:0;right:0;bottom:0;height:72px;display:flex;background:#0f1311;border-top:1px solid #2a312d;z-index:30}
+.tabs button{flex:1;border:0;background:transparent;color:#a3aba5;font-size:13px;font-weight:600}
+.tabs button.on{color:#d8b45c}
+.rolechip{height:34px;padding:0 10px;border-radius:17px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px;font-weight:600}
+.rolechip.on{border-color:#d8b45c;color:#d8b45c;background:rgba(216,180,92,.1)}
 input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 .small{font-size:12px;line-height:1.5}
 </style>
@@ -144,17 +154,19 @@ function pickPoster(){
 function lobby(){
   var admin=S.lobbyMode==='admin';
   var q=new URLSearchParams(location.search).get('room')||'';
-  var h='<div class="abs" style="inset:0;padding:28px 24px 24px;display:flex;flex-direction:column;align-items:center;background:radial-gradient(ellipse 320px 300px at 50% 235px,#12402f 0%,#0a0c0b 100%)">'+
+  var h='<div class="abs" style="inset:0;overflow-y:auto;padding:28px 24px 24px;display:flex;flex-direction:column;align-items:center;background:radial-gradient(ellipse 320px 300px at 50% 235px,#12402f 0%,#0a0c0b 100%)">'+
   '<div style="display:flex;align-items:center;gap:12px;width:100%;justify-content:center"><div style="height:1px;flex:1;background:#2a312d"></div><div class="disp gold" style="font-size:22px;letter-spacing:.32em;padding-left:.32em">SMART BUDDIES</div><div style="height:1px;flex:1;background:#2a312d"></div></div>'+
   '<div class="poster" style="margin-top:20px;width:100%;max-width:342px;aspect-ratio:5/4"><img alt="Smart Buddies at the card table" src="'+IMG.dogs+'" style="width:100%;height:100%;object-fit:cover"></div>'+
   '<div class="disp" style="margin-top:20px;font-size:40px;line-height:1;text-align:center">Private poker night</div>'+
   '<div class="muted small" style="margin-top:8px;text-align:center;font-size:13px">Play chips only. Settle up outside the app.</div>';
-  if(!admin){
+  if(!admin&&S.lobbyMode!=='setup'){
     h+='<div style="margin-top:20px;width:100%;display:flex;flex-direction:column;gap:12px">'+
     '<div class="field"><label for="room">ROOM CODE</label><input id="room" autocapitalize="characters" autocomplete="off" maxlength="4" placeholder="e.g. 4F7K" value="'+esc(q.toUpperCase())+'" style="letter-spacing:.2em;text-transform:uppercase"></div>'+
     '<div class="field"><label for="nick">NICKNAME</label><input id="nick" maxlength="14" placeholder="Your name at the table" value="'+esc(ls('poker-name'))+'"></div></div>'+
     '<button class="btn" style="margin-top:18px" onclick="doJoin()">Take a seat</button>'+
-    '<button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'admin\';render()">Start a table as admin</button>';
+    '<button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'admin\';render()">Start a table as admin</button>'+(S.mtoken&&S.cv?'<button class="btn line" style="margin-top:10px" onclick="S.quick=false;render()">Back to the club</button>':'')+(S.clubExists===false?'<button class="btn line" style="margin-top:10px" onclick="S.lobbyMode=\'setup\';render()">Set up your club (first time, admin)</button>':'');
+  } else if(S.lobbyMode==='setup'){
+    h+='<div style="margin-top:16px;width:100%;display:flex;flex-direction:column;gap:10px">'+dfield('su_name','CLUB NAME','Smart Buddies','maxlength="40"')+dfield('su_owner','YOUR NAME (ADMIN)','','maxlength="14"')+dfield('su_phone','YOUR PHONE (OPTIONAL)','','inputmode="tel"')+(S.needsCode?dfield('su_code','SETUP CODE','','type="password" autocomplete="off"'):'')+'</div><button class="btn" style="margin-top:16px" onclick="doSetup()">Create the club</button><button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'join\';render()">Back</button>';
   } else {
     h+='<div style="margin-top:16px;width:100%;display:flex;flex-direction:column;gap:10px">'+
     '<div class="field"><label for="nick">YOUR NICKNAME</label><input id="nick" maxlength="14" placeholder="Admin and banker" value="'+esc(ls('poker-name'))+'"></div>'+
@@ -301,7 +313,7 @@ function waitingBox(v){
     return '<div class="disp" style="font-size:28px">You need chips</div><div class="muted small" style="margin:6px 0 14px">'+(me.isAdmin?'You are the banker. Buy in for yourself first.':'Ask the banker for chips. They will approve your request.')+'</div><button class="btn" onclick="S.sheet=true;render()">Buy in</button>';
   }
   if(!v.running){
-    if(me.isAdmin) return '<div class="disp" style="font-size:28px">'+(v.handNo?'Game paused':'Ready when you are')+'</div><div class="muted small" style="margin:6px 0 14px">'+el+' player'+(el===1?'':'s')+' with chips. You need at least 2.</div><button class="btn" '+(el<2?'disabled':'')+' onclick="doStart()">'+(v.handNo?'Resume the game':'Start the game')+'</button>';
+    if(me.can.start) return '<div class="disp" style="font-size:28px">'+(v.handNo?'Game paused':'Ready when you are')+'</div><div class="muted small" style="margin:6px 0 14px">'+el+' player'+(el===1?'':'s')+' with chips. You need at least 2.</div><button class="btn" '+(el<2?'disabled':'')+' onclick="doStart()">'+(v.handNo?'Resume the game':'Start the game')+'</button>';
     return '<div class="disp" style="font-size:28px">Waiting for the admin</div><div class="muted small" style="margin-top:6px">The game starts when the admin is ready.</div>';
   }
   if(hand&&!hand.finished){
@@ -338,20 +350,24 @@ function sheet(){
   var pend=v.pending.filter(function(r){return r.playerId===me.id;})[0];
   if(pend&&!me.isAdmin) h+='<div class="row"><div style="flex:1"><div style="font-size:14px;font-weight:600">Waiting for the banker</div><div class="muted small">Requested '+fmt(pend.amount)+'</div></div></div>';
   else h+='<div style="display:flex;gap:8px"><input id="bamt" inputmode="numeric" placeholder="Amount (max '+fmt(v.settings.maxBuyin)+')" style="flex:1;height:48px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;padding:0 14px"><button class="btn" style="width:110px" onclick="doBuyin()">'+(me.isAdmin?'Add':'Request')+'</button></div>';
-  if(me.isAdmin){
+  if(me.can.bank){
     h+='<div class="h2">BANKER</div>';
     if(!v.pending.length) h+='<div class="muted small">No requests waiting.</div>';
     v.pending.forEach(function(r){
       h+='<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(r.name)+'</div><div class="muted small">wants '+fmt(r.amount)+'</div></div><button onclick="decide(\''+r.id+'\',false)" style="height:44px;padding:0 14px;border-radius:10px;border:1px solid #2a312d;background:transparent;color:#f2efe6;font-weight:600">No</button><button onclick="decide(\''+r.id+'\',true)" style="height:44px;padding:0 16px;border-radius:10px;border:0;background:#d8b45c;color:#14110a;font-weight:700">Approve</button></div>';
     });
+  }
+  if(me.can.start){
     h+='<div style="margin-top:12px">'+(v.running?'<button class="btn ghost" onclick="api(\'pause\').catch(fail)">Pause after this hand</button>':'<button class="btn" onclick="doStart();S.sheet=false;render()">'+(v.handNo?'Resume the game':'Start the game')+'</button>')+'</div>';
+  }
+  if(me.can.settings){
     h+='<div class="h2">BLINDS AND TIMER</div><div style="display:flex;gap:8px"><div class="field" style="flex:1"><label for="s_sb">SMALL</label><input id="s_sb" inputmode="numeric" value="'+v.settings.sb+'"></div><div class="field" style="flex:1"><label for="s_bb">BIG</label><input id="s_bb" inputmode="numeric" value="'+v.settings.bb+'"></div><div class="field" style="flex:1"><label for="s_ts">TIMER (S)</label><input id="s_ts" inputmode="numeric" value="'+v.settings.turnSeconds+'"></div></div><button class="btn ghost" style="margin-top:8px" onclick="saveSettings()">Save from next hand</button>';
   }
   // players
   h+='<div class="h2">PLAYERS</div>';
   v.seats.filter(Boolean).forEach(function(s){
     h+='<div class="row" style="margin-bottom:6px;flex-wrap:wrap"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(s.name)+(s.isAdmin?' <span class="gold" style="font-size:11px">BANKER</span>':'')+(s.id===me.id?' <span class="muted" style="font-size:11px">YOU</span>':'')+'</div><div class="muted small">'+(s.connected?'Online':'Offline')+(s.away?' · Sitting out':'')+'</div></div><div style="font-size:15px;font-weight:700">'+fmt(s.stack)+'</div>'+
-    (me.isAdmin?'<div style="flex-basis:100%;display:flex;gap:6px"><button aria-label="Adjust chips for '+esc(s.name)+'" onclick="adjust(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">Adjust</button>'+(s.id!==me.id?'<button onclick="setAway(\''+s.id+'\','+(!s.away)+')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">'+(s.away?'Bring back':'Sit out')+'</button><button onclick="kick(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #6b2a2e;background:transparent;color:#d2454d;font-size:12px">Remove</button>':'')+'</div>':'')+'</div>';
+    ((me.can.bank||me.can.players)?'<div style="flex-basis:100%;display:flex;gap:6px">'+(me.can.bank&&!(s.id===me.id&&!me.isAdmin)?'<button aria-label="Adjust chips for '+esc(s.name)+'" onclick="adjust(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">Adjust</button>':'')+(me.can.players&&s.id!==me.id&&!s.isAdmin?'<button onclick="setAway(\''+s.id+'\','+(!s.away)+')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">'+(s.away?'Bring back':'Sit out')+'</button><button onclick="kick(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #6b2a2e;background:transparent;color:#d2454d;font-size:12px">Remove</button>':'')+'</div>':'')+'</div>';
   });
   // statement
   h+='<div class="h2">MY STATEMENT</div>';
@@ -389,14 +405,150 @@ function kick(pid,name){if(!confirm('Remove '+name+' from the table? Their chips
 function doLeave(){if(!confirm('Leave the table and cash out your chips?'))return;api('leave').then(function(){clearSession();render();}).catch(fail);}
 function forget(){clearSession();render();}
 
+// ---- club: members, game nights, passes ----
+var ROLE_LABEL={start:'Start and pause the game',bank:'Banker: chips and buy-ins',settings:'Blinds and timer',players:'Sit out or remove players',invite:'Invitations and approvals'};
+S.mtoken=ls('sb-member');S.cv=null;S.tab='games';S.draft={};S.manage=null;S.formOpen=false;S.alert=null;S.clubExists=null;S.needsCode=false;S.newLink=null;S.quick=false;S.localReminded={};S.pick={};S.inv='all';
+function capi(name,data){return fetch('/api/club/'+name,{method:'POST',body:JSON.stringify(Object.assign({mtoken:S.mtoken},data||{}))}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'Something went wrong');return j;});});}
+function setMember(tok){S.mtoken=tok;try{localStorage.setItem('sb-member',tok);}catch(e){}}
+function clubForget(){try{localStorage.removeItem('sb-member');}catch(e){}S.mtoken='';S.cv=null;if(S.ces){S.ces.close();S.ces=null;}}
+function clubConnect(){
+  if(S.ces)S.ces.close();if(!S.mtoken)return;
+  var es=new EventSource('/api/club/events?mtoken='+encodeURIComponent(S.mtoken));S.ces=es;
+  es.onmessage=function(e){S.cv=JSON.parse(e.data);S.cfails=0;render();};
+  es.addEventListener('notice',function(e){onNotice(JSON.parse(e.data));});
+  es.onerror=function(){if(es.readyState===2){S.cfails=(S.cfails||0)+1;if(S.cfails>=3){clubForget();toast('That invite link no longer works. Ask the admin for a new one.');return;}setTimeout(clubConnect,1500);}};
+}
+function buzz(){try{if(navigator.vibrate)navigator.vibrate([250,120,250,120,400]);}catch(e){}}
+function beep(){try{var C=window.AudioContext||window.webkitAudioContext;if(!C)return;var a=S.ac||(S.ac=new C());var o=a.createOscillator(),g=a.createGain();o.frequency.value=880;g.gain.value=.15;o.connect(g);g.connect(a.destination);o.start();o.stop(a.currentTime+.25);}catch(e){}}
+function onNotice(n){
+  if(n.kind==='reminder'&&n.eventId){if(S.localReminded[n.eventId]&&S.alert&&S.alert.eventId===n.eventId)return;S.localReminded[n.eventId]=1;}
+  S.alert=n;buzz();beep();
+  try{if(document.hidden&&window.Notification&&Notification.permission==='granted')new Notification('Smart Buddies',{body:n.text});}catch(e){}
+  render();
+}
+function enableAlerts(){beep();try{if(!window.Notification){toast('This browser cannot show phone notifications. In-app alerts still work.');return;}Notification.requestPermission().then(function(p){toast(p==='granted'?'Phone notifications are on':'Notifications were not allowed');});}catch(e){}}
+function when(ts){return new Date(ts).toLocaleString([],{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});}
+function until(ts){var ms=ts-Date.now();if(ms<=0)return 'Started';var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),sc=s%60;if(d)return d+'d '+h+'h';if(h)return h+'h '+m+'m';if(m>=5)return m+' min';return m+':'+('0'+sc).slice(-2);}
+function linkFor(tok){return location.origin+'/?m='+tok;}
+function waLink(phone,text){var d=String(phone||'').replace(/[^\d]/g,'');return 'https://wa.me/'+d+'?text='+encodeURIComponent(text);}
+function copyText(t){if(navigator.clipboard)navigator.clipboard.writeText(t).then(function(){toast('Copied');});else{prompt('Copy this:',t);}}
+function formVals(ids){var d={};ids.forEach(function(id){var e=document.getElementById(id);d[id]=e?e.value:(S.draft[id]||'');});return d;}
+function dval(id,def){return esc(S.draft[id]!==undefined?S.draft[id]:(def||''));}
+function dfield(id,label,def,attrs){return '<div class="field" style="flex:1"><label for="'+id+'">'+label+'</label><input id="'+id+'" '+(attrs||'')+' value="'+dval(id,def)+'" oninput="S.draft[this.id]=this.value"></div>';}
+
+function enterGame(evId){capi('enter',{eventId:evId}).then(function(r){S.code=r.code;S.token=r.token;S.pid=r.pid;saveSession();S.quick=false;S.alert=null;connect();requestWake();render();}).catch(fail);}
+function interest(evId,on){capi('interest',{eventId:evId,on:on}).catch(fail);}
+function decide2(evId,mid,d){capi('decide',{eventId:evId,memberId:mid,decision:d}).catch(fail);}
+function cancelEv(evId){if(!confirm('Cancel this game? Everyone allotted a seat is told.'))return;capi('cancelevent',{eventId:evId}).then(function(){S.manage=null;}).catch(fail);}
+function doCreateEv(){
+  var d=formVals(['c_title','c_when','c_sb','c_bb','c_seats','c_ts','c_mb']),startAt=new Date(d.c_when||'').getTime();
+  if(!startAt){toast('Pick the date and time');return;}
+  var inv='all';if(S.inv==='pick'){inv=Object.keys(S.pick).filter(function(k){return S.pick[k];});if(!inv.length){toast('Pick at least one member');return;}}
+  capi('createevent',{title:d.c_title,startAt:startAt,seats:d.c_seats||10,sb:d.c_sb||25,bb:d.c_bb||50,turnSeconds:d.c_ts||40,maxBuyin:d.c_mb||10000,invited:inv}).then(function(){S.formOpen=false;S.draft={};S.pick={};S.inv='all';toast('Game created and invitations sent');}).catch(fail);
+}
+function doAddMember(){var d=formVals(['m_name','m_phone']);capi('addmember',{name:d.m_name,phone:d.m_phone}).then(function(r){S.newLink={name:d.m_name,phone:d.m_phone,token:r.token};S.draft={};render();}).catch(fail);}
+function toggleRole(mid,role){var m=S.cv.members.filter(function(x){return x.id===mid;})[0];if(!m)return;var r=m.roles.slice(),i=r.indexOf(role);if(i<0)r.push(role);else r.splice(i,1);capi('setroles',{memberId:mid,roles:r}).catch(fail);}
+function newLinkFor(mid){if(!confirm('Make a new link? The old one stops working.'))return;capi('resetlink',{memberId:mid}).then(function(){toast('New link ready. Copy it below.');}).catch(fail);}
+function removeMember(mid,name){if(!confirm('Remove '+name+' from the club?'))return;capi('removemember',{memberId:mid}).catch(fail);}
+function doSetup(){var d=formVals(['su_name','su_owner','su_phone','su_code']);fetch('/api/club/setup',{method:'POST',body:JSON.stringify({name:d.su_name||'Smart Buddies',ownerName:d.su_owner,phone:d.su_phone,setupCode:d.su_code})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error);return j;});}).then(function(j){setMember(j.mtoken);S.newLink={name:'Your admin link',token:j.mtoken,own:true};S.draft={};S.lobbyMode='join';S.clubExists=true;clubConnect();render();}).catch(fail);}
+
+function pillFor(my){var m={owner:['HOST','g'],invited:['INVITED',''],interested:['WAITING',''],approved:['SEAT ALLOTTED','g'],declined:['NO SEAT','']}[my]||['',''];return '<div class="pill2 '+m[1]+'">'+m[0]+'</div>';}
+function evCard(ev,cv){
+  var me=cv.me,h='<div class="evc'+(ev.cancelled?' off':'')+'">';
+  h+='<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><div class="disp" style="font-size:28px;line-height:1">'+esc(ev.title)+'</div><div class="muted small">'+when(ev.startAt)+' · blinds '+fmt(ev.settings.sb)+'/'+fmt(ev.settings.bb)+' · '+ev.seats+' seats</div></div>'+(ev.cancelled?'<div class="pill2">CANCELLED</div>':pillFor(ev.my))+'</div>';
+  var soon=ev.startAt-Date.now()<=15*60000;
+  if(!ev.cancelled){
+    if(ev.my==='invited')h+='<button class="btn" style="margin-top:12px;height:46px" onclick="interest(\''+ev.id+'\',true)">I\'m interested</button>';
+    if(ev.my==='interested')h+='<div class="muted small" style="margin-top:10px">You are on the list. The admin will allot seats.</div><button class="btn ghost" style="margin-top:8px;height:42px" onclick="interest(\''+ev.id+'\',false)">Withdraw</button>';
+    if(ev.my==='declined')h+='<div class="muted small" style="margin-top:10px">No seat this time.</div>';
+    if(ev.my==='approved'||ev.my==='owner'){
+      h+='<div class="pass"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.16em">'+(ev.my==='owner'?'YOUR TABLE':'TABLE ALLOTTED')+'</div><div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px"><div class="muted small">'+(ev.my==='owner'?ev.approvedCount+' of '+(ev.seats-1)+' guest seats filled':'Starts in')+'</div><div class="disp gold" style="font-size:30px" data-count="'+ev.startAt+'">'+until(ev.startAt)+'</div></div>'+
+        ((soon||ev.my==='owner')?'<button class="btn" style="margin-top:10px" onclick="enterGame(\''+ev.id+'\')">Join table</button>':'<button class="btn" style="margin-top:10px" disabled>Opens 15 minutes before the start</button>')+'</div>';
+    }
+  }
+  if(cv.me.manage&&!ev.cancelled){
+    var open=S.manage===ev.id,waiting=(ev.people||[]).filter(function(p){return p.state==='interested';}).length;
+    h+='<button class="btn ghost" style="margin-top:10px;height:42px" onclick="S.manage='+(open?'null':'\''+ev.id+'\'')+';render()">'+(open?'Hide':'Manage')+' · '+waiting+' waiting · '+ev.approvedCount+' seated</button>';
+    if(open){
+      (ev.people||[]).forEach(function(p){
+        var msg='Table allotted! '+ev.title+', '+when(ev.startAt)+'. Open Smart Buddies: '+location.origin;
+        h+='<div class="row" style="margin-top:8px;flex-wrap:wrap"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(p.name)+'</div><div class="muted small">'+({invited:'Not replied',interested:'Interested',approved:'Seat allotted',declined:'No seat'}[p.state]||p.state)+'</div></div>'+
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'+
+          (p.state!=='approved'?'<button class="rolechip on" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'approve\')">Allot seat</button>':'<button class="rolechip" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'reset\')">Take back</button><a class="rolechip" style="display:flex;align-items:center;text-decoration:none" target="_blank" rel="noopener" href="'+waLink(p.phone,msg)+'">WhatsApp</a>')+
+          (p.state==='interested'||p.state==='invited'?'<button class="rolechip" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'decline\')">No seat</button>':'')+'</div></div>';
+      });
+      h+='<button class="btn ghost" style="margin-top:10px;height:42px;border-color:#6b2a2e;color:#d2454d" onclick="cancelEv(\''+ev.id+'\')">Cancel this game</button>';
+    }
+  }
+  return h+'</div>';
+}
+function newEvForm(cv){
+  var h='<div class="evc" style="border-color:#d8b45c"><div class="disp" style="font-size:26px">New game</div><div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">'+
+    dfield('c_title','NAME','Friday night','maxlength="40"')+dfield('c_when','DATE AND TIME','','type="datetime-local"')+
+    '<div style="display:flex;gap:8px">'+dfield('c_sb','SMALL','25','inputmode="numeric"')+dfield('c_bb','BIG','50','inputmode="numeric"')+dfield('c_seats','SEATS','10','inputmode="numeric"')+'</div>'+
+    '<div style="display:flex;gap:8px">'+dfield('c_ts','TIMER (S)','40','inputmode="numeric"')+dfield('c_mb','MAX BUY-IN','10000','inputmode="numeric"')+'</div>'+
+    '<div class="h2" style="margin:4px 0 0">WHO IS INVITED</div><div style="display:flex;gap:8px"><button class="rolechip'+(S.inv==='all'?' on':'')+'" onclick="S.inv=\'all\';render()">All members</button><button class="rolechip'+(S.inv==='pick'?' on':'')+'" onclick="S.inv=\'pick\';render()">Pick members</button></div>';
+  if(S.inv==='pick')h+='<div style="display:flex;flex-wrap:wrap;gap:6px">'+(cv.members||[]).map(function(m){return '<button class="rolechip'+(S.pick[m.id]?' on':'')+'" onclick="S.pick[\''+m.id+'\']=!S.pick[\''+m.id+'\'];render()">'+esc(m.name)+'</button>';}).join('')+'</div>';
+  return h+'<button class="btn" onclick="doCreateEv()">Create and invite</button><button class="btn ghost" onclick="S.formOpen=false;render()">Close</button></div></div>';
+}
+function linkCard(){
+  var n=S.newLink;if(!n)return '';var url=linkFor(n.token);
+  return '<div class="evc" style="border-color:#d8b45c"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.14em">'+(n.own?'SAVE YOUR ADMIN LINK':'LINK FOR '+esc(n.name).toUpperCase())+'</div><div class="muted small" style="margin-top:6px">'+(n.own?'This link signs you in as the admin on any phone. Keep it private and save it somewhere safe.':'Send this private link to '+esc(n.name)+'. Opening it signs them in on their phone.')+'</div><div style="margin-top:8px;padding:10px;border-radius:10px;background:#0a0c0b;border:1px solid #2a312d;font-size:12px;word-break:break-all">'+esc(url)+'</div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn line" style="height:44px;font-size:14px" onclick="copyText(\''+url+'\')">Copy</button>'+(n.own?'':'<a class="btn" style="height:44px;font-size:14px;display:flex;align-items:center;justify-content:center;text-decoration:none" target="_blank" rel="noopener" href="'+waLink(n.phone,'Your private link for Smart Buddies poker: '+url)+'">WhatsApp</a>')+'<button class="btn ghost" style="height:44px" onclick="S.newLink=null;render()">Done</button></div></div>';
+}
+function gamesTab(cv){
+  var h=linkCard();
+  if(cv.me.manage)h+=S.formOpen?newEvForm(cv):'<button class="btn" style="margin-top:14px" onclick="S.formOpen=true;render()">+ New game</button>';
+  if(!cv.events.length)h+='<div class="evc"><div class="muted small">No games scheduled yet.'+(cv.me.manage?'':' You will see invitations here.')+'</div></div>';
+  cv.events.forEach(function(ev){h+=evCard(ev,cv);});
+  h+='<div class="h2">ALERTS</div><div class="muted small">You get a buzz and a sound about a minute before play while the app is open.</div><button class="btn ghost" style="margin-top:8px;height:44px" onclick="enableAlerts()">Turn on phone notifications</button>';
+  return h;
+}
+function membersTab(cv){
+  var h=linkCard(),own=cv.me.isOwner;
+  if(own){h+='<div class="evc"><div class="disp" style="font-size:26px">Add a member</div><div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">'+dfield('m_name','NAME','','maxlength="14" placeholder="Nickname at the table"')+dfield('m_phone','PHONE (OPTIONAL, FOR WHATSAPP)','','inputmode="tel" placeholder="+91..."')+'<button class="btn" onclick="doAddMember()">Register and get link</button></div></div>';}
+  h+='<div class="h2">MEMBERS ('+(cv.members||[]).length+')</div>';
+  (cv.members||[]).forEach(function(m){
+    h+='<div class="evc" style="margin-top:8px"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:15px;font-weight:700">'+esc(m.name)+'</div><div class="muted small">'+esc(m.phone||'No phone')+'</div></div>'+(own?'<div style="display:flex;gap:6px"><button class="rolechip" onclick="S.newLink={name:\''+esc(m.name)+'\',phone:\''+esc(m.phone)+'\',token:\''+m.token+'\'};render()">Link</button><button class="rolechip" onclick="newLinkFor(\''+m.id+'\')">New link</button><button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="removeMember(\''+m.id+'\',\''+esc(m.name)+'\')">Remove</button></div>':'')+'</div>';
+    if(own){h+='<div class="muted small" style="margin-top:10px">Powers during play</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">'+cv.roles.map(function(r){return '<button class="rolechip'+(m.roles.indexOf(r)>=0?' on':'')+'" onclick="toggleRole(\''+m.id+'\',\''+r+'\')">'+ROLE_LABEL[r]+'</button>';}).join('')+'</div>';}
+    h+='</div>';
+  });
+  return h;
+}
+function clubScreen(){
+  var cv=S.cv,me=cv.me;
+  var h='<div class="sheet" style="padding-bottom:96px"><div style="display:flex;align-items:center;justify-content:space-between"><div style="min-width:0"><div class="muted small" style="letter-spacing:.14em">'+esc(cv.club.name).toUpperCase()+'</div><div class="disp" style="font-size:36px;line-height:1.05">Hi, '+esc(me.name)+'</div></div>'+(me.isOwner?'<div class="pill2 g">ADMIN</div>':(me.roles.length?'<div class="pill2 g">'+me.roles.length+' POWER'+(me.roles.length>1?'S':'')+'</div>':''))+'</div>';
+  if(me.isOwner&&cv.storage&&/^file/.test(cv.storage))h+='<div class="evc" style="border-color:#d8b45c"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.14em">TEMPORARY STORAGE</div><div class="muted small" style="margin-top:6px">Club data is only kept on the server and is lost when it restarts. Connect the Google Drive storage to keep it safe.</div></div>';
+  if(cv.saveError)h+='<div class="evc" style="border-color:#d2454d"><div style="font-size:13px">Club data could not be saved: '+esc(cv.saveError)+'</div></div>';
+  h+=(S.tab==='members'&&me.manage)?membersTab(cv):gamesTab(cv);
+  h+='</div><div class="tabs"><button class="'+(S.tab==='games'?'on':'')+'" onclick="S.tab=\'games\';render()">Games</button>'+(me.manage?'<button class="'+(S.tab==='members'?'on':'')+'" onclick="S.tab=\'members\';render()">Members</button>':'')+'<button onclick="S.quick=true;render()">Quick table</button><button onclick="if(confirm(\'Leave the club on this phone? You can come back with your link.\')){clubForget();render();}">Sign out</button></div>';
+  return h;
+}
+function alertBar(){
+  var a=S.alert;if(!a)return '';var rem=a.kind==='reminder';
+  return '<div class="abs" style="left:12px;right:12px;top:12px;z-index:60;padding:12px 14px;border-radius:14px;background:#1c1608;border:1px solid #d8b45c;box-shadow:0 10px 30px rgba(0,0,0,.6)"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.14em">'+(rem?'STARTING SOON':a.kind==='allotted'?'TABLE ALLOTTED':a.kind==='invite'?'INVITATION':'NOTICE')+'</div><div style="font-size:14px;margin-top:4px">'+esc(a.text)+'</div><div style="display:flex;gap:8px;margin-top:10px">'+(rem&&a.eventId&&!S.view?'<button class="btn" style="height:42px;font-size:14px" onclick="enterGame(\''+a.eventId+'\')">Join table</button>':'')+'<button class="btn ghost" style="height:42px" onclick="S.alert=null;render()">'+(rem&&!S.view?'Later':'OK')+'</button></div></div>';
+}
+// countdowns and the local backup reminder
+setInterval(function(){
+  var els=document.querySelectorAll('[data-count]');for(var i=0;i<els.length;i++)els[i].textContent=until(Number(els[i].getAttribute('data-count')));
+  if(!S.cv)return;
+  var key='';S.cv.events.forEach(function(ev){
+    var left=ev.startAt-Date.now();
+    if(left<=15*60000&&left>-6*3600000)key+=ev.id+',';
+    if((ev.my==='approved'||ev.my==='owner')&&!ev.cancelled&&left<=60000&&left>-600000&&!S.localReminded[ev.id]){onNotice({kind:'reminder',text:ev.title+' starts in about a minute. Tap Join table.',eventId:ev.id,startAt:ev.startAt});}
+  });
+  if(key!==S.joinKey){S.joinKey=key;if(!S.view)render();}
+},1000);
+
 // ---- render ----
 function render(){
   var active=document.activeElement&&document.activeElement.id, keep=null;
-  if(active&&/^(room|nick|sb|bb|ts|mb|bamt|s_sb|s_bb|s_ts)$/.test(active)){keep={id:active,v:document.activeElement.value,s:document.activeElement.selectionStart};}
+  if(active&&/^(room|nick|sb|bb|ts|mb|bamt|s_sb|s_bb|s_ts|c_\w+|m_\w+|su_\w+)$/.test(active)){keep={id:active,v:document.activeElement.value,s:document.activeElement.selectionStart};}
   // typing in a field must never be wiped by a live update: skip re-render while an input is focused
   if(keep&&S.view&&S.sheet&&/^(bamt|s_sb|s_bb|s_ts)$/.test(keep.id)) return;
+  if(keep&&!S.view&&/^(c_|m_|su_)/.test(keep.id)) return;
   var old=document.querySelector('.sheet'),sc=old?old.scrollTop:0;
-  var h=S.view?(table()+(S.sheet?sheet():'')):lobby();
+  var h=S.view?(table()+(S.sheet?sheet():'')):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));
+  h+=alertBar();
   if(S.toast) h+='<div class="toast">'+esc(S.toast)+'</div>';
   $stage.innerHTML=h;
   var nw=document.querySelector('.sheet');if(nw)nw.scrollTop=sc;
@@ -413,6 +565,10 @@ setInterval(function(){
 (function(){
   var hs=(location.hash.match(/^#s=([A-Z0-9]+):([a-f0-9]+):([a-f0-9]+)$/)||[]);
   if(hs.length){S.code=hs[1];S.token=hs[2];S.pid=hs[3];saveSession();history.replaceState(null,'',location.pathname);connect();render();return;}
+  var mq=new URLSearchParams(location.search).get('m');
+  if(mq&&/^[a-f0-9]+$/.test(mq)){setMember(mq);var qs=new URLSearchParams(location.search);qs.delete('m');history.replaceState(null,'',location.pathname+(qs.toString()?'?'+qs.toString():''));}
+  if(S.mtoken)clubConnect();
+  fetch('/api/club/status',{method:'POST',body:'{}'}).then(function(r){return r.json();}).then(function(j){S.clubExists=j.exists;S.needsCode=j.needsSetupCode;if(!S.view)render();}).catch(function(){});
   try{var s=JSON.parse(localStorage.getItem('poker-session')||'null'); if(s&&s.code&&s.token){S.code=s.code;S.token=s.token;S.pid=s.pid;connect();requestWake();}}catch(e){}
   render();
 })();
