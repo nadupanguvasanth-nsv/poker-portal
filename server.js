@@ -5,7 +5,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { Hand, newDeck, shuffle } = require('./engine');
+const { Hand, newDeck, shuffle, VARIANTS } = require('./engine');
+const RUNIT_SECONDS = Number(process.env.RUNIT_SECONDS || 15);
 const { createClub } = require('./club');
 const { buildFinal, statementPdf, sessionRows } = require('./statement');
 
@@ -41,6 +42,9 @@ function cleanSettings(s = {}, old = {}) {
     turnSeconds: clampInt(s.turnSeconds, 10, 180, old.turnSeconds || 40),
     minBuyin: clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb),
     maxBuyin: Math.max(clampInt(s.maxBuyin, bb, 1e9, old.maxBuyin || bb * 200), clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb)),
+    bombAnteBB: clampInt(s.bombAnteBB, 1, 100, old.bombAnteBB || 5),   // bomb pot ante, in big blinds
+    bombMax: clampInt(s.bombMax, 2, 10, old.bombMax || 10),            // most players in the 2-card bomb pot
+    runItMin: clampInt(s.runItMin, 0, 1e9, old.runItMin || 0),         // pots at least this big can be run more than once (0 = off)
     maxSeats: 10,
     sessionMinutes: clampInt(s.sessionMinutes, 1, 600, old.sessionMinutes || 120),
   };
@@ -52,7 +56,7 @@ function makeTable(adminName, settings) {
     players: new Map(), order: new Array(10).fill(null), adminId: null,
     hand: null, handNo: 0, running: false, buttonSeat: -1,
     pending: [], log: [], clients: new Map(), timer: null, nextTimer: null,
-    deadline: 0, lastResult: null, closed: false,
+    deadline: 0, lastResult: null, closed: false, forceVariant: null, variant: 'none', vmark: null, special: false,
     sessionNo: 0, sessionEndsAt: 0, sessionEnding: false, draw: null, drawUntil: 0,
     ended: false, ending: false, joins: [], departed: [], sessLog: [],
   };
@@ -68,7 +72,7 @@ function addPlayer(t, name) {
   const p = {
     id: rid(6), token: rid(24), name, seat, stack: 0, queued: 0, bought: 0,
     connected: false, history: [], ledger: [], leaving: false, away: false, misses: 0,
-    approved: true, stayUntil: 2, callAfter: 0, ghost: false, ghostUntil: 0,
+    approved: true, stayUntil: 2, callAfter: 0, ghost: false, ghostUntil: 0, optIn: false,
   };
   t.players.set(p.id, p);
   t.order[seat] = p.id;
@@ -85,6 +89,23 @@ function httpErr(status, message) { const e = new Error(message); e.status = sta
 function say(t, text) { t.log.push({ at: Date.now(), text }); if (t.log.length > 40) t.log.shift(); }
 const nameOf = (t, id) => (t.players.get(id) || { name: '?' }).name;
 
+// the special game: what the admin chose and how many hands until it is played
+function specialInfo(t) {
+  const ring = lineup(t);
+  let nextIn = 0;
+  if (t.variant !== 'none' && t.vmark && ring.length > 1) {
+    const mi = ring.findIndex((p) => p.id === t.vmark);
+    const bi = ring.findIndex((p) => p.seat >= t.buttonSeat);
+    if (mi >= 0) {
+      const target = (mi - 1 + ring.length) % ring.length, cur = bi < 0 ? ring.length - 1 : (ring[bi].seat === t.buttonSeat ? bi : (bi - 1 + ring.length) % ring.length);
+      nextIn = (target - cur + ring.length) % ring.length || ring.length;
+    }
+  }
+  const V = VARIANTS[t.variant];
+  return { force: t.forceVariant, forceName: t.forceVariant ? VARIANTS[t.forceVariant].name : '', choice: t.variant, name: V ? V.name : '', max: V ? (t.variant === 'bomb2' ? Math.min(V.max, t.settings.bombMax) : V.max) : 0, nextIn, now: !!t.special, optedIn: [...t.players.values()].filter((p) => p.optIn && !p.ghost && p.approved).length,
+    games: Object.entries(VARIANTS).filter(([k]) => k !== 'holdem').map(([k, v]) => ({ kind: k, name: v.name, max: k === 'bomb2' ? Math.min(v.max, t.settings.bombMax) : v.max })) };
+}
+
 // ---------- views ----------
 function viewFor(t, pid) {
   const me = t.players.get(pid);
@@ -96,7 +117,7 @@ function viewFor(t, pid) {
     const p = t.players.get(id);
     const hp = hv && hv.players.find((x) => x.id === id);
     seats.push({
-      seat: s, id, name: p.name, isAdmin: id === t.adminId, connected: p.connected, away: p.away, ghost: p.ghost, approved: p.approved, roles: (p.roles || []).filter((r) => ROLE_NAMES.includes(r)),
+      seat: s, id, name: p.name, optIn: !!p.optIn, isAdmin: id === t.adminId, connected: p.connected, away: p.away, ghost: p.ghost, approved: p.approved, roles: (p.roles || []).filter((r) => ROLE_NAMES.includes(r)),
       stack: hp ? hp.stack : p.stack, inHand: !!hp, bet: hp ? hp.bet : 0,
       folded: hp ? hp.folded : false, allIn: hp ? hp.allIn : false,
       cards: hp ? hp.cards : null, isButton: !!(hp && hp.isButton),
@@ -108,7 +129,7 @@ function viewFor(t, pid) {
     now: Date.now(), code: t.code, settings: t.settings, running: t.running, handNo: t.handNo,
     you: {
       id: pid, name: me.name, isAdmin, seat: me.seat, stack: seats[me.seat].stack,
-      queued: me.queued, bought: me.bought, inHand: seats[me.seat].inHand, away: me.away,
+      optIn: !!me.optIn, queued: me.queued, bought: me.bought, inHand: seats[me.seat].inHand, away: me.away,
       can: Object.fromEntries(ROLE_NAMES.map((r) => [r, can(t, me, r)])), member: !!me.memberId,
       approved: me.approved, ghost: me.ghost, ghostUntil: me.ghostUntil, ghostEndsAt: me.ghost ? sessionEnd(t, me.ghostUntil) : 0, stayUntil: me.stayUntil, callAfter: me.callAfter,
       leave: leaveInfo(t, me), callOptions: callOptions(t, me),
@@ -128,7 +149,8 @@ function viewFor(t, pid) {
       }),
     },
     seats,
-    hand: hv && { street: hv.street, board: hv.board, pot: hv.pot, currentBet: hv.currentBet, turnId: hv.turnId, finished: hv.finished, legal: hv.legal, deadline: t.deadline },
+    special: specialInfo(t),
+    hand: hv && { variant: hv.variant, variantName: hv.variantName, hole: hv.hole, boards: hv.boards, boardKind: hv.boardKind, runit: hv.runit, runs: hv.runs, street: hv.street, board: hv.board, pot: hv.pot, currentBet: hv.currentBet, turnId: hv.turnId, finished: hv.finished, legal: hv.legal, deadline: t.deadline },
     result: t.lastResult,
     log: t.log.slice(-12),
     pending: can(t, me, 'bank') ? t.pending : t.pending.filter((r) => r.playerId === pid),
@@ -165,6 +187,7 @@ function lineup(t) {
 // One card each from a fresh deck: highest takes the button and the seats follow in order
 function startSession(t) {
   t.sessionNo++;
+  if (t.sessionNo > 1) for (const p of t.players.values()) p.optIn = false; // opting in for the special games is once per session (choices made before the game starts count for session 1)
   t.sessionEnding = false;
   t.sessLog.push({ no: t.sessionNo, start: Date.now(), end: 0 });
   const all = [...t.players.values()];
@@ -227,7 +250,8 @@ function finalize(t) {
 
 function resetGame(t) {
   t.ended = false; t.ending = false; t.sessionNo = 0; t.sessionEnding = false; t.draw = null; t.drawUntil = 0;
-  t.final = null; t.departed = []; t.sessLog = [];
+  t.final = null; t.departed = []; t.sessLog = []; t.vmark = null; t.special = false;
+  for (const p of t.players.values()) p.optIn = false;
   for (const p of t.players.values()) { // a new game starts from the chips people hold now
     p.stayUntil = 2; p.callAfter = 0;
     const chips = p.stack + p.queued;
@@ -276,12 +300,42 @@ function maybeStartHand(t) {
     if (cand) { btn = cand; break; }
   }
   t.buttonSeat = btn.seat;
-  const players = ring.map((p) => ({ id: p.id, seat: p.seat, stack: p.stack, ghost: p.ghost }));
-  const buttonIdx = players.findIndex((p) => p.id === btn.id);
+  // The special game (the variant the admin chose) is played once in every round of Hold'em. A marker sits with one player;
+  // it is played on the hand where the button is with the player just before the marker, and after it the marker moves
+  // one player back, so the special hand comes one hand earlier in the next round.
+  const at = (id) => ring.findIndex((p) => p.id === id);
+  if (at(t.vmark) < 0) t.vmark = btn.id;
+  const before = ring[(at(t.vmark) - 1 + ring.length) % ring.length];
+  let kind = 'holdem', players, buttonIdx, note = '';
+  // the admin can also switch the next hand to any game on request; that replaces the scheduled special game for this hand
+  let want = 'none';
+  if (t.forceVariant) { want = t.forceVariant; t.forceVariant = null; if (btn.id === before.id) t.vmark = btn.id; }
+  else if (btn.id === before.id) { t.vmark = btn.id; want = t.variant; }
+  {
+    if (want !== 'none' && VARIANTS[want]) {
+      const V = VARIANTS[want], max = want === 'bomb2' ? Math.min(V.max, t.settings.bombMax) : V.max;
+      // only players who opted in are dealt in, and never ghosts. Starting from the button, the seats just before it are dealt out first if too many opted in.
+      const start = ring.findIndex((p) => p.seat >= btn.seat); // the first opted-in player at or after the dealer seat
+      const order = ring.slice(start < 0 ? 0 : start).concat(ring.slice(0, start < 0 ? 0 : start)).filter((p) => p.optIn && !p.ghost);
+      const out = order.length > max ? order.splice(max) : [];
+      if (order.length >= 2) {
+        kind = want;
+        const seated = order.slice().sort((a, b) => a.seat - b.seat);
+        players = seated.map((p) => ({ id: p.id, seat: p.seat, stack: p.stack }));
+        buttonIdx = players.findIndex((p) => p.id === order[0].id);
+        note = out.length ? ` (${out.map((p) => p.name).join(', ')} dealt out, only ${max} can play)` : '';
+      } else say(t, `${V.name} skipped: fewer than two players opted in`);
+    }
+  }
+  if (kind === 'holdem') {
+    players = ring.map((p) => ({ id: p.id, seat: p.seat, stack: p.stack, ghost: p.ghost }));
+    buttonIdx = players.findIndex((p) => p.id === btn.id);
+  }
   t.handNo++;
   t.lastResult = null;
-  t.hand = new Hand({ players, buttonIdx, sb: t.settings.sb, bb: t.settings.bb });
-  say(t, `Hand ${t.handNo}: ${btn.name} has the button`);
+  t.special = kind !== 'holdem';
+  t.hand = new Hand({ players, buttonIdx, sb: t.settings.sb, bb: t.settings.bb, variant: kind, bombAnte: t.settings.bombAnteBB * t.settings.bb, runItMin: t.settings.runItMin });
+  say(t, kind === 'holdem' ? `Hand ${t.handNo}: ${btn.name} has the button` : `Hand ${t.handNo}: ${VARIANTS[kind].name}. ${t.hand.players[buttonIdx].id === btn.id ? btn.name : t.players.get(t.hand.players[buttonIdx].id).name} has the button${note}`);
   afterHandChange(t);
 }
 
@@ -312,6 +366,11 @@ function afterHandChange(t) {
   clearTimeout(t.timer);
   const h = t.hand;
   if (h && h.finished) return finishHand(t);
+  if (h && h.runit) {
+    t.deadline = Date.now() + RUNIT_SECONDS * 1000;
+    t.timer = setTimeout(() => { if (t.hand === h && h.runit) { h.resolveRunIt(); afterHandChange(t); } }, RUNIT_SECONDS * 1000 + 300);
+    return broadcast(t);
+  }
   if (h && h.turnId) {
     const tp = t.players.get(h.turnId);
     const secs = tp && !tp.connected ? Math.min(t.settings.turnSeconds, DISCONNECT_TURN_SECONDS) : t.settings.turnSeconds;
@@ -331,7 +390,13 @@ function finishHand(t) {
   const r = h.result;
   const names = (id) => nameOf(t, id);
   t.lastResult = {
-    handNo: t.handNo, uncontested: r.uncontested, board: h.board.slice(),
+    handNo: t.handNo, uncontested: r.uncontested, board: h.board.slice(), variant: h.variant, variantName: h.v.name,
+    boards: h.boards.map((b) => b.slice()), boardKind: h.boardKind, runs: h.runs,
+    boardResults: (r.boardResults || []).map((br) => ({
+      board: br.board,
+      hands: Object.fromEntries(Object.entries(br.hands).map(([id, x]) => [id, { handName: x.handName, best: x.best }])),
+      winners: Object.entries(br.winners).map(([id, amount]) => ({ id, name: names(id), amount })),
+    })),
     reveal: Object.fromEntries(Object.entries(r.reveal).map(([id, v]) => [id, { name: names(id), ...v }])),
     won: Object.entries(r.won).map(([id, amount]) => ({
       id, name: names(id), amount,
@@ -502,6 +567,43 @@ const routes = {
     catch (e) { throw httpErr(400, e.message); }
     p.misses = 0;
     afterHandChange(t);
+    return { ok: true };
+  },
+  // vote on dealing the rest of the board once, twice or three times (big all-in pots only)
+  runit(b) {
+    const { t, p } = auth(b);
+    if (!t.hand || t.hand.finished || !t.hand.runit) throw httpErr(400, 'There is no vote open');
+    try { t.hand.vote(p.id, b.runs); } catch (e) { throw httpErr(400, e.message); }
+    afterHandChange(t);
+    return { ok: true };
+  },
+  // the special game: opt in or out for this session
+  optin(b) {
+    const { t, p } = auth(b);
+    if (p.ghost || !p.approved) throw httpErr(400, 'You cannot opt in right now');
+    p.optIn = !!b.on;
+    say(t, `${p.name} ${p.optIn ? 'opted in to' : 'opted out of'} the special games`);
+    broadcast(t);
+    return { ok: true, optIn: p.optIn };
+  },
+  // the admin (or a delegate with the settings power) chooses the special game
+  variant(b) {
+    const { t, p } = auth(b); need(t, p, 'settings');
+    const k = String(b.kind);
+    if (k !== 'none' && (!VARIANTS[k] || k === 'holdem')) throw httpErr(400, 'Unknown game');
+    t.variant = k;
+    say(t, k === 'none' ? 'No special game' : `Special game: ${VARIANTS[k].name}`);
+    broadcast(t);
+    return { ok: true };
+  },
+  // the admin plays the next hand as any game, because the players asked for it
+  playnow(b) {
+    const { t, p } = auth(b); need(t, p, 'settings');
+    const k = String(b.kind);
+    if (k === 'holdem' || k === 'none') { t.forceVariant = null; say(t, "Next hand is Texas Hold'em as usual"); }
+    else if (!VARIANTS[k]) throw httpErr(400, 'Unknown game');
+    else { t.forceVariant = k; say(t, `Next hand: ${VARIANTS[k].name}, by request. Only players who opted in are dealt.`); }
+    broadcast(t);
     return { ok: true };
   },
   leave(b) {
