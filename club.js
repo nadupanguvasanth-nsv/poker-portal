@@ -103,6 +103,9 @@ function createClub(ctx) {
     }, ctx.saveDelayMs === undefined ? 200 : ctx.saveDelayMs);
     if (timer.unref) timer.unref();
   }
+  // live tables are kept in the same saved copy, so a restart does not lose the game
+  const setTables = (obj) => { state.tables = obj; persist(); };
+  const getTables = () => state.tables || {};
   const flush = async () => { if (timer) { clearTimeout(timer); timer = null; } dirty = false; await saving; await store.save(JSON.parse(JSON.stringify(state))); };
 
   // ----- helpers -----
@@ -158,6 +161,7 @@ function createClub(ctx) {
       me: { id: m.id, name: m.name, isOwner: isOwner(m), manage: isOwner(m) },
       events, now: Date.now(), roles: ROLES, saveError: isOwner(m) ? lastError : '', storage: isOwner(m) ? store.name : '',
     };
+    if (isOwner(m)) out.history = (state.history || []).slice().reverse().slice(0, 100);
     if (isOwner(m)) out.members = Object.values(state.members).filter((x) => !isOwner(x)).map((x) => ({ id: x.id, name: x.name, phone: x.phone || '', token: x.token, createdAt: x.createdAt }));
     return out;
   }
@@ -346,6 +350,15 @@ function createClub(ctx) {
       changed();
       return { state: ev.people[m.id] ? ev.people[m.id].state : 'invited' };
     },
+    'club/deletegame'(b) {
+      const m = auth(b); ownerOnly(m);
+      if (!state.history) state.history = [];
+      const i = state.history.findIndex((g) => g.id === b.id);
+      if (i < 0) throw httpErr(404, 'Game not found');
+      state.history.splice(i, 1);
+      changed();
+      return { ok: true };
+    },
     'club/rsvp'(b) {
       const m = auth(b);
       const st = rsvp(m, state.events[b.eventId], b.answer === 'out' ? 'out' : 'in');
@@ -429,7 +442,17 @@ function createClub(ctx) {
   // called by the table: the game is over, so every delegated power ends and the pass closes
   function gameEnded(t) {
     const ev = t.eventId && state.events[t.eventId];
-    if (!ev) return;
+    // keep a record of every finished game for the admin
+    if (t.final) {
+      if (!state.history) state.history = [];
+      state.history.push({
+        id: rid(4), code: t.code, title: ev ? ev.title : 'Quick table', at: t.final.at, startedAt: t.createdAt, sessions: t.final.sessions, sb: t.final.sb, bb: t.final.bb,
+        people: t.final.people.map((x) => ({ name: x.name, invested: x.invested, final: x.final, net: x.net })),
+        transfers: t.final.transfers.map((x) => ({ from: x.fromName, to: x.toName, amount: x.amount })),
+      });
+      if (state.history.length > 300) state.history.splice(0, state.history.length - 300);
+    }
+    if (!ev) { changed(); return; }
     ev.delegates = {}; ev.status = 'done';
     changed();
   }
@@ -450,7 +473,7 @@ function createClub(ctx) {
     if (ev && m && !isOwner(m)) setDelegates(ev, m, roles, true);
   }
 
-  return { routes, handleEvents, load, tick, flush, viewFor, openTable, gameEnded, sendStatements, rsvpPage, saveDelegates, state: () => state, ROLES };
+  return { routes, handleEvents, load, tick, flush, setTables, getTables, viewFor, openTable, gameEnded, sendStatements, rsvpPage, saveDelegates, state: () => state, ROLES };
 }
 
 module.exports = { createClub, fileStore, driveStore, pickStore, sendExternal, ROLES };

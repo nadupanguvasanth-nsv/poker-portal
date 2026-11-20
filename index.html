@@ -432,6 +432,7 @@ function specialBlock(v,me){
   }
   return h;
 }
+function undoChange(pid,idx,name,amt){if(!confirm('Undo '+(amt>0?'+':'')+amt+' for '+name+'?'))return;api('undo',{playerId:pid,index:idx}).then(function(){toast('Undone');}).catch(fail);}
 function setVariant(k){api('variant',{kind:k}).catch(fail);}
 function playNow(k){api('playnow',{kind:k}).catch(fail);}
 function sheet(){
@@ -452,6 +453,12 @@ function sheet(){
     if(!v.pending.length) h+='<div class="muted small">No requests waiting.</div>';
     v.pending.forEach(function(r){
       h+='<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(r.name)+'</div><div class="muted small">wants '+fmt(r.amount)+'</div></div><button onclick="decide(\''+r.id+'\',false)" style="height:44px;padding:0 14px;border-radius:10px;border:1px solid #2a312d;background:transparent;color:#f2efe6;font-weight:600">No</button><button onclick="decide(\''+r.id+'\',true)" style="height:44px;padding:0 16px;border-radius:10px;border:0;background:#d8b45c;color:#14110a;font-weight:700">Approve</button></div>';
+    });
+  }
+  if(me.can.bank&&v.corrections&&v.corrections.length){
+    h+='<div class="h2">RECENT CHIP CHANGES</div><div class="muted small" style="margin-bottom:8px">Made a mistake? Undo it. The original stays on the statement and a correction is added.</div>';
+    v.corrections.forEach(function(c){
+      h+='<div class="row" style="margin-bottom:6px;min-height:52px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(c.name)+' <span style="color:'+(c.amount>0?'#7ddba0':'#f08a8f')+'">'+(c.amount>0?'+':'−')+fmt(Math.abs(c.amount))+'</span></div><div class="muted small">'+clock(c.at)+' · '+(c.kind==='buyin'?'Buy-in':'Adjustment')+(c.reason?' · '+esc(c.reason):'')+'</div></div>'+(c.done?'<div class="muted small">'+(c.undo?'Correction':'Undone')+'</div>':'<button class="rolechip" onclick="undoChange(\''+c.playerId+'\','+c.index+',\''+esc(c.name)+'\','+c.amount+')">Undo</button>')+'</div>';
     });
   }
   if(me.can.players&&v.joins.length){
@@ -664,6 +671,23 @@ function gamesTab(cv){
   h+='<div class="h2">ALERTS</div><div class="muted small">You get a buzz and a sound about a minute before play while the app is open.</div><button class="btn ghost" style="margin-top:8px;height:44px" onclick="enableAlerts()">Turn on phone notifications</button>';
   return h;
 }
+function historyTab(cv){
+  var h='<div class="h2">PAST GAMES</div>',hs=cv.history||[];
+  if(!hs.length)return h+'<div class="muted small">Finished games appear here with their settlements.</div>';
+  hs.forEach(function(g){
+    var open=S.histOpen===g.id,tot=g.people.reduce(function(a,x){return a+(x.net>0?x.net:0);},0);
+    h+='<div class="evc" style="margin-top:8px"><button onclick="S.histOpen='+(open?'null':'\''+g.id+'\'')+';render()" style="width:100%;text-align:left;background:transparent;border:0;padding:0;color:inherit"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><div class="disp" style="font-size:24px;line-height:1.1">'+esc(g.title)+'</div><div class="muted small">'+esc(g.code)+'</div></div><div class="muted small">'+new Date(g.at).toLocaleString([],{dateStyle:'medium',timeStyle:'short'})+' · '+g.people.length+' players · '+g.sessions+' session'+(g.sessions===1?'':'s')+' · blinds '+fmt(g.sb)+'/'+fmt(g.bb)+' · '+fmt(tot)+' changed hands</div></button>';
+    if(open){
+      h+='<div style="margin-top:10px;border-top:1px solid #2a312d;padding-top:8px">';
+      g.people.slice().sort(function(a,b){return b.net-a.net;}).forEach(function(p){h+='<div style="display:flex;gap:8px;font-size:14px;padding:3px 0"><span style="flex:1">'+esc(p.name)+'</span><span class="muted small" style="align-self:center">in '+fmt(p.invested)+' · out '+fmt(p.final)+'</span><b style="min-width:64px;text-align:right;color:'+(p.net>0?'#7ddba0':p.net<0?'#f08a8f':'#f2efe6')+'">'+(p.net>0?'+':p.net<0?'−':'')+fmt(Math.abs(p.net))+'</b></div>';});
+      h+='<div class="h2" style="margin-top:12px">SETTLEMENT</div>'+(g.transfers.length?g.transfers.map(function(x){return '<div style="display:flex;justify-content:space-between;font-size:14px;padding:3px 0"><span>'+esc(x.from)+' pays '+esc(x.to)+'</span><b class="gold">'+fmt(x.amount)+'</b></div>';}).join(''):'<div class="muted small">Everyone finished even.</div>');
+      h+='<button class="rolechip" style="margin-top:12px;color:#d2454d;border-color:#6b2a2e" onclick="delGame(\''+g.id+'\')">Remove from history</button></div>';
+    }
+    h+='</div>';
+  });
+  return h;
+}
+function delGame(id){if(!confirm('Remove this game from the history?'))return;capi('deletegame',{id:id}).then(function(){S.histOpen=null;}).catch(fail);}
 function membersTab(cv){
   var h=linkCard(),own=cv.me.isOwner;
   if(own){h+='<div class="evc"><div class="disp" style="font-size:26px">Add a member</div><div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">'+dfield('m_name','NAME','','maxlength="14" placeholder="Nickname at the table"')+dfield('m_phone','PHONE (OPTIONAL, FOR WHATSAPP)','','inputmode="tel" placeholder="+91..."')+'<button class="btn" onclick="doAddMember()">Register and get link</button></div></div>';}
@@ -680,8 +704,8 @@ function clubScreen(){
   var h='<div class="sheet" style="padding-bottom:96px"><div style="display:flex;align-items:center;justify-content:space-between"><div style="min-width:0"><div class="muted small" style="letter-spacing:.14em">'+esc(cv.club.name).toUpperCase()+'</div><div class="disp" style="font-size:36px;line-height:1.05">Hi, '+esc(me.name)+'</div></div>'+(me.isOwner?'<div class="pill2 g">ADMIN</div>':'')+'</div>';
   if(me.isOwner&&cv.storage&&/^file/.test(cv.storage))h+='<div class="evc" style="border-color:#d8b45c"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.14em">TEMPORARY STORAGE</div><div class="muted small" style="margin-top:6px">Club data is only kept on the server and is lost when it restarts. Connect the Google Drive storage to keep it safe.</div></div>';
   if(cv.saveError)h+='<div class="evc" style="border-color:#d2454d"><div style="font-size:13px">Club data could not be saved: '+esc(cv.saveError)+'</div></div>';
-  h+=(S.tab==='members'&&me.manage)?membersTab(cv):gamesTab(cv);
-  h+='</div><div class="tabs"><button class="'+(S.tab==='games'?'on':'')+'" onclick="S.tab=\'games\';render()">Games</button>'+(me.manage?'<button class="'+(S.tab==='members'?'on':'')+'" onclick="S.tab=\'members\';render()">Members</button>':'')+'<button onclick="S.quick=true;render()">Quick table</button><button onclick="if(confirm(\'Leave the club on this phone? You can come back with your link.\')){clubForget();render();}">Sign out</button></div>';
+  h+=(S.tab==='history'&&me.isOwner)?historyTab(cv):(S.tab==='members'&&me.manage)?membersTab(cv):gamesTab(cv);
+  h+='</div><div class="tabs"><button class="'+(S.tab==='games'?'on':'')+'" onclick="S.tab=\'games\';render()">Games</button>'+(me.manage?'<button class="'+(S.tab==='members'?'on':'')+'" onclick="S.tab=\'members\';render()">Members</button>':'')+(me.isOwner?'<button class="'+(S.tab==='history'?'on':'')+'" onclick="S.tab=\'history\';render()">History</button>':'')+'<button onclick="S.quick=true;render()">Quick table</button><button onclick="if(confirm(\'Leave the club on this phone? You can come back with your link.\')){clubForget();render();}">Sign out</button></div>';
   return h;
 }
 function alertBar(){

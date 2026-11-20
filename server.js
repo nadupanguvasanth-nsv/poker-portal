@@ -89,6 +89,19 @@ function httpErr(status, message) { const e = new Error(message); e.status = sta
 function say(t, text) { t.log.push({ at: Date.now(), text }); if (t.log.length > 40) t.log.shift(); }
 const nameOf = (t, id) => (t.players.get(id) || { name: '?' }).name;
 
+// the latest chip changes a banker can undo (not their own, unless they are the admin)
+function recentChanges(t, pid, isAdmin) {
+  const out = [];
+  for (const p of t.players.values()) {
+    if (p.id === pid && !isAdmin) continue;
+    p.ledger.forEach((e, i) => {
+      if (!['buyin', 'adjust'].includes(e.kind) || !e.amount) return;
+      out.push({ playerId: p.id, name: p.name, index: i, kind: e.kind, amount: e.amount, reason: e.reason || '', at: e.t, done: !!(e.reversed || e.undo), undo: !!e.undo });
+    });
+  }
+  return out.sort((a, b) => b.at - a.at).slice(0, 12);
+}
+
 // the special game: what the admin chose and how many hands until it is played
 function specialInfo(t) {
   const ring = lineup(t);
@@ -149,6 +162,7 @@ function viewFor(t, pid) {
       }),
     },
     seats,
+    corrections: can(t, me, 'bank') ? recentChanges(t, pid, isAdmin) : [],
     special: specialInfo(t),
     hand: hv && { variant: hv.variant, variantName: hv.variantName, hole: hv.hole, boards: hv.boards, boardKind: hv.boardKind, runit: hv.runit, runs: hv.runs, street: hv.street, board: hv.board, pot: hv.pot, currentBet: hv.currentBet, turnId: hv.turnId, finished: hv.finished, legal: hv.legal, deadline: t.deadline },
     result: t.lastResult,
@@ -161,6 +175,7 @@ function viewFor(t, pid) {
 
 function send(res, obj) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); }
 function broadcast(t) {
+  markTables();
   for (const [pid, set] of t.clients) {
     if (!t.players.has(pid)) continue;
     const v = viewFor(t, pid);
@@ -538,6 +553,26 @@ const routes = {
     broadcast(t); maybeStartHand(t);
     return { ok: true };
   },
+  // correct a mistake: reverse a buy-in or an adjustment. The original stays on the statement and a correcting entry is added.
+  undo(b) {
+    const { t, p } = auth(b); need(t, p, 'bank');
+    const target = t.players.get(b.playerId);
+    if (!target) throw httpErr(404, 'Player not found');
+    if (target.id === p.id && p.id !== t.adminId) throw httpErr(403, 'Another banker must correct your own chips');
+    const e = target.ledger[Math.floor(Number(b.index))];
+    if (!e || !['buyin', 'adjust'].includes(e.kind) || e.undo || e.reversed || !e.amount) throw httpErr(400, 'That entry cannot be undone');
+    const delta = -e.amount;
+    if (target.stack + target.queued + delta < 0) throw httpErr(400, `${target.name} no longer has those chips. Adjust by hand instead.`);
+    const label = e.kind === 'buyin' ? 'buy-in' : (e.reason || 'adjustment');
+    credit(t, target, delta, 'adjust', 'banker');
+    const c = target.ledger[target.ledger.length - 1];
+    c.reason = ('Undo: ' + label).slice(0, 60); c.undo = true;
+    e.reversed = true;
+    if (e.kind === 'buyin') target.bought -= e.amount;
+    say(t, `Banker undid ${target.name}'s ${label} (${e.amount > 0 ? '+' : ''}${e.amount})`);
+    broadcast(t); maybeStartHand(t);
+    return { ok: true };
+  },
   settings(b) {
     const { t, p } = auth(b); need(t, p, 'settings');
     t.settings = cleanSettings(b.settings, t.settings);
@@ -809,7 +844,48 @@ setInterval(() => {
   for (const [code, t] of tables) if (!t.clients.size && Date.now() - (t.log.length ? t.log[t.log.length - 1].at : t.createdAt) > 12 * 3600e3) tables.delete(code);
 }, 600e3).unref();
 
-const ready = club.load();
+// ---------- live tables survive a restart ----------
+// A snapshot is a consistent picture between hands: chips are only moved into a hand's own pot and are not taken from a
+// player's stack until the hand ends, so a hand that was running when the server stopped is simply cancelled and everyone
+// keeps what they had before it.
+function dumpTables() {
+  const out = {};
+  for (const t of tables.values()) {
+    if (t.closed) continue;
+    const o = {};
+    for (const k of Object.keys(t)) if (!['clients', 'timer', 'nextTimer', 'hand', 'players'].includes(k)) o[k] = t[k];
+    o.players = [...t.players.values()].map((p) => ({ ...p, connected: false }));
+    o.hadHand = !!(t.hand && !t.hand.finished);
+    out[t.code] = JSON.parse(JSON.stringify(o));
+  }
+  return out;
+}
+let tablesDirty = false, tablesTimer = null;
+function markTables() {
+  tablesDirty = true;
+  if (tablesTimer) return;
+  tablesTimer = setTimeout(() => { tablesTimer = null; if (tablesDirty) { tablesDirty = false; try { club.setTables(dumpTables()); } catch (e) { console.error('Could not save tables:', e.message); } } }, Number(process.env.TABLE_SAVE_MS || 8000));
+  if (tablesTimer.unref) tablesTimer.unref();
+}
+function restoreTables() {
+  const saved = club.getTables(), now = Date.now();
+  let n = 0;
+  for (const [code, o] of Object.entries(saved)) {
+    const last = o.log && o.log.length ? o.log[o.log.length - 1].at : o.createdAt;
+    if (now - last > (o.ended ? 7 * 24 : 24) * 3600e3) continue; // old and untouched
+    const t = { ...o, players: new Map(), clients: new Map(), timer: null, nextTimer: null, hand: null, deadline: 0 };
+    delete t.hadHand;
+    for (const p of o.players) t.players.set(p.id, { ...p, connected: false });
+    tables.set(code, t);
+    if (t.final) for (const x of t.final.people) statementLinks.set(x.dl, { code, pid: x.id });
+    if (o.hadHand) say(t, 'The server restarted. The hand in progress was cancelled and everyone keeps the chips they had before it.');
+    else say(t, 'The server restarted. Play continues in a moment.');
+    if (t.running && !t.ended) t.nextTimer = setTimeout(() => maybeStartHand(t), Number(process.env.RESTORE_DELAY_MS || 8000));
+    n++;
+  }
+  if (n) console.log(`Restored ${n} live table${n === 1 ? '' : 's'} from storage`);
+}
+const ready = club.load().then(restoreTables);
 ready.catch(() => {}); // reported where it matters (startup below)
 setInterval(() => {
   for (const t of tables.values()) {
@@ -824,7 +900,13 @@ setInterval(() => {
 const clubTimer = setInterval(() => { try { club.tick(); } catch (e) { console.error(e); } }, 5000);
 clubTimer.unref();
 
+// a deploy or restart: write everything out before stopping
+async function shutdown() {
+  try { club.setTables(dumpTables()); await club.flush(); } catch (e) { console.error('Final save failed:', e.message); }
+  process.exit(0);
+}
 if (require.main === module) {
+  process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   ready.then(() => server.listen(PORT, () => console.log('Smart Buddies listening on ' + PORT)))
     .catch((e) => { console.error('Not starting: the club data could not be read (' + e.message + '). Check DRIVE_SCRIPT_URL and DRIVE_SECRET.'); process.exit(1); });
 }
