@@ -454,6 +454,7 @@ function sheet(){
   var v=S.view,me=v.you,h='<div class="sheet">';
   h+='<div style="display:flex;align-items:center;justify-content:space-between"><div class="disp" style="font-size:34px">Table menu</div><button onclick="S.sheet=false;render()" aria-label="Close menu" style="width:44px;height:44px;border:0;background:transparent;color:#f2efe6;font-size:28px">×</button></div>';
   h+='<div class="row" style="margin-top:8px"><div style="flex:1"><div class="muted small">ROOM CODE</div><div class="disp gold" style="font-size:34px;letter-spacing:.2em">'+esc(v.code)+'</div></div><button class="btn line" style="width:auto;padding:0 16px;height:44px;font-size:14px" onclick="share()">Share</button></div>';
+  if(S.mtoken&&S.cv)h+='<button class="btn line" style="margin-top:12px" onclick="S.toClub=true;S.sheet=false;render()">Go to club home (members, games)</button>';
   h+=specialBlock(v,me);
   h+=sessionBlock(v,me);
   if(!me.isAdmin){
