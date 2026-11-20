@@ -72,6 +72,8 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .tabs button.on{color:#d8b45c}
 .rolechip{height:34px;padding:0 10px;border-radius:17px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px;font-weight:600}
 .rolechip.on{border-color:#d8b45c;color:#d8b45c;background:rgba(216,180,92,.1)}
+@keyframes drin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.dr.anim{opacity:0;animation:drin .45s ease forwards}
 input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 .small{font-size:12px;line-height:1.5}
 </style>
@@ -116,6 +118,7 @@ function connect(){
   S.es=es;
   es.onmessage=function(ev){
     var v=JSON.parse(ev.data);
+    if(v.gone){clearSession();toast(v.text||'You have left the table.');return;}
     S.offset=Date.now()-v.now; S.online=true; S.fails=0;
     var key=v.hand&&v.hand.legal?v.handNo+':'+v.hand.street+':'+v.hand.currentBet:'';
     if(key&&key!==S.turnKey){ S.raiseTo=null; if(navigator.vibrate) navigator.vibrate(120); }
@@ -150,6 +153,28 @@ function pickPoster(){
   return IMG[S.poster];
 }
 
+// ---- sessions ----
+function two(n){return (n<10?'0':'')+n;}
+function sessLeft(se){
+  if(!se||!se.no)return '';
+  if(se.ended)return 'Game over';
+  if(se.ending)return 'Deck change next';
+  var ms=se.endsAt+S.offset-Date.now();if(ms<0)ms=0;
+  var s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor(s%3600/60);
+  return 'S'+se.no+' '+(h?h+':'+two(m)+':'+two(s%60):m+':'+two(s%60));
+}
+function clock(ts){return new Date(ts).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
+function drawOverlay(v){
+  var d=v.session&&v.session.draw;if(!d||S.drawSeen===d.session)return '';
+  var anim=S.drawAnim!==d.session;S.drawAnim=d.session;
+  var h='<div class="abs" style="inset:0;z-index:50;background:#060807;padding:26px 20px;overflow-y:auto"><div class="gold" style="font-size:12px;font-weight:700;letter-spacing:.2em;text-align:center">SESSION '+d.session+' · SEAT DRAW</div><div class="disp" style="font-size:38px;text-align:center;line-height:1.05;margin-top:6px">Highest card takes the button</div><div class="muted small" style="text-align:center;margin-top:6px">Ace high. Spades, hearts, diamonds, clubs break ties. Seats follow the order of the cards.</div><div style="margin-top:16px">';
+  d.cards.forEach(function(c,i){
+    var me=c.id===v.you.id;
+    h+='<div class="row dr'+(anim?' anim':'')+'" style="margin-bottom:8px;'+(anim?'animation-delay:'+(i*0.35)+'s;':'')+(i===0?'border-color:#d8b45c;background:rgba(216,180,92,.1);':'')+'"><div class="disp gold" style="width:26px;font-size:26px">'+(i+1)+'</div>'+card(c.card,'md')+'<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(me?'You':esc(c.name))+'</div>'+(c.ghost?'<div class="muted small">Left early</div>':'')+'</div>'+(i===0?'<div class="pill2 g">BUTTON</div>':'')+'</div>';
+  });
+  return h+'</div><button class="btn" style="margin-top:8px" onclick="S.drawSeen='+d.session+';render()">Continue</button></div>';
+}
+
 // ---- screens ----
 function lobby(){
   var admin=S.lobbyMode==='admin';
@@ -171,7 +196,7 @@ function lobby(){
     h+='<div style="margin-top:16px;width:100%;display:flex;flex-direction:column;gap:10px">'+
     '<div class="field"><label for="nick">YOUR NICKNAME</label><input id="nick" maxlength="14" placeholder="Admin and banker" value="'+esc(ls('poker-name'))+'"></div>'+
     '<div style="display:flex;gap:10px"><div class="field" style="flex:1"><label for="sb">SMALL BLIND</label><input id="sb" inputmode="numeric" value="25"></div><div class="field" style="flex:1"><label for="bb">BIG BLIND</label><input id="bb" inputmode="numeric" value="50"></div></div>'+
-    '<div style="display:flex;gap:10px"><div class="field" style="flex:1"><label for="ts">TURN TIMER (SEC)</label><input id="ts" inputmode="numeric" value="40"></div><div class="field" style="flex:1"><label for="mb">MAX BUY-IN</label><input id="mb" inputmode="numeric" value="10000"></div></div></div>'+
+    '<div style="display:flex;gap:10px"><div class="field" style="flex:1"><label for="ts">TURN TIMER (SEC)</label><input id="ts" inputmode="numeric" value="40"></div><div class="field" style="flex:1"><label for="mn">MIN BUY-IN</label><input id="mn" inputmode="numeric" value="1000"></div><div class="field" style="flex:1"><label for="mb">MAX BUY-IN</label><input id="mb" inputmode="numeric" value="10000"></div></div><div class="field"><label for="sm">SESSION LENGTH (MINUTES)</label><input id="sm" inputmode="numeric" value="120"></div></div>'+
     '<button class="btn" style="margin-top:16px" onclick="doCreate()">Open the table</button>'+
     '<button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'join\';render()">Back</button>';
   }
@@ -185,7 +210,7 @@ function doJoin(){
 }
 function doCreate(){
   var n=val('nick').trim();try{localStorage.setItem('poker-name',n);}catch(e){}
-  fetch('/api/create',{method:'POST',body:JSON.stringify({name:n,settings:{sb:val('sb'),bb:val('bb'),turnSeconds:val('ts'),maxBuyin:val('mb')}})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error);return j;});})
+  fetch('/api/create',{method:'POST',body:JSON.stringify({name:n,settings:{sb:val('sb'),bb:val('bb'),turnSeconds:val('ts'),minBuyin:val('mn'),maxBuyin:val('mb'),sessionMinutes:val('sm')}})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error);return j;});})
   .then(start).catch(fail);
 }
 function start(j){S.code=j.code;S.token=j.token;S.pid=j.pid;saveSession();S.sheet=false;connect();requestWake();}
@@ -199,7 +224,7 @@ function table(){
   var h='';
   // top bar
   h+='<div class="abs" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 20px;display:flex;align-items:center;gap:12px">'+
-  '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM '+esc(v.code)+'</div><div class="muted" style="margin-top:2px;font-size:13px">'+(v.handNo?'Hand '+v.handNo:'Not started')+(S.online?'':' · reconnecting')+'</div></div>'+
+  '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM '+esc(v.code)+'</div><div class="muted" style="margin-top:2px;font-size:13px">'+(v.handNo?'Hand '+v.handNo:'Not started')+(v.session.no?' · <span data-sess="1">'+sessLeft(v.session)+'</span>':'')+(S.online?'':' · reconnecting')+'</div></div>'+
   '<div style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #2a312d;background:#141917;font-size:13px;font-weight:600;display:flex;align-items:center">'+fmt(v.settings.sb)+' / '+fmt(v.settings.bb)+'</div>'+
   '<button aria-label="Table menu" onclick="S.sheet=true;render()" style="width:44px;height:44px;border:0;background:transparent;padding:0;display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f2efe6" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'+(me.isAdmin&&v.pending.length?'<span style="position:absolute;margin:-18px -14px 0 0;width:10px;height:10px;border-radius:5px;background:#d2454d"></span>':'')+'</button></div>';
   // felt
@@ -224,8 +249,8 @@ function table(){
     var st=v.seats[s]; var rel=(s-mySeat+n)%n; var pos=seatXY(rel,n);
     if(rel===0) continue; // you are drawn at the bottom
     if(!st){ h+='<div class="seat" style="left:'+(pos.x-38)+'px;top:'+(pos.y-26)+'px;opacity:.25"><div class="av" style="border-style:dashed"></div></div>'; continue; }
-    var cls='seat'+(st.isTurn?' turn':'')+((st.away||st.folded||(!st.inHand&&hand&&!hand.finished))?' out':'')+(st.allIn?' allin':'');
-    var line2=st.allIn?'<div class="pill" style="margin-top:3px;background:#d2454d;color:#fff">ALL IN</div>':(st.away?'<div class="sname">Away</div>':st.folded?'<div class="sname">Folded</div>':(!st.inHand&&st.stack<=0?'<div class="sname">No chips</div>':'<div class="sname">'+esc(st.name)+'</div>'));
+    var cls='seat'+(st.isTurn?' turn':'')+((st.ghost||st.approved===false||st.away||st.folded||(!st.inHand&&hand&&!hand.finished))?' out':'')+(st.allIn?' allin':'');
+    var line2=st.allIn?'<div class="pill" style="margin-top:3px;background:#d2454d;color:#fff">ALL IN</div>':(st.ghost?'<div class="sname">Left early</div>':(st.approved===false?'<div class="sname">Waiting</div>':st.away?'<div class="sname">Away</div>':st.folded?'<div class="sname">Folded</div>':(!st.inHand&&st.stack<=0?'<div class="sname">No chips</div>':'<div class="sname">'+esc(st.name)+'</div>')));
     var showCards=st.cards&&st.cards[0]!=='??'&&RES;
     h+='<div class="'+cls+'" style="left:'+(pos.x-38)+'px;top:'+(pos.y-26)+'px">'+
       '<div class="av">'+initials(st.name)+(st.isButton?'<span class="badge">D</span>':'')+(st.connected?'':'<span style="position:absolute;right:-2px;bottom:-2px;width:10px;height:10px;border-radius:5px;background:#a3aba5;border:2px solid #0a0c0b"></span>')+'</div>'+
@@ -246,6 +271,8 @@ function table(){
   if(my&&my.bet>0){h+='<div class="bet" style="left:195px;top:402px">'+fmt(my.bet)+'</div>';}
   h+='<div class="abs" style="left:0;top:514px;width:390px;display:flex;justify-content:center"><div style="height:26px;padding:0 14px;border-radius:13px;background:#141917;border:1px solid '+(my&&my.isTurn?'#d8b45c':'#2a312d')+';font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">'+esc(me.name)+(my&&my.isButton?' <span class="gold">D</span>':'')+' <span class="gold">'+fmt(me.stack)+'</span>'+(me.queued?'<span class="muted" style="font-weight:500">+'+fmt(me.queued)+' next hand</span>':'')+'</div></div>';
   h+=actionPanel(v);
+  h+=stmtPopup(v);
+  h+=drawOverlay(v);
   return h;
 }
 
@@ -307,6 +334,9 @@ function showdownPanel(v){
 
 function waitingBox(v){
   var hand=v.hand,me=v.you,msg='';
+  if(v.session.ended){return '<div class="disp" style="font-size:28px">The game is over</div><div class="muted small" style="margin:6px 0 14px">Thanks for playing.</div>'+(v.settlement?mySettle(v)+'<div class="muted small" style="margin:0 0 12px">'+(me.member?'Your full statement for the whole game is being sent to your WhatsApp.':'Your full statement for the whole game is ready.')+'</div><button class="btn" style="margin-bottom:8px" onclick="getStatement()">Download my full statement (PDF)</button><button class="btn ghost" style="margin-bottom:8px" onclick="S.sheet=true;render()">My statement</button>':'')+(me.can.start?'<button class="btn" onclick="doStart()">Start a new game</button>':'');}
+  if(me.ghost){return '<div class="disp" style="font-size:28px">You left early</div><div class="muted small" style="margin:6px 0 0">Your seat keeps paying blinds until the end of session '+me.ghostUntil+(me.ghostEndsAt?' (about '+clock(me.ghostEndsAt)+')':'')+'. The admin can release you early in an emergency.</div>';}
+  if(me.approved===false){return '<div class="disp" style="font-size:28px">Waiting for the admin</div><div class="muted small" style="margin:6px 0 0">The admin decides whether to let you in now that the game has started.</div>';}
   if(me.away){return '<div class="disp" style="font-size:28px">You are sitting out</div><div class="muted small" style="margin:6px 0 14px">You are skipped until you come back. Your chips stay safe.</div><button class="btn" onclick="api(\'back\').catch(fail)">I\'m back</button>';}
   var el=v.seats.filter(function(s){return s&&s.stack>0;}).length;
   if(me.stack<=0&&!me.inHand&&!me.queued){
@@ -338,6 +368,27 @@ function quick(f){
 }
 function doAct(t){api('act',{type:t}).catch(fail);}
 function doRaise(){api('act',{type:'raise',amount:S.raiseTo}).catch(fail);}
+var PWR=['start','bank','settings','players'];
+var PWR_LABEL={start:'Start and end',bank:'Banker',settings:'Blinds and timer',players:'Players'};
+var PWR_SHORT={start:'start',bank:'banker',settings:'settings',players:'players',invite:'invitations'};
+function togglePower(pid,role){var st=S.view.seats.filter(function(x){return x&&x.id===pid;})[0];if(!st)return;var r=(st.roles||[]).filter(function(x){return PWR.indexOf(x)>=0;}),i=r.indexOf(role);if(i<0)r.push(role);else r.splice(i,1);api('delegate',{playerId:pid,roles:r}).catch(fail);}
+function admit(id,ok){api('admit',{reqId:id,ok:ok}).catch(fail);}
+function endGame(){if(!confirm('End the game after this hand? No more hands are dealt, everyone is released and all delegated powers end.'))return;api('endgame').catch(fail);}
+function postCall(n){api('calltime',{session:n}).then(function(){toast('Call time posted');}).catch(fail);}
+function cancelCall(){api('calltime',{cancel:true}).catch(fail);}
+function sessionBlock(v,me){
+  var se=v.session,h='<div class="h2">SESSION</div>';
+  if(!se.no){return h+'<div class="row"><div class="muted small">Sessions begin when the game starts. Each lasts '+se.minutes+' minutes, then the hand in play finishes, the deck changes and a new seat draw decides the button.</div></div>';}
+  h+='<div class="row"><div style="flex:1"><div style="font-size:14px;font-weight:600">'+(se.ended?'Game over':'Session '+se.no)+'</div><div class="muted small">'+(se.ended?'The table has ended.':se.ending?'Time is up. Deck change after this hand.':'Deck change in <span data-sess="1">'+sessLeft(se)+'</span>')+'</div></div></div>';
+  if(!me.isAdmin&&!me.ghost&&me.approved!==false&&!se.ended){
+    h+='<div class="muted small" style="margin:8px 2px">Minimum stay: until the end of session '+me.stayUntil+'.</div>';
+    if(me.callAfter){h+='<div class="row"><div style="flex:1;font-size:14px;font-weight:600">Call time posted<div class="muted small" style="font-weight:400">You stand up after session '+me.callAfter+'</div></div><button class="rolechip" onclick="cancelCall()">Cancel</button></div>';}
+    else if(me.callOptions&&me.callOptions.length){
+      h+='<div class="muted small" style="margin:10px 2px 6px">POST YOUR CALL TIME (ONE HOUR OF NOTICE)</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+me.callOptions.map(function(o){return '<button class="rolechip'+(o.ok?' on':'')+'" '+(o.ok?'':'disabled style="opacity:.4" ')+'onclick="postCall('+o.session+')">After session '+o.session+' · '+clock(o.endsAt)+'</button>';}).join('')+'</div>';
+    }
+  }
+  return h;
+}
 function doStart(){api('start').catch(fail);}
 
 // ---- menu sheet ----
@@ -345,11 +396,14 @@ function sheet(){
   var v=S.view,me=v.you,h='<div class="sheet">';
   h+='<div style="display:flex;align-items:center;justify-content:space-between"><div class="disp" style="font-size:34px">Table menu</div><button onclick="S.sheet=false;render()" aria-label="Close menu" style="width:44px;height:44px;border:0;background:transparent;color:#f2efe6;font-size:28px">×</button></div>';
   h+='<div class="row" style="margin-top:8px"><div style="flex:1"><div class="muted small">ROOM CODE</div><div class="disp gold" style="font-size:34px;letter-spacing:.2em">'+esc(v.code)+'</div></div><button class="btn line" style="width:auto;padding:0 16px;height:44px;font-size:14px" onclick="share()">Share</button></div>';
+  h+=sessionBlock(v,me);
   // buy-in
+  if(!(me.ghost||me.approved===false)){
   h+='<div class="h2">'+(me.isAdmin?'BUY IN FOR YOURSELF':'REQUEST CHIPS')+'</div>';
   var pend=v.pending.filter(function(r){return r.playerId===me.id;})[0];
   if(pend&&!me.isAdmin) h+='<div class="row"><div style="flex:1"><div style="font-size:14px;font-weight:600">Waiting for the banker</div><div class="muted small">Requested '+fmt(pend.amount)+'</div></div></div>';
-  else h+='<div style="display:flex;gap:8px"><input id="bamt" inputmode="numeric" placeholder="Amount (max '+fmt(v.settings.maxBuyin)+')" style="flex:1;height:48px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;padding:0 14px"><button class="btn" style="width:110px" onclick="doBuyin()">'+(me.isAdmin?'Add':'Request')+'</button></div>';
+  else h+='<div style="display:flex;gap:8px"><input id="bamt" inputmode="numeric" placeholder="Amount ('+fmt(v.settings.minBuyin)+' to '+fmt(v.settings.maxBuyin)+')" style="flex:1;height:48px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;padding:0 14px"><button class="btn" style="width:110px" onclick="doBuyin()">'+(me.isAdmin?'Add':'Request')+'</button></div>';
+  }
   if(me.can.bank){
     h+='<div class="h2">BANKER</div>';
     if(!v.pending.length) h+='<div class="muted small">No requests waiting.</div>';
@@ -357,39 +411,97 @@ function sheet(){
       h+='<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(r.name)+'</div><div class="muted small">wants '+fmt(r.amount)+'</div></div><button onclick="decide(\''+r.id+'\',false)" style="height:44px;padding:0 14px;border-radius:10px;border:1px solid #2a312d;background:transparent;color:#f2efe6;font-weight:600">No</button><button onclick="decide(\''+r.id+'\',true)" style="height:44px;padding:0 16px;border-radius:10px;border:0;background:#d8b45c;color:#14110a;font-weight:700">Approve</button></div>';
     });
   }
+  if(me.can.players&&v.joins.length){
+    h+='<div class="h2">WANT TO JOIN</div>';
+    v.joins.forEach(function(r){h+='<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(r.name)+'</div><div class="muted small">stays this session and two more</div></div><button onclick="admit(\''+r.id+'\',false)" style="height:44px;padding:0 14px;border-radius:10px;border:1px solid #2a312d;background:transparent;color:#f2efe6;font-weight:600">Not now</button><button onclick="admit(\''+r.id+'\',true)" style="height:44px;padding:0 16px;border-radius:10px;border:0;background:#d8b45c;color:#14110a;font-weight:700">Let in</button></div>';});
+  }
   if(me.can.start){
-    h+='<div style="margin-top:12px">'+(v.running?'<button class="btn ghost" onclick="api(\'pause\').catch(fail)">Pause after this hand</button>':'<button class="btn" onclick="doStart();S.sheet=false;render()">'+(v.handNo?'Resume the game':'Start the game')+'</button>')+'</div>';
+    h+='<div style="margin-top:12px">'+(v.running?'<button class="btn ghost" onclick="api(\'pause\').catch(fail)">Pause after this hand</button>':'<button class="btn" onclick="doStart();S.sheet=false;render()">'+(v.handNo?'Resume the game':'Start the game')+'</button>')+(v.session.no&&!v.session.ended?'<button class="btn ghost" style="margin-top:8px" onclick="endGame()">'+(v.session.endingGame?'Ending after this hand':'End the game')+'</button>':'')+'</div>';
   }
   if(me.can.settings){
-    h+='<div class="h2">BLINDS AND TIMER</div><div style="display:flex;gap:8px"><div class="field" style="flex:1"><label for="s_sb">SMALL</label><input id="s_sb" inputmode="numeric" value="'+v.settings.sb+'"></div><div class="field" style="flex:1"><label for="s_bb">BIG</label><input id="s_bb" inputmode="numeric" value="'+v.settings.bb+'"></div><div class="field" style="flex:1"><label for="s_ts">TIMER (S)</label><input id="s_ts" inputmode="numeric" value="'+v.settings.turnSeconds+'"></div></div><button class="btn ghost" style="margin-top:8px" onclick="saveSettings()">Save from next hand</button>';
+    h+='<div class="h2">BLINDS AND TIMER</div><div style="display:flex;gap:8px"><div class="field" style="flex:1"><label for="s_sb">SMALL</label><input id="s_sb" inputmode="numeric" value="'+v.settings.sb+'"></div><div class="field" style="flex:1"><label for="s_bb">BIG</label><input id="s_bb" inputmode="numeric" value="'+v.settings.bb+'"></div><div class="field" style="flex:1"><label for="s_ts">TIMER (S)</label><input id="s_ts" inputmode="numeric" value="'+v.settings.turnSeconds+'"></div></div><div style="display:flex;gap:8px;margin-top:8px"><div class="field" style="flex:1"><label for="s_mn">MIN BUY-IN</label><input id="s_mn" inputmode="numeric" value="'+v.settings.minBuyin+'"></div><div class="field" style="flex:1"><label for="s_mb">MAX BUY-IN</label><input id="s_mb" inputmode="numeric" value="'+v.settings.maxBuyin+'"></div></div><div class="field" style="margin-top:8px"><label for="s_sm">SESSION LENGTH (MINUTES)</label><input id="s_sm" inputmode="numeric" value="'+v.settings.sessionMinutes+'"></div><button class="btn ghost" style="margin-top:8px" onclick="saveSettings()">Save from next hand</button>';
   }
   // players
   h+='<div class="h2">PLAYERS</div>';
   v.seats.filter(Boolean).forEach(function(s){
-    h+='<div class="row" style="margin-bottom:6px;flex-wrap:wrap"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(s.name)+(s.isAdmin?' <span class="gold" style="font-size:11px">BANKER</span>':'')+(s.id===me.id?' <span class="muted" style="font-size:11px">YOU</span>':'')+'</div><div class="muted small">'+(s.connected?'Online':'Offline')+(s.away?' · Sitting out':'')+'</div></div><div style="font-size:15px;font-weight:700">'+fmt(s.stack)+'</div>'+
-    ((me.can.bank||me.can.players)?'<div style="flex-basis:100%;display:flex;gap:6px">'+(me.can.bank&&!(s.id===me.id&&!me.isAdmin)?'<button aria-label="Adjust chips for '+esc(s.name)+'" onclick="adjust(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">Adjust</button>':'')+(me.can.players&&s.id!==me.id&&!s.isAdmin?'<button onclick="setAway(\''+s.id+'\','+(!s.away)+')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">'+(s.away?'Bring back':'Sit out')+'</button><button onclick="kick(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #6b2a2e;background:transparent;color:#d2454d;font-size:12px">Remove</button>':'')+'</div>':'')+'</div>';
+    h+='<div class="row" style="margin-bottom:6px;flex-wrap:wrap"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(s.name)+(s.isAdmin?' <span class="gold" style="font-size:11px">BANKER</span>':'')+(s.id===me.id?' <span class="muted" style="font-size:11px">YOU</span>':'')+'</div><div class="muted small">'+(s.connected?'Online':'Offline')+(s.ghost?' · Left early, paying blinds':s.approved===false?' · Waiting to be let in':s.away?' · Sitting out':'')+(s.roles&&s.roles.length?' · Powers: '+s.roles.map(function(r){return PWR_SHORT[r];}).join(', '):'')+'</div></div><div style="font-size:15px;font-weight:700">'+fmt(s.stack)+'</div>'+
+    ((me.can.bank||me.can.players)?'<div style="flex-basis:100%;display:flex;gap:6px">'+(me.can.bank&&!(s.id===me.id&&!me.isAdmin)?'<button aria-label="Adjust chips for '+esc(s.name)+'" onclick="adjust(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">Adjust</button>':'')+(me.can.players&&s.id!==me.id&&!s.isAdmin?'<button onclick="setAway(\''+s.id+'\','+(!s.away)+')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">'+(s.away?'Bring back':'Sit out')+'</button><button onclick="kick(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #6b2a2e;background:transparent;color:#d2454d;font-size:12px">'+(s.ghost?'Release':'Remove')+'</button>':'')+'</div>':'')+(me.isAdmin&&!s.isAdmin&&s.id!==me.id&&!s.ghost?'<div style="flex-basis:100%;margin-top:8px"><div class="muted" style="font-size:11px;letter-spacing:.08em;margin-bottom:6px">POWERS FOR THIS GAME ONLY</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+PWR.map(function(r){return '<button class="rolechip'+((s.roles||[]).indexOf(r)>=0?' on':'')+'" onclick="togglePower(\''+s.id+'\',\''+r+'\')">'+PWR_LABEL[r]+'</button>';}).join('')+'</div></div>':'')+'</div>';
   });
+  if(v.settlement)h+=settleBlock(v);
   // statement
   h+='<div class="h2">MY STATEMENT</div>';
   var net=me.stack+me.queued-me.bought;
   h+='<div style="display:flex;gap:8px"><div class="row" style="flex:1;display:block;padding:10px 12px"><div class="muted" style="font-size:11px;letter-spacing:.1em">BOUGHT IN</div><div class="disp" style="font-size:28px">'+fmt(me.bought)+'</div></div><div class="row" style="flex:1;display:block;padding:10px 12px"><div class="muted" style="font-size:11px;letter-spacing:.1em">NET</div><div class="disp" style="font-size:28px;color:'+(net<0?'#f08a8f':'#f2efe6')+'">'+(net<0?'−':'')+fmt(Math.abs(net))+'</div></div></div>';
   h+=chart(v.history);
+  h+=sessRows(v);
+  h+='<button class="btn ghost" style="margin-top:10px" onclick="getStatement()">Download my statement so far (PDF)</button>';
   v.ledger.slice().reverse().forEach(function(l){
     h+='<div class="row" style="margin-top:6px;min-height:44px"><div class="muted" style="width:62px;font-size:13px">'+new Date(l.t).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</div><div style="flex:1;font-size:14px;font-weight:600">'+(l.kind==='buyin'?'Buy-in':'Banker adjustment')+(l.reason?' <span class="muted" style="font-weight:400">'+esc(l.reason)+'</span>':'')+'</div><div style="font-size:14px;font-weight:600">'+(l.amount>0?'+':'−')+fmt(Math.abs(l.amount))+'</div></div>';
   });
   // log
   h+='<div class="h2">RECENT</div>';
   v.log.slice().reverse().forEach(function(l){h+='<div class="muted small" style="padding:3px 0">'+esc(l.text)+'</div>';});
-  h+='<div style="margin-top:24px;display:flex;flex-direction:column;gap:10px">'+(me.away?'':'<button class="btn ghost" onclick="api(\'sitout\').then(function(){S.sheet=false;render();}).catch(fail)">Sit out for a while</button>')+(me.isAdmin?'':'<button class="btn ghost" onclick="doLeave()">Leave the table</button>')+'<button class="btn ghost" onclick="forget()">Switch table (stay seated)</button></div>';
+  h+='<div style="margin-top:24px;display:flex;flex-direction:column;gap:10px">'+((me.away||me.ghost)?'':'<button class="btn ghost" onclick="api(\'sitout\').then(function(){S.sheet=false;render();}).catch(fail)">Sit out for a while</button>')+((me.isAdmin||me.ghost)?'':'<button class="btn ghost" onclick="doLeave()">'+(me.leave&&!me.leave.free?'Stand up early':'Leave the table')+'</button>')+'<button class="btn ghost" onclick="forget()">Switch table (stay seated)</button></div>';
   h+='<div style="margin:22px auto 0;width:100px;height:140px" class="poster"><img alt="" src="'+pickPoster()+'"></div>';
   return h+'</div>';
 }
+function sessRows(v){
+  var r=v.sessions||[];if(!r.length)return '';
+  var h='<div class="h2">SESSION BY SESSION</div>';
+  r.forEach(function(x){h+='<div class="row" style="margin-top:6px;min-height:52px"><div style="flex:1"><div style="font-size:14px;font-weight:700">Session '+x.no+(x.live?' <span class="muted" style="font-size:11px">IN PROGRESS</span>':'')+'</div><div class="muted small">Started with '+fmt(x.start)+', '+(x.live?'now ':'ended with ')+fmt(x.end)+'</div></div><div style="font-weight:800;font-size:18px;color:'+(x.net>0?'#7ddba0':x.net<0?'#f08a8f':'#f2efe6')+'">'+(x.net>0?'+':x.net<0?'−':'')+fmt(Math.abs(x.net))+'</div></div>';});
+  return h;
+}
+function stmtPopup(v){
+  if(v.session.no===0){S.stmtSeen=undefined;return '';}
+  var r=(v.sessions||[]).filter(function(x){return !x.live;});
+  if(S.stmtSeen===undefined){S.stmtSeen=r.length?r[r.length-1].no:0;return '';}
+  if(!r.length||v.session.ended)return '';
+  var last=r[r.length-1];
+  if(last.no<=S.stmtSeen)return '';
+  var c=last.net>0?'#7ddba0':last.net<0?'#f08a8f':'#f2efe6';
+  return '<div class="abs" style="inset:0;z-index:60;background:#060807;padding:30px 20px;overflow-y:auto"><div class="gold" style="font-size:12px;font-weight:700;letter-spacing:.2em;text-align:center">SESSION '+last.no+' STATEMENT</div><div class="disp" style="font-size:54px;text-align:center;margin-top:10px;color:'+c+'">'+(last.net>0?'+':last.net<0?'−':'')+fmt(Math.abs(last.net))+'</div><div class="muted small" style="text-align:center">'+(last.net>0?'won this session':last.net<0?'lost this session':'even this session')+'</div><div class="row" style="margin-top:16px;display:block"><div style="display:flex;justify-content:space-between;font-size:15px;padding:3px 0"><span class="muted">Started with</span><b>'+fmt(last.start)+'</b></div>'+(last.added?'<div style="display:flex;justify-content:space-between;font-size:15px;padding:3px 0"><span class="muted">Chips added</span><b>'+fmt(last.added)+'</b></div>':'')+'<div style="display:flex;justify-content:space-between;font-size:15px;padding:3px 0"><span class="muted">Ended with</span><b>'+fmt(last.end)+'</b></div></div>'+sessRows(v)+'<div class="muted small" style="margin-top:10px;text-align:center">Only you can see this. Open the menu any time for your statement.</div><button class="btn" style="margin-top:12px" onclick="S.stmtSeen='+last.no+';render()">Continue</button></div>';
+}
+function mySettle(v){
+  var me=v.you,t=v.settlement.transfers.filter(function(x){return x.from===me.id||x.to===me.id;}),h='<div style="margin:0 0 12px">';
+  if(!t.length)return h+'<div class="muted small">You finished even. Nothing to settle.</div></div>';
+  t.forEach(function(x){var pay=x.from===me.id;h+='<div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;padding:3px 0"><span>'+(pay?'You pay '+esc(x.toName):esc(x.fromName)+' pays you')+'</span><span style="color:'+(pay?'#f08a8f':'#7ddba0')+'">'+(pay?'−':'+')+fmt(x.amount)+'</span></div>';});
+  return h+'</div>';
+}
+function settleBlock(v){
+  var me=v.you,s=v.settlement,h='<div class="h2">SETTLEMENT</div><div style="padding:12px;border-radius:12px;background:#141917;border:1px solid #2a312d"><div class="muted small" style="margin-bottom:8px">'+(me.isAdmin?'The largest loser pays the biggest winner, and so on. Chips are virtual, so settle between yourselves.':'Only you can see this. Chips are virtual, so settle with the people below yourselves.')+'</div>';
+  h+=mySettle(v);
+  h+='<div style="border-top:1px solid #2a312d;padding-top:8px">';
+  s.people.slice().sort(function(a,b){return b.net-a.net;}).forEach(function(p){
+    h+='<div style="display:flex;align-items:center;gap:8px;font-size:14px;padding:4px 0"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(p.name)+(p.id===me.id?' <span class="muted" style="font-size:11px">YOU</span>':'')+'</span><span style="font-weight:700;color:'+(p.net>0?'#7ddba0':p.net<0?'#f08a8f':'#f2efe6')+'">'+(p.net>0?'+':p.net<0?'−':'')+fmt(Math.abs(p.net))+'</span>'+(me.isAdmin&&p.id!==me.id?'<button onclick="getStatement(\''+p.id+'\')" style="height:32px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#d8b45c;font-size:12px">PDF</button>'+(p.phone&&p.link?'<button onclick="waStatement(\''+p.id+'\')" style="height:32px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#7ddba0;font-size:12px">WhatsApp</button>':''):'')+'</div>';
+  });
+  h+='</div><button class="btn" style="margin-top:10px" onclick="getStatement()">Download my full statement (PDF)</button></div>';
+  return h;
+}
+function waStatement(pid){
+  var p=S.view.settlement.people.filter(function(x){return x.id===pid;})[0];if(!p||!p.link)return;
+  var net=p.net>0?'won '+fmt(p.net):p.net<0?'lost '+fmt(-p.net):'finished even';
+  window.open(waLink(p.phone,'Smart Buddies, room '+S.code+': the game is over. You '+net+'. Your account statement (PDF): '+location.origin+p.link),'_blank');
+}
+function getStatement(pid){
+  var url='/api/statement?code='+encodeURIComponent(S.code)+'&token='+encodeURIComponent(S.token)+(pid?'&pid='+encodeURIComponent(pid):'');
+  toast('Preparing the PDF…');
+  fetch(url).then(function(r){if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'Could not make the PDF');});return r.blob();}).then(function(b){
+    var name='Statement-'+(pid?'player':S.view.you.name.replace(/[^A-Za-z0-9]+/g,'-'))+'-'+S.code+'.pdf',file=null;
+    try{file=new File([b],name,{type:'application/pdf'});}catch(e){}
+    if(file&&navigator.canShare&&navigator.canShare({files:[file]})){return navigator.share({files:[file],title:name}).catch(function(e){if(e&&e.name!=='AbortError')throw e;});}
+    var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},4000);
+  }).catch(fail);
+}
 function chart(hist){
   if(!hist||hist.length<2) return '';
-  var W=350,H=150,L=8,R=8,T=12,B=12,vals=hist.map(function(x){return x.stack;});
+  var W=350,H=150,L=8,R=8,T=16,B=12,vals=hist.map(function(x){return x.stack;});
   var lo=Math.min.apply(null,vals),hi=Math.max.apply(null,vals); if(hi===lo){hi+=1;lo-=1;}
-  var pts=vals.map(function(v,i){return (L+(W-L-R)*i/(vals.length-1)).toFixed(1)+','+(T+(H-T-B)*(1-(v-lo)/(hi-lo))).toFixed(1);}).join(' ');
-  return '<div style="margin-top:8px;padding:12px;border-radius:12px;background:#141917;border:1px solid #2a312d"><div style="font-size:13px;font-weight:600;margin-bottom:6px">Stack after each hand</div><svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="Line chart of your stack after each hand"><polyline points="'+pts+'" fill="none" stroke="#f2efe6" stroke-width="2.5" stroke-linejoin="round"/></svg><div class="muted" style="font-size:11px;display:flex;justify-content:space-between"><span>Low '+fmt(lo)+'</span><span>High '+fmt(hi)+'</span></div></div>';
+  var xs=function(i){return L+(W-L-R)*i/(vals.length-1);},ys=function(v){return T+(H-T-B)*(1-(v-lo)/(hi-lo));};
+  var pts=vals.map(function(v,i){return xs(i).toFixed(1)+','+ys(v).toFixed(1);}).join(' ');
+  var marks='',n=0;
+  hist.forEach(function(x,i){if(x.kind==='deck'){n++;marks+='<line x1="'+xs(i).toFixed(1)+'" x2="'+xs(i).toFixed(1)+'" y1="'+T+'" y2="'+(H-B)+'" stroke="#d8b45c" stroke-width="1" stroke-dasharray="3 3"/><text x="'+(xs(i)+3).toFixed(1)+'" y="'+(T-4)+'" fill="#d8b45c" font-size="9" font-weight="700">DC'+x.session+'</text>';}});
+  var rows='';hist.forEach(function(x){if(x.kind==='deck')rows+='<div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-top:1px solid #2a312d"><span class="muted">Deck change '+x.session+'</span><span style="font-weight:700">'+fmt(x.stack)+'</span></div>';});
+  return '<div style="margin-top:8px;padding:12px;border-radius:12px;background:#141917;border:1px solid #2a312d"><div style="font-size:13px;font-weight:600;margin-bottom:6px">Stack after each hand'+(n?' <span class="muted" style="font-weight:400">· gold lines mark deck changes</span>':'')+'</div><svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="Line chart of your stack after each hand with deck changes marked">'+marks+'<polyline points="'+pts+'" fill="none" stroke="#f2efe6" stroke-width="2.5" stroke-linejoin="round"/></svg><div style="display:flex;justify-content:space-between" class="muted small"><span>Low '+fmt(lo)+'</span><span>High '+fmt(hi)+'</span></div>'+(rows?'<div style="margin-top:8px">'+rows+'</div>':'')+'</div>';
 }
 function share(){
   var url=location.origin+location.pathname+'?room='+S.view.code;
@@ -399,10 +511,10 @@ function share(){
 function doBuyin(){var a=val('bamt');api('buyin',{amount:a}).then(function(){toast(S.view.you.isAdmin?'Chips added':'Request sent');}).catch(fail);}
 function decide(id,ok){api('approve',{reqId:id,ok:ok}).catch(fail);}
 function adjust(pid,name){var a=prompt('Chips to add for '+name+' (use a minus sign to remove):');if(a===null)return;var why=prompt('Reason (optional):')||'';api('adjust',{playerId:pid,delta:a,reason:why}).catch(fail);}
-function saveSettings(){api('settings',{settings:{sb:val('s_sb'),bb:val('s_bb'),turnSeconds:val('s_ts'),maxBuyin:S.view.settings.maxBuyin}}).then(function(){toast('Saved');}).catch(fail);}
+function saveSettings(){api('settings',{settings:{sb:val('s_sb'),bb:val('s_bb'),turnSeconds:val('s_ts'),sessionMinutes:val('s_sm'),minBuyin:val('s_mn'),maxBuyin:val('s_mb')}}).then(function(){toast('Saved');}).catch(fail);}
 function setAway(pid,away){api('setaway',{playerId:pid,away:away}).catch(fail);}
 function kick(pid,name){if(!confirm('Remove '+name+' from the table? Their chips are returned to the banker to settle.'))return;api('kick',{playerId:pid}).catch(fail);}
-function doLeave(){if(!confirm('Leave the table and cash out your chips?'))return;api('leave').then(function(){clearSession();render();}).catch(fail);}
+function doLeave(){var L=S.view.you.leave||{};var msg=L.free?'Leave the table and cash out your chips?':'If you leave now, your seat keeps paying the blinds (Texas Hold\'em only) until the end of session '+L.until+(L.endsAt?' (about '+clock(L.endsAt)+')':'')+'. You keep the rest of your chips. Only the admin can release you sooner, for an emergency. Leave anyway?';if(!confirm(msg))return;api('leave').then(function(){clearSession();render();}).catch(fail);}
 function forget(){clearSession();render();}
 
 // ---- club: members, game nights, passes ----
@@ -441,13 +553,13 @@ function interest(evId,on){capi('interest',{eventId:evId,on:on}).catch(fail);}
 function decide2(evId,mid,d){capi('decide',{eventId:evId,memberId:mid,decision:d}).catch(fail);}
 function cancelEv(evId){if(!confirm('Cancel this game? Everyone allotted a seat is told.'))return;capi('cancelevent',{eventId:evId}).then(function(){S.manage=null;}).catch(fail);}
 function doCreateEv(){
-  var d=formVals(['c_title','c_when','c_sb','c_bb','c_seats','c_ts','c_mb']),startAt=new Date(d.c_when||'').getTime();
+  var d=formVals(['c_title','c_when','c_sb','c_bb','c_seats','c_ts','c_mb','c_sm']),startAt=new Date(d.c_when||'').getTime();
   if(!startAt){toast('Pick the date and time');return;}
   var inv='all';if(S.inv==='pick'){inv=Object.keys(S.pick).filter(function(k){return S.pick[k];});if(!inv.length){toast('Pick at least one member');return;}}
-  capi('createevent',{title:d.c_title,startAt:startAt,seats:d.c_seats||10,sb:d.c_sb||25,bb:d.c_bb||50,turnSeconds:d.c_ts||40,maxBuyin:d.c_mb||10000,invited:inv}).then(function(){S.formOpen=false;S.draft={};S.pick={};S.inv='all';toast('Game created and invitations sent');}).catch(fail);
+  capi('createevent',{title:d.c_title,startAt:startAt,seats:d.c_seats||10,sb:d.c_sb||25,bb:d.c_bb||50,turnSeconds:d.c_ts||40,minBuyin:d.c_mn||1000,maxBuyin:d.c_mb||10000,sessionMinutes:d.c_sm||120,invited:inv}).then(function(){S.formOpen=false;S.draft={};S.pick={};S.inv='all';toast('Game created and invitations sent');}).catch(fail);
 }
 function doAddMember(){var d=formVals(['m_name','m_phone']);capi('addmember',{name:d.m_name,phone:d.m_phone}).then(function(r){S.newLink={name:d.m_name,phone:d.m_phone,token:r.token};S.draft={};render();}).catch(fail);}
-function toggleRole(mid,role){var m=S.cv.members.filter(function(x){return x.id===mid;})[0];if(!m)return;var r=m.roles.slice(),i=r.indexOf(role);if(i<0)r.push(role);else r.splice(i,1);capi('setroles',{memberId:mid,roles:r}).catch(fail);}
+function toggleRole(evId,mid,role){var ev=S.cv.events.filter(function(x){return x.id===evId;})[0];var p=ev&&(ev.people||[]).filter(function(x){return x.id===mid;})[0];if(!p)return;var r=(p.roles||[]).slice(),i=r.indexOf(role);if(i<0)r.push(role);else r.splice(i,1);capi('setroles',{eventId:evId,memberId:mid,roles:r}).catch(fail);}
 function newLinkFor(mid){if(!confirm('Make a new link? The old one stops working.'))return;capi('resetlink',{memberId:mid}).then(function(){toast('New link ready. Copy it below.');}).catch(fail);}
 function removeMember(mid,name){if(!confirm('Remove '+name+' from the club?'))return;capi('removemember',{memberId:mid}).catch(fail);}
 function doSetup(){var d=formVals(['su_name','su_owner','su_phone','su_code']);fetch('/api/club/setup',{method:'POST',body:JSON.stringify({name:d.su_name||'Smart Buddies',ownerName:d.su_owner,phone:d.su_phone,setupCode:d.su_code})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error);return j;});}).then(function(j){setMember(j.mtoken);S.newLink={name:'Your admin link',token:j.mtoken,own:true};S.draft={};S.lobbyMode='join';S.clubExists=true;clubConnect();render();}).catch(fail);}
@@ -455,9 +567,11 @@ function doSetup(){var d=formVals(['su_name','su_owner','su_phone','su_code']);f
 function pillFor(my){var m={owner:['HOST','g'],invited:['INVITED',''],interested:['WAITING',''],approved:['SEAT ALLOTTED','g'],declined:['NO SEAT','']}[my]||['',''];return '<div class="pill2 '+m[1]+'">'+m[0]+'</div>';}
 function evCard(ev,cv){
   var me=cv.me,h='<div class="evc'+(ev.cancelled?' off':'')+'">';
-  h+='<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><div class="disp" style="font-size:28px;line-height:1">'+esc(ev.title)+'</div><div class="muted small">'+when(ev.startAt)+' · blinds '+fmt(ev.settings.sb)+'/'+fmt(ev.settings.bb)+' · '+ev.seats+' seats</div></div>'+(ev.cancelled?'<div class="pill2">CANCELLED</div>':pillFor(ev.my))+'</div>';
+  h+='<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><div class="disp" style="font-size:28px;line-height:1">'+esc(ev.title)+'</div><div class="muted small">'+when(ev.startAt)+' · blinds '+fmt(ev.settings.sb)+'/'+fmt(ev.settings.bb)+' · '+ev.seats+' seats</div></div>'+(ev.cancelled?'<div class="pill2">CANCELLED</div>':ev.done?'<div class="pill2">ENDED</div>':pillFor(ev.my))+'</div>';
   var soon=ev.startAt-Date.now()<=15*60000;
-  if(!ev.cancelled){
+  if(ev.myRoles&&ev.myRoles.length&&!ev.done)h+='<div class="muted small" style="margin-top:8px">The admin gave you powers for this game: '+ev.myRoles.map(function(r){return ROLE_LABEL[r];}).join(', ')+'. They end when the game ends.</div>';
+  if(ev.done)h+='<div class="muted small" style="margin-top:10px">This game has ended.</div>';
+  if(!ev.cancelled&&!ev.done){
     if(ev.my==='invited')h+='<button class="btn" style="margin-top:12px;height:46px" onclick="interest(\''+ev.id+'\',true)">I\'m interested</button>';
     if(ev.my==='interested')h+='<div class="muted small" style="margin-top:10px">You are on the list. The admin will allot seats.</div><button class="btn ghost" style="margin-top:8px;height:42px" onclick="interest(\''+ev.id+'\',false)">Withdraw</button>';
     if(ev.my==='declined')h+='<div class="muted small" style="margin-top:10px">No seat this time.</div>';
@@ -466,7 +580,7 @@ function evCard(ev,cv){
         ((soon||ev.my==='owner')?'<button class="btn" style="margin-top:10px" onclick="enterGame(\''+ev.id+'\')">Join table</button>':'<button class="btn" style="margin-top:10px" disabled>Opens 15 minutes before the start</button>')+'</div>';
     }
   }
-  if(cv.me.manage&&!ev.cancelled){
+  if(ev.manage&&!ev.cancelled&&!ev.done){
     var open=S.manage===ev.id,waiting=(ev.people||[]).filter(function(p){return p.state==='interested';}).length;
     h+='<button class="btn ghost" style="margin-top:10px;height:42px" onclick="S.manage='+(open?'null':'\''+ev.id+'\'')+';render()">'+(open?'Hide':'Manage')+' · '+waiting+' waiting · '+ev.approvedCount+' seated</button>';
     if(open){
@@ -475,7 +589,7 @@ function evCard(ev,cv){
         h+='<div class="row" style="margin-top:8px;flex-wrap:wrap"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(p.name)+'</div><div class="muted small">'+({invited:'Not replied',interested:'Interested',approved:'Seat allotted',declined:'No seat'}[p.state]||p.state)+'</div></div>'+
           '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'+
           (p.state!=='approved'?'<button class="rolechip on" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'approve\')">Allot seat</button>':'<button class="rolechip" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'reset\')">Take back</button><a class="rolechip" style="display:flex;align-items:center;text-decoration:none" target="_blank" rel="noopener" href="'+waLink(p.phone,msg)+'">WhatsApp</a>')+
-          (p.state==='interested'||p.state==='invited'?'<button class="rolechip" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'decline\')">No seat</button>':'')+'</div></div>';
+          (p.state==='interested'||p.state==='invited'?'<button class="rolechip" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'decline\')">No seat</button>':'')+'</div>'+(cv.me.isOwner&&p.state==='approved'?'<div style="flex-basis:100%;margin-top:6px"><div class="muted" style="font-size:11px;letter-spacing:.08em;margin-bottom:6px">POWERS FOR THIS GAME ONLY</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+cv.roles.map(function(r){return '<button class="rolechip'+((p.roles||[]).indexOf(r)>=0?' on':'')+'" onclick="toggleRole(\''+ev.id+'\',\''+p.id+'\',\''+r+'\')">'+ROLE_LABEL[r]+'</button>';}).join('')+'</div></div>':'')+'</div>';
       });
       h+='<button class="btn ghost" style="margin-top:10px;height:42px;border-color:#6b2a2e;color:#d2454d" onclick="cancelEv(\''+ev.id+'\')">Cancel this game</button>';
     }
@@ -486,7 +600,7 @@ function newEvForm(cv){
   var h='<div class="evc" style="border-color:#d8b45c"><div class="disp" style="font-size:26px">New game</div><div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">'+
     dfield('c_title','NAME','Friday night','maxlength="40"')+dfield('c_when','DATE AND TIME','','type="datetime-local"')+
     '<div style="display:flex;gap:8px">'+dfield('c_sb','SMALL','25','inputmode="numeric"')+dfield('c_bb','BIG','50','inputmode="numeric"')+dfield('c_seats','SEATS','10','inputmode="numeric"')+'</div>'+
-    '<div style="display:flex;gap:8px">'+dfield('c_ts','TIMER (S)','40','inputmode="numeric"')+dfield('c_mb','MAX BUY-IN','10000','inputmode="numeric"')+'</div>'+
+    '<div style="display:flex;gap:8px">'+dfield('c_ts','TIMER (S)','40','inputmode="numeric"')+dfield('c_sm','SESSION (MIN)','120','inputmode="numeric"')+'</div><div style="display:flex;gap:8px">'+dfield('c_mn','MIN BUY-IN','1000','inputmode="numeric"')+dfield('c_mb','MAX BUY-IN','10000','inputmode="numeric"')+'</div>'+
     '<div class="h2" style="margin:4px 0 0">WHO IS INVITED</div><div style="display:flex;gap:8px"><button class="rolechip'+(S.inv==='all'?' on':'')+'" onclick="S.inv=\'all\';render()">All members</button><button class="rolechip'+(S.inv==='pick'?' on':'')+'" onclick="S.inv=\'pick\';render()">Pick members</button></div>';
   if(S.inv==='pick')h+='<div style="display:flex;flex-wrap:wrap;gap:6px">'+(cv.members||[]).map(function(m){return '<button class="rolechip'+(S.pick[m.id]?' on':'')+'" onclick="S.pick[\''+m.id+'\']=!S.pick[\''+m.id+'\'];render()">'+esc(m.name)+'</button>';}).join('')+'</div>';
   return h+'<button class="btn" onclick="doCreateEv()">Create and invite</button><button class="btn ghost" onclick="S.formOpen=false;render()">Close</button></div></div>';
@@ -509,14 +623,14 @@ function membersTab(cv){
   h+='<div class="h2">MEMBERS ('+(cv.members||[]).length+')</div>';
   (cv.members||[]).forEach(function(m){
     h+='<div class="evc" style="margin-top:8px"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:15px;font-weight:700">'+esc(m.name)+'</div><div class="muted small">'+esc(m.phone||'No phone')+'</div></div>'+(own?'<div style="display:flex;gap:6px"><button class="rolechip" onclick="S.newLink={name:\''+esc(m.name)+'\',phone:\''+esc(m.phone)+'\',token:\''+m.token+'\'};render()">Link</button><button class="rolechip" onclick="newLinkFor(\''+m.id+'\')">New link</button><button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="removeMember(\''+m.id+'\',\''+esc(m.name)+'\')">Remove</button></div>':'')+'</div>';
-    if(own){h+='<div class="muted small" style="margin-top:10px">Powers during play</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">'+cv.roles.map(function(r){return '<button class="rolechip'+(m.roles.indexOf(r)>=0?' on':'')+'" onclick="toggleRole(\''+m.id+'\',\''+r+'\')">'+ROLE_LABEL[r]+'</button>';}).join('')+'</div>';}
+    if(own){h+='<div class="muted small" style="margin-top:10px">Powers are handed out per game: open a game under Games, tap Manage, and use the Powers buttons under an allotted member, or give them from the table menu during play. They end when that game ends.</div>';}
     h+='</div>';
   });
   return h;
 }
 function clubScreen(){
   var cv=S.cv,me=cv.me;
-  var h='<div class="sheet" style="padding-bottom:96px"><div style="display:flex;align-items:center;justify-content:space-between"><div style="min-width:0"><div class="muted small" style="letter-spacing:.14em">'+esc(cv.club.name).toUpperCase()+'</div><div class="disp" style="font-size:36px;line-height:1.05">Hi, '+esc(me.name)+'</div></div>'+(me.isOwner?'<div class="pill2 g">ADMIN</div>':(me.roles.length?'<div class="pill2 g">'+me.roles.length+' POWER'+(me.roles.length>1?'S':'')+'</div>':''))+'</div>';
+  var h='<div class="sheet" style="padding-bottom:96px"><div style="display:flex;align-items:center;justify-content:space-between"><div style="min-width:0"><div class="muted small" style="letter-spacing:.14em">'+esc(cv.club.name).toUpperCase()+'</div><div class="disp" style="font-size:36px;line-height:1.05">Hi, '+esc(me.name)+'</div></div>'+(me.isOwner?'<div class="pill2 g">ADMIN</div>':'')+'</div>';
   if(me.isOwner&&cv.storage&&/^file/.test(cv.storage))h+='<div class="evc" style="border-color:#d8b45c"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.14em">TEMPORARY STORAGE</div><div class="muted small" style="margin-top:6px">Club data is only kept on the server and is lost when it restarts. Connect the Google Drive storage to keep it safe.</div></div>';
   if(cv.saveError)h+='<div class="evc" style="border-color:#d2454d"><div style="font-size:13px">Club data could not be saved: '+esc(cv.saveError)+'</div></div>';
   h+=(S.tab==='members'&&me.manage)?membersTab(cv):gamesTab(cv);
@@ -529,6 +643,7 @@ function alertBar(){
 }
 // countdowns and the local backup reminder
 setInterval(function(){
+  if(S.view&&S.view.session){var se=document.querySelectorAll('[data-sess]');for(var j=0;j<se.length;j++){var tx=se[j].parentNode&&se[j].parentNode.className==='muted small'?sessLeft(S.view.session).replace(/^S\d+ /,''):sessLeft(S.view.session);se[j].textContent=tx;}}
   var els=document.querySelectorAll('[data-count]');for(var i=0;i<els.length;i++)els[i].textContent=until(Number(els[i].getAttribute('data-count')));
   if(!S.cv)return;
   var key='';S.cv.events.forEach(function(ev){
@@ -542,9 +657,9 @@ setInterval(function(){
 // ---- render ----
 function render(){
   var active=document.activeElement&&document.activeElement.id, keep=null;
-  if(active&&/^(room|nick|sb|bb|ts|mb|bamt|s_sb|s_bb|s_ts|c_\w+|m_\w+|su_\w+)$/.test(active)){keep={id:active,v:document.activeElement.value,s:document.activeElement.selectionStart};}
+  if(active&&/^(room|nick|sb|bb|ts|mb|sm|bamt|s_sb|s_bb|s_ts|s_sm|c_\w+|m_\w+|su_\w+)$/.test(active)){keep={id:active,v:document.activeElement.value,s:document.activeElement.selectionStart};}
   // typing in a field must never be wiped by a live update: skip re-render while an input is focused
-  if(keep&&S.view&&S.sheet&&/^(bamt|s_sb|s_bb|s_ts)$/.test(keep.id)) return;
+  if(keep&&S.view&&S.sheet&&/^(bamt|s_sb|s_bb|s_ts|s_sm)$/.test(keep.id)) return;
   if(keep&&!S.view&&/^(c_|m_|su_)/.test(keep.id)) return;
   var old=document.querySelector('.sheet'),sc=old?old.scrollTop:0;
   var h=S.view?(table()+(S.sheet?sheet():'')):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));

@@ -54,7 +54,7 @@ function pickStore(env = process.env) {
 }
 
 // ---------- optional WhatsApp / SMS through Twilio ----------
-async function sendExternal(phone, text, env = process.env) {
+async function sendExternal(phone, text, env = process.env, mediaUrl) {
   if (!phone || !env.TWILIO_SID || !env.TWILIO_TOKEN || !env.TWILIO_FROM) return false;
   const wa = env.TWILIO_CHANNEL === 'whatsapp';
   const to = (wa ? 'whatsapp:' : '') + phone;
@@ -66,7 +66,7 @@ async function sendExternal(phone, text, env = process.env) {
       Authorization: 'Basic ' + Buffer.from(env.TWILIO_SID + ':' + env.TWILIO_TOKEN).toString('base64'),
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: new URLSearchParams({ To: to, From: from, Body: text }).toString(),
+    body: new URLSearchParams({ To: to, From: from, Body: text, ...(mediaUrl ? { MediaUrl: mediaUrl } : {}) }).toString(),
   });
   return r.ok;
 }
@@ -113,48 +113,49 @@ function createClub(ctx) {
     return m;
   }
   const isOwner = (m) => !!state.club && m.id === state.club.ownerId;
-  const has = (m, role) => isOwner(m) || (m.roles || []).includes(role);
-  const need = (m, role) => { if (!has(m, role)) throw httpErr(403, 'You do not have permission to do that'); };
+  // Powers are delegated per game (one room) and end with that game; only the admin holds club-wide powers.
+  const evRoles = (ev, m) => (ev.delegates && ev.delegates[m.id]) || [];
+  const hasEv = (m, ev, role) => isOwner(m) || evRoles(ev, m).includes(role);
   const ownerOnly = (m) => { if (!isOwner(m)) throw httpErr(403, 'Only the admin can do that'); };
   const cleanPhone = (p) => String(p || '').replace(/[^\d+]/g, '').slice(0, 16);
   const cleanRoles = (r) => [...new Set((Array.isArray(r) ? r : []).filter((x) => ROLES.includes(x)))];
   const cleanTitle = (t) => String(t || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40) || 'Game night';
 
   function canSee(ev, m) {
-    if (ev.status === 'cancelled') return isOwner(m) || has(m, 'invite') ? Date.now() < ev.startAt + 6 * 3600e3 : false;
-    if (Date.now() > ev.startAt + 6 * 3600e3) return false;
-    return isOwner(m) || has(m, 'invite') || ev.invited === 'all' || (Array.isArray(ev.invited) && ev.invited.includes(m.id));
+    const mgr = isOwner(m) || evRoles(ev, m).length > 0;
+    if (ev.status === 'cancelled') return mgr ? Date.now() < ev.startAt + 6 * 3600e3 : false;
+    if (Date.now() > ev.startAt + 6 * 3600e3 && ev.status !== 'live') return false;
+    return mgr || ev.invited === 'all' || (Array.isArray(ev.invited) && ev.invited.includes(m.id));
   }
   const approvedIds = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'approved');
   const tableOpen = (ev) => { const t = ev.tableCode && tables.get(ev.tableCode); return !!(t && !t.closed); };
 
   function viewFor(m) {
-    const manage = isOwner(m) || has(m, 'invite');
     const events = Object.values(state.events)
       .filter((ev) => canSee(ev, m))
       .sort((a, b) => a.startAt - b.startAt)
       .map((ev) => {
         const mine = ev.people[m.id];
+        const manage = hasEv(m, ev, 'invite');
         const o = {
-          id: ev.id, title: ev.title, startAt: ev.startAt, seats: ev.seats, cancelled: ev.status === 'cancelled',
+          id: ev.id, title: ev.title, startAt: ev.startAt, seats: ev.seats, cancelled: ev.status === 'cancelled', done: ev.status === 'done',
           settings: ev.settings, approvedCount: approvedIds(ev).length, tableOpen: tableOpen(ev),
-          my: isOwner(m) ? 'owner' : (mine ? mine.state : 'invited'),
+          my: isOwner(m) ? 'owner' : (mine ? mine.state : 'invited'), manage, myRoles: isOwner(m) ? [] : evRoles(ev, m),
         };
         if (manage) {
           o.invited = ev.invited;
           o.people = Object.values(state.members)
             .filter((x) => !isOwner(x) && (ev.invited === 'all' || (ev.invited || []).includes(x.id) || ev.people[x.id]))
-            .map((x) => ({ id: x.id, name: x.name, phone: x.phone || '', state: ev.people[x.id] ? ev.people[x.id].state : 'invited' }));
+            .map((x) => ({ id: x.id, name: x.name, phone: x.phone || '', state: ev.people[x.id] ? ev.people[x.id].state : 'invited', roles: evRoles(ev, x) }));
         }
         return o;
       });
     const out = {
       club: { name: state.club.name },
-      me: { id: m.id, name: m.name, isOwner: isOwner(m), roles: isOwner(m) ? ROLES.slice() : (m.roles || []), manage },
+      me: { id: m.id, name: m.name, isOwner: isOwner(m), manage: isOwner(m) },
       events, now: Date.now(), roles: ROLES, saveError: isOwner(m) ? lastError : '', storage: isOwner(m) ? store.name : '',
     };
-    if (isOwner(m)) out.members = Object.values(state.members).filter((x) => !isOwner(x)).map((x) => ({ id: x.id, name: x.name, phone: x.phone || '', roles: x.roles || [], token: x.token, createdAt: x.createdAt }));
-    else if (manage) out.members = Object.values(state.members).filter((x) => !isOwner(x)).map((x) => ({ id: x.id, name: x.name, phone: x.phone || '' }));
+    if (isOwner(m)) out.members = Object.values(state.members).filter((x) => !isOwner(x)).map((x) => ({ id: x.id, name: x.name, phone: x.phone || '', token: x.token, createdAt: x.createdAt }));
     return out;
   }
 
@@ -184,18 +185,24 @@ function createClub(ctx) {
     t = made.t;
     t.membersOnly = true; t.eventId = ev.id;
     made.admin.memberId = o.id; made.admin.roles = [];
+    ev.status = ev.status === 'scheduled' ? 'live' : ev.status;
     ev.tableCode = t.code;
     say(t, `Table opened for ${ev.title}`);
     persist();
     return t;
   }
 
-  function applyRolesToLiveTables(m) {
-    for (const t of tables.values()) {
-      let touched = false;
-      for (const p of t.players.values()) if (p.memberId === m.id) { p.roles = isOwner(m) ? [] : (m.roles || []).slice(); touched = true; }
-      if (touched) { say(t, `${m.name}'s powers changed`); broadcast(t); }
+  // Delegated powers for one game: stored on the game and on its table, cleared when the game ends.
+  function setDelegates(ev, m, roles, fromTable) {
+    roles = cleanRoles(roles);
+    if (!ev.delegates) ev.delegates = {};
+    if (roles.length) ev.delegates[m.id] = roles; else delete ev.delegates[m.id];
+    const t = ev.tableCode && tables.get(ev.tableCode);
+    if (t && !fromTable) {
+      for (const p of t.players.values()) if (p.memberId === m.id) { p.roles = roles.slice(); say(t, `${m.name}'s powers for this game were changed`); broadcast(t); }
     }
+    changed();
+    return roles;
   }
 
   // ----- routes -----
@@ -226,7 +233,7 @@ function createClub(ctx) {
       const m = state.members[b.memberId];
       if (!m || isOwner(m)) throw httpErr(404, 'Member not found');
       delete state.members[m.id];
-      for (const ev of Object.values(state.events)) { delete ev.people[m.id]; if (Array.isArray(ev.invited)) ev.invited = ev.invited.filter((x) => x !== m.id); }
+      for (const ev of Object.values(state.events)) { delete ev.people[m.id]; if (ev.delegates) delete ev.delegates[m.id]; if (Array.isArray(ev.invited)) ev.invited = ev.invited.filter((x) => x !== m.id); }
       const set = clients.get(m.id); if (set) { for (const res of set) { try { res.end(); } catch (e) { /* closed */ } } clients.delete(m.id); }
       changed();
       return { ok: true };
@@ -242,23 +249,22 @@ function createClub(ctx) {
     },
     'club/setroles'(b) {
       const o = auth(b); ownerOnly(o);
+      const ev = state.events[b.eventId];
       const m = state.members[b.memberId];
-      if (!m || isOwner(m)) throw httpErr(404, 'Member not found');
-      m.roles = cleanRoles(b.roles);
-      applyRolesToLiveTables(m);
-      changed();
-      return { roles: m.roles };
+      if (!ev || !m || isOwner(m)) throw httpErr(404, 'Not found');
+      if (ev.status === 'done') throw httpErr(400, 'That game has ended');
+      return { roles: setDelegates(ev, m, b.roles) };
     },
     'club/createevent'(b) {
-      const m = auth(b); need(m, 'invite');
+      const m = auth(b); ownerOnly(m);
       const startAt = Math.floor(Number(b.startAt));
       if (!Number.isFinite(startAt) || startAt < Date.now() - 3600e3) throw httpErr(400, 'Pick a start time in the future');
       let invited = 'all';
       if (Array.isArray(b.invited)) invited = b.invited.filter((id) => state.members[id] && !isOwner(state.members[id]));
       const ev = {
         id: rid(4), title: cleanTitle(b.title), startAt, seats: Math.min(10, Math.max(2, Math.floor(Number(b.seats)) || 10)),
-        settings: cleanSettings({ sb: b.sb, bb: b.bb, turnSeconds: b.turnSeconds, maxBuyin: b.maxBuyin }),
-        invited, people: {}, status: 'scheduled', reminded: false, tableCode: '', createdBy: m.id, createdAt: Date.now(),
+        settings: cleanSettings({ sb: b.sb, bb: b.bb, turnSeconds: b.turnSeconds, minBuyin: b.minBuyin, maxBuyin: b.maxBuyin, sessionMinutes: b.sessionMinutes }),
+        invited, people: {}, delegates: {}, status: 'scheduled', reminded: false, tableCode: '', createdBy: m.id, createdAt: Date.now(),
       };
       state.events[ev.id] = ev;
       changed();
@@ -267,9 +273,11 @@ function createClub(ctx) {
       return { id: ev.id };
     },
     'club/cancelevent'(b) {
-      const m = auth(b); need(m, 'invite');
+      const m = auth(b);
       const ev = state.events[b.eventId];
       if (!ev) throw httpErr(404, 'Game not found');
+      if (!hasEv(m, ev, 'invite')) throw httpErr(403, 'You do not have permission to do that');
+      if (ev.status === 'done') throw httpErr(400, 'That game has ended');
       ev.status = 'cancelled';
       changed();
       for (const id of approvedIds(ev)) { const x = state.members[id]; if (x) tell(x, 'cancel', `${ev.title} has been cancelled.`, { eventId: ev.id }); }
@@ -291,10 +299,11 @@ function createClub(ctx) {
       return { state: ev.people[m.id] ? ev.people[m.id].state : 'invited' };
     },
     'club/decide'(b) {
-      const m = auth(b); need(m, 'invite');
+      const m = auth(b);
       const ev = state.events[b.eventId];
       const target = state.members[b.memberId];
       if (!ev || !target || isOwner(target)) throw httpErr(404, 'Not found');
+      if (!hasEv(m, ev, 'invite')) throw httpErr(403, 'You do not have permission to do that');
       if (ev.status === 'cancelled') throw httpErr(400, 'This game is cancelled');
       const d = String(b.decision);
       if (d === 'approve') {
@@ -316,6 +325,7 @@ function createClub(ctx) {
       const m = auth(b);
       const ev = state.events[b.eventId];
       if (!ev || ev.status === 'cancelled') throw httpErr(404, 'Game not found');
+      if (ev.status === 'done') throw httpErr(400, 'This game has ended');
       const mine = ev.people[m.id];
       if (!isOwner(m) && !(mine && mine.state === 'approved')) throw httpErr(403, 'You have not been allotted a seat at this table');
       if (!isOwner(m) && Date.now() < ev.startAt - 15 * 60e3) throw httpErr(400, 'The table opens 15 minutes before the start time');
@@ -323,7 +333,7 @@ function createClub(ctx) {
       let p = [...t.players.values()].find((x) => x.memberId === m.id);
       if (!p) {
         p = addPlayer(t, m.name);
-        p.memberId = m.id; p.roles = (m.roles || []).slice();
+        p.memberId = m.id; p.roles = evRoles(ev, m).slice();
         say(t, `${m.name} sat down`);
         broadcast(t);
       }
@@ -348,7 +358,7 @@ function createClub(ctx) {
   function tick(now = Date.now()) {
     if (!state.club) return;
     for (const ev of Object.values(state.events)) {
-      if (ev.status !== 'scheduled' || ev.reminded) continue;
+      if (ev.status === 'cancelled' || ev.status === 'done' || ev.reminded) continue;
       const left = ev.startAt - now;
       if (left <= REMIND_MS && left > -10 * 60e3) {
         ev.reminded = true;
@@ -361,7 +371,31 @@ function createClub(ctx) {
     }
   }
 
-  return { routes, handleEvents, load, tick, flush, viewFor, openTable, state: () => state, ROLES };
+  // called by the table: the game is over, so every delegated power ends and the pass closes
+  function gameEnded(t) {
+    const ev = t.eventId && state.events[t.eventId];
+    if (!ev) return;
+    ev.delegates = {}; ev.status = 'done';
+    changed();
+  }
+  // the game is over: each member with a phone gets their PDF statement on WhatsApp (needs Twilio and a public address)
+  function sendStatements(t, linkFor) {
+    for (const x of t.final.people) {
+      const m = x.memberId && state.members[x.memberId];
+      if (!m || !m.phone) continue;
+      const link = linkFor(x);
+      if (!/^https:/.test(link)) continue;
+      const net = x.net > 0 ? 'won ' + x.net : x.net < 0 ? 'lost ' + -x.net : 'finished even';
+      sendExternal(m.phone, `Smart Buddies, room ${t.code}: the game is over. You ${net}. Your account statement is attached.`, env, link)
+        .catch((e) => console.error('Statement message failed:', e.message));
+    }
+  }
+  function saveDelegates(eventId, memberId, roles) {
+    const ev = state.events[eventId], m = state.members[memberId];
+    if (ev && m && !isOwner(m)) setDelegates(ev, m, roles, true);
+  }
+
+  return { routes, handleEvents, load, tick, flush, viewFor, openTable, gameEnded, sendStatements, saveDelegates, state: () => state, ROLES };
 }
 
 module.exports = { createClub, fileStore, driveStore, pickStore, sendExternal, ROLES };

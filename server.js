@@ -5,12 +5,19 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { Hand } = require('./engine');
+const { Hand, newDeck, shuffle } = require('./engine');
 const { createClub } = require('./club');
+const { buildFinal, statementPdf, sessionRows } = require('./statement');
 
 const PORT = process.env.PORT || 3000;
 const NEXT_HAND_DELAY_MS = Number(process.env.NEXT_HAND_DELAY_MS || 7000);
+const DRAW_SHOW_MS = Number(process.env.DRAW_SHOW_MS || 9000);
+const NOTICE_MS = 60 * 60 * 1000; // call time: at least one hour before standing up
+const SUIT_RANK = 'cdhs';       // clubs < diamonds < hearts < spades for breaking ties in the seat draw
+const RANK_RANK = '23456789TJQKA';
 const tables = new Map();
+const statementLinks = new Map(); // unguessable download token -> who it belongs to
+const publicBase = () => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
 
 const rid = (n = 16) => crypto.randomBytes(n).toString('hex');
 const clampInt = (v, lo, hi, d) => {
@@ -32,8 +39,10 @@ function cleanSettings(s = {}, old = {}) {
   return {
     sb, bb,
     turnSeconds: clampInt(s.turnSeconds, 10, 180, old.turnSeconds || 40),
-    maxBuyin: clampInt(s.maxBuyin, bb, 1e9, old.maxBuyin || bb * 200),
+    minBuyin: clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb),
+    maxBuyin: Math.max(clampInt(s.maxBuyin, bb, 1e9, old.maxBuyin || bb * 200), clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb)),
     maxSeats: 10,
+    sessionMinutes: clampInt(s.sessionMinutes, 1, 600, old.sessionMinutes || 120),
   };
 }
 
@@ -44,6 +53,8 @@ function makeTable(adminName, settings) {
     hand: null, handNo: 0, running: false, buttonSeat: -1,
     pending: [], log: [], clients: new Map(), timer: null, nextTimer: null,
     deadline: 0, lastResult: null, closed: false,
+    sessionNo: 0, sessionEndsAt: 0, sessionEnding: false, draw: null, drawUntil: 0,
+    ended: false, ending: false, joins: [], departed: [], sessLog: [],
   };
   tables.set(t.code, t);
   const admin = addPlayer(t, adminName);
@@ -57,9 +68,16 @@ function addPlayer(t, name) {
   const p = {
     id: rid(6), token: rid(24), name, seat, stack: 0, queued: 0, bought: 0,
     connected: false, history: [], ledger: [], leaving: false, away: false, misses: 0,
+    approved: true, stayUntil: 2, callAfter: 0, ghost: false, ghostUntil: 0,
   };
   t.players.set(p.id, p);
   t.order[seat] = p.id;
+  // once the game is under way, newcomers wait for the admin to let them in
+  if (t.sessionNo > 0 && t.adminId) {
+    p.approved = false;
+    t.joins.push({ id: rid(4), playerId: p.id, name: p.name, at: Date.now() });
+    say(t, `${p.name} would like to join. Waiting for the admin.`);
+  }
   return p;
 }
 
@@ -78,7 +96,7 @@ function viewFor(t, pid) {
     const p = t.players.get(id);
     const hp = hv && hv.players.find((x) => x.id === id);
     seats.push({
-      seat: s, id, name: p.name, isAdmin: id === t.adminId, connected: p.connected, away: p.away,
+      seat: s, id, name: p.name, isAdmin: id === t.adminId, connected: p.connected, away: p.away, ghost: p.ghost, approved: p.approved, roles: (p.roles || []).filter((r) => ROLE_NAMES.includes(r)),
       stack: hp ? hp.stack : p.stack, inHand: !!hp, bet: hp ? hp.bet : 0,
       folded: hp ? hp.folded : false, allIn: hp ? hp.allIn : false,
       cards: hp ? hp.cards : null, isButton: !!(hp && hp.isButton),
@@ -92,6 +110,22 @@ function viewFor(t, pid) {
       id: pid, name: me.name, isAdmin, seat: me.seat, stack: seats[me.seat].stack,
       queued: me.queued, bought: me.bought, inHand: seats[me.seat].inHand, away: me.away,
       can: Object.fromEntries(ROLE_NAMES.map((r) => [r, can(t, me, r)])), member: !!me.memberId,
+      approved: me.approved, ghost: me.ghost, ghostUntil: me.ghostUntil, ghostEndsAt: me.ghost ? sessionEnd(t, me.ghostUntil) : 0, stayUntil: me.stayUntil, callAfter: me.callAfter,
+      leave: leaveInfo(t, me), callOptions: callOptions(t, me),
+    },
+    session: {
+      no: t.sessionNo, endsAt: t.sessionEndsAt, ending: t.sessionEnding, minutes: t.settings.sessionMinutes,
+      ended: t.ended, endingGame: t.ending, draw: Date.now() < t.drawUntil + 4000 ? t.draw : null,
+    },
+    joins: can(t, me, 'players') ? t.joins : [],
+    settlement: t.final && {
+      at: t.final.at, transfers: isAdmin ? t.final.transfers : t.final.transfers.filter((x) => x.from === pid || x.to === pid),
+      people: t.final.people.filter((x) => isAdmin || x.id === pid).map((x) => {
+        const o = { id: x.id, name: x.name, invested: x.invested, final: x.final, net: x.net };
+        if (x.id === pid || isAdmin) { o.link = '/s/' + x.dl + '.pdf'; }
+        if (isAdmin && x.memberId) { const m = club.state().members[x.memberId]; if (m) o.phone = m.phone || ''; }
+        return o;
+      }),
     },
     seats,
     hand: hv && { street: hv.street, board: hv.board, pot: hv.pot, currentBet: hv.currentBet, turnId: hv.turnId, finished: hv.finished, legal: hv.legal, deadline: t.deadline },
@@ -99,7 +133,7 @@ function viewFor(t, pid) {
     log: t.log.slice(-12),
     pending: can(t, me, 'bank') ? t.pending : t.pending.filter((r) => r.playerId === pid),
     ledger: me.ledger.slice(-30),
-    history: me.history,
+    history: me.history, sessions: sessionRows(t.sessLog, me.history, me.ledger, me.stack + me.queued),
   };
 }
 
@@ -113,30 +147,136 @@ function broadcast(t) {
 }
 
 // ---------- game flow ----------
-function eligibleSeats(t) {
+// ---------- sessions, seat draw and deck changes ----------
+const sessionLen = (t) => t.settings.sessionMinutes * 60000;
+const sessionEnd = (t, k) => t.sessionEndsAt + (k - t.sessionNo) * sessionLen(t);
+const cardStrength = (c) => RANK_RANK.indexOf(c[0]) * 4 + SUIT_RANK.indexOf(c[1]);
+
+// Dealt in: has chips, is in, not sitting out. Ghosts (left early) only pay blinds.
+function dealtIn(t) {
+  return [...t.players.values()].filter((p) => p.approved && !p.away && !p.ghost && !p.leaving && p.stack > 0)
+    .sort((a, b) => a.seat - b.seat);
+}
+function lineup(t) {
+  return [...t.players.values()].filter((p) => p.approved && !p.leaving && p.stack > 0 && (p.ghost || (!p.away)))
+    .sort((a, b) => a.seat - b.seat);
+}
+
+// One card each from a fresh deck: highest takes the button and the seats follow in order
+function startSession(t) {
+  t.sessionNo++;
+  t.sessionEnding = false;
+  t.sessLog.push({ no: t.sessionNo, start: Date.now(), end: 0 });
+  const all = [...t.players.values()];
+  const part = all.filter((p) => p.approved);
+  const deck = shuffle(newDeck());
+  const draws = part.map((p) => ({ p, card: deck.pop() })).sort((x, y) => cardStrength(y.card) - cardStrength(x.card));
+  const waiting = all.filter((p) => !p.approved).sort((x, y) => x.seat - y.seat);
+  t.order.fill(null);
+  [...draws.map((d) => d.p), ...waiting].forEach((p, i) => { p.seat = i; t.order[i] = p.id; });
+  t.buttonSeat = t.order.length - 1; // the first seat after this one (seat 0) takes the button
+  t.draw = {
+    session: t.sessionNo, buttonId: draws[0].p.id,
+    cards: draws.map((d) => ({ id: d.p.id, name: d.p.name, card: d.card, ghost: d.p.ghost })),
+  };
+  t.drawUntil = Date.now() + DRAW_SHOW_MS;
+  t.sessionEndsAt = t.drawUntil + sessionLen(t);
+  say(t, `Session ${t.sessionNo}: seat draw. ${draws[0].p.name} drew the high card and has the button`);
+}
+
+function cashOut(t, p, text) {
+  const amount = p.stack + p.queued;
+  p.ledger.push({ t: Date.now(), kind: 'cashout', amount: -amount, by: 'table' });
+  p.history.push({ t: Date.now(), stack: 0, kind: 'cashout' });
+  t.departed.push({ id: p.id, memberId: p.memberId, token: p.token, name: p.name, left: Date.now(), amount, history: p.history, ledger: p.ledger });
+  say(t, `${text} (${amount} chips)`);
+  removePlayer(t, p, `${text}. You leave with ${amount} chips.`);
+}
+
+function deckChange(t) {
+  const k = t.sessionNo;
+  for (const p of t.players.values()) p.history.push({ t: Date.now(), stack: p.stack + p.queued, kind: 'deck', session: k });
+  if (t.sessLog[k - 1]) t.sessLog[k - 1].end = Date.now();
+  say(t, `Session ${k} is over. Deck change.`);
+  for (const p of [...t.players.values()]) {
+    if (p.id === t.adminId) continue;
+    if (p.ghost && p.ghostUntil <= k) cashOut(t, p, `${p.name} is released after session ${k}`);
+    else if (!p.ghost && p.callAfter && p.callAfter <= k) cashOut(t, p, `${p.name} stood up after session ${k}`);
+  }
+  t.sessionEnding = false;
+  if (t.ending) return finalize(t);
+  startSession(t);
+}
+
+function finalize(t) {
+  t.running = false; t.ended = true; t.ending = false; t.sessionEnding = false;
+  clearTimeout(t.timer); clearTimeout(t.nextTimer); t.deadline = 0;
+  for (const p of [...t.players.values()]) {
+    p.roles = []; // delegated powers end with the game
+    p.history.push({ t: Date.now(), stack: p.stack + p.queued, kind: 'end' });
+    if (p.ghost) cashOut(t, p, `${p.name} is released, the game is over`);
+  }
+  { const last = t.sessLog[t.sessLog.length - 1]; if (last && !last.end) last.end = Date.now(); }
+  t.final = buildFinal(t);
+  say(t, 'The game is over. Thanks for playing.');
+  for (const x of t.final.people) statementLinks.set(x.dl, { code: t.code, pid: x.id });
+  club.gameEnded(t);
+  club.sendStatements(t, (x) => publicBase() + '/s/' + x.dl + '.pdf');
+  broadcast(t);
+}
+
+function resetGame(t) {
+  t.ended = false; t.ending = false; t.sessionNo = 0; t.sessionEnding = false; t.draw = null; t.drawUntil = 0;
+  t.final = null; t.departed = []; t.sessLog = [];
+  for (const p of t.players.values()) { // a new game starts from the chips people hold now
+    p.stayUntil = 2; p.callAfter = 0;
+    const chips = p.stack + p.queued;
+    p.bought = chips; p.history = [{ t: Date.now(), stack: chips, kind: 'start' }];
+    p.ledger = chips ? [{ t: Date.now(), kind: 'buyin', amount: chips, by: 'carried over' }] : [];
+  }
+}
+
+// what happens if this player stands up now
+function leaveInfo(t, p) {
+  if (p.id === t.adminId || p.ghost) return { free: false, none: true };
+  if (t.sessionNo === 0 || !p.approved || t.ended) return { free: true };
+  let until;
+  if (t.sessionNo <= p.stayUntil) until = p.stayUntil; // early leaver: only the two-session minimum
+  else {
+    until = t.sessionNo; // no call time posted: one hour of notice, rounded up to a deck change
+    while (sessionEnd(t, until) < Date.now() + NOTICE_MS) until++;
+    if (p.callAfter) until = Math.max(p.stayUntil, Math.min(until, p.callAfter));
+  }
+  return { free: false, until, endsAt: sessionEnd(t, until) };
+}
+function callOptions(t, p) {
+  if (t.sessionNo === 0 || p.id === t.adminId || p.ghost || t.ended) return [];
   const out = [];
-  for (let s = 0; s < t.order.length; s++) {
-    const id = t.order[s];
-    if (!id) continue;
-    const p = t.players.get(id);
-    if (p.stack > 0 && !p.leaving && !p.away) out.push(p);
+  for (let n = Math.max(t.sessionNo, p.stayUntil), i = 0; i < 4; n++, i++) {
+    const endsAt = sessionEnd(t, n);
+    out.push({ session: n, endsAt, ok: endsAt - Date.now() >= NOTICE_MS });
   }
   return out;
 }
 
 function maybeStartHand(t) {
-  if (t.closed || !t.running || (t.hand && !t.hand.finished)) return;
-  const el = eligibleSeats(t);
-  if (el.length < 2) { t.lastResult = t.lastResult; return; }
-  // next button: first eligible seat after the previous button
-  let btn = el[0];
+  if (t.closed || !t.running || t.ended || (t.hand && !t.hand.finished)) return;
+  if (t.sessionNo > 0 && t.sessionEnding) { deckChange(t); if (t.ended) return; }
+  if (t.sessionNo === 0) { if (dealtIn(t).length < 2) return; startSession(t); }
+  const wait = t.drawUntil - Date.now();
+  if (wait > 0) { clearTimeout(t.nextTimer); t.nextTimer = setTimeout(() => maybeStartHand(t), wait + 50); broadcast(t); return; }
+  const live = dealtIn(t);
+  if (live.length < 2) { broadcast(t); return; }
+  const ring = lineup(t); // ghosts keep their place in the ring and pay their blinds
+  // next button: first seat after the previous button
+  let btn = ring[0];
   for (let k = 1; k <= 10; k++) {
     const s = (t.buttonSeat + k) % 10;
-    const cand = el.find((p) => p.seat === s);
+    const cand = ring.find((p) => p.seat === s);
     if (cand) { btn = cand; break; }
   }
   t.buttonSeat = btn.seat;
-  const players = el.map((p) => ({ id: p.id, seat: p.seat, stack: p.stack }));
+  const players = ring.map((p) => ({ id: p.id, seat: p.seat, stack: p.stack, ghost: p.ghost }));
   const buttonIdx = players.findIndex((p) => p.id === btn.id);
   t.handNo++;
   t.lastResult = null;
@@ -188,11 +328,6 @@ function finishHand(t) {
     if (p.queued) { p.queued = 0; }
     p.history.push({ t: Date.now(), stack: p.stack, kind: 'hand', hand: t.handNo });
   }
-  // players removed while the hand was running
-  for (const p of [...t.players.values()]) {
-    if (p.leaving && !(h.players.some((x) => x.id === p.id))) removePlayer(t, p);
-    else if (p.leaving) removePlayer(t, p);
-  }
   const r = h.result;
   const names = (id) => nameOf(t, id);
   t.lastResult = {
@@ -205,13 +340,22 @@ function finishHand(t) {
     pots: r.pots.length,
   };
   for (const w of t.lastResult.won) say(t, `${w.name} wins ${w.amount}${w.handName ? ' with ' + w.handName.toLowerCase() : ''}`);
+  // players who stood up during the hand, and early leavers who have paid everything they had
+  for (const p of [...t.players.values()]) {
+    if (p.leaving) removePlayer(t, p, 'You have left the table.');
+    else if (p.ghost && p.stack <= 0) { say(t, `${p.name} has no chips left to pay blinds and is released`); removePlayer(t, p, 'You are released, your chips are gone.'); }
+  }
   t.deadline = 0;
+  if (t.ending) return finalize(t);
   broadcast(t);
   clearTimeout(t.nextTimer);
   t.nextTimer = setTimeout(() => maybeStartHand(t), r.uncontested ? NEXT_HAND_DELAY_MS : Math.max(NEXT_HAND_DELAY_MS, Math.min(NEXT_HAND_DELAY_MS * 2, 14000)));
 }
 
-function removePlayer(t, p) {
+function removePlayer(t, p, reason) {
+  t.joins = t.joins.filter((r) => r.playerId !== p.id);
+  const set = t.clients.get(p.id);
+  if (set) for (const res of set) { try { send(res, { gone: true, text: reason || 'You have left the table.', stack: p.stack + p.queued }); res.end(); } catch (e) { /* closed */ } }
   t.order[p.seat] = null;
   t.players.delete(p.id);
   t.clients.delete(p.id);
@@ -225,7 +369,7 @@ function takeOut(t, p, text) {
   if (inHand) {
     if (t.hand.turnId === p.id) { t.hand.act(p.id, 'fold'); afterHandChange(t); }
     else { const hp = t.hand.players.find((x) => x.id === p.id); if (!hp.folded) { hp.folded = true; t.hand.afterAction(); afterHandChange(t); } }
-  } else { removePlayer(t, p); broadcast(t); }
+  } else { removePlayer(t, p, text); broadcast(t); }
 }
 
 function credit(t, p, amount, kind, by) {
@@ -284,8 +428,12 @@ const routes = {
   },
   buyin(b) {
     const { t, p } = auth(b);
+    if (!p.approved) throw httpErr(400, 'The admin has to let you in first');
+    if (p.ghost) throw httpErr(400, 'You have left the table');
     const amount = clampInt(b.amount, 1, t.settings.maxBuyin, 0);
     if (!amount) throw httpErr(400, `Enter an amount up to ${t.settings.maxBuyin}`);
+    if (amount < t.settings.minBuyin && p.stack + p.queued + amount < t.settings.minBuyin)
+      throw httpErr(400, `The minimum buy-in is ${t.settings.minBuyin}`);
     if (p.id === t.adminId) {
       credit(t, p, amount, 'buyin', 'banker');
       say(t, `${p.name} bought in for ${amount}`);
@@ -334,6 +482,7 @@ const routes = {
   },
   start(b) {
     const { t, p } = auth(b); need(t, p, 'start');
+    if (t.ended) resetGame(t);
     t.running = true;
     say(t, 'The admin started the game');
     broadcast(t); maybeStartHand(t);
@@ -358,7 +507,72 @@ const routes = {
   leave(b) {
     const { t, p } = auth(b);
     if (p.id === t.adminId) throw httpErr(400, 'The admin cannot leave. Pause the game instead.');
-    takeOut(t, p, `${p.name} left the table with ${p.stack + p.queued}`);
+    if (p.ghost) throw httpErr(400, 'You have already left. The admin can release you early in an emergency.');
+    const info = leaveInfo(t, p);
+    if (info.free) {
+      takeOut(t, p, `${p.name} left the table with ${p.stack + p.queued}`);
+      return { ok: true, left: true };
+    }
+    // standing up early: the seat stays in the ring and pays its blinds until the minimum is served
+    p.ghost = true; p.ghostUntil = info.until; p.callAfter = 0; p.away = false;
+    say(t, `${p.name} left early. Blinds continue until the end of session ${info.until}`);
+    const inHand = t.hand && !t.hand.finished && t.hand.players.some((x) => x.id === p.id);
+    if (inHand) {
+      if (t.hand.turnId === p.id) { t.hand.act(p.id, 'fold'); afterHandChange(t); }
+      else { const hp = t.hand.players.find((x) => x.id === p.id); if (!hp.folded) { hp.folded = true; t.hand.afterAction(); afterHandChange(t); } }
+    }
+    broadcast(t);
+    return { ok: true, ghost: true, until: info.until };
+  },
+  calltime(b) {
+    const { t, p } = auth(b);
+    if (p.id === t.adminId) throw httpErr(400, 'The admin cannot stand up');
+    if (p.ghost) throw httpErr(400, 'You have already left');
+    if (t.sessionNo === 0) throw httpErr(400, 'Call time can be posted once the game has started');
+    if (b.cancel) { p.callAfter = 0; say(t, `${p.name} cancelled the call time`); broadcast(t); return { ok: true }; }
+    const n = Math.floor(Number(b.session));
+    if (!(n >= Math.max(t.sessionNo, p.stayUntil))) throw httpErr(400, `You must stay until the end of session ${p.stayUntil} at least`);
+    if (sessionEnd(t, n) - Date.now() < NOTICE_MS) throw httpErr(400, 'Call time must be posted at least one hour before you stand up');
+    p.callAfter = n;
+    say(t, `${p.name} posted call time: standing up after session ${n}`);
+    broadcast(t);
+    return { ok: true, session: n };
+  },
+  admit(b) {
+    const { t, p } = auth(b); need(t, p, 'players');
+    const i = t.joins.findIndex((r) => r.id === b.reqId);
+    if (i < 0) throw httpErr(404, 'Request not found');
+    const [r] = t.joins.splice(i, 1);
+    const target = t.players.get(r.playerId);
+    if (target) {
+      if (b.ok) {
+        target.approved = true; target.stayUntil = t.sessionNo + 2;
+        say(t, `${target.name} joins the table. Stays until the end of session ${target.stayUntil}`);
+        broadcast(t); maybeStartHand(t);
+      } else { say(t, `${target.name} was not let in`); removePlayer(t, target, 'The admin did not let you in this time.'); broadcast(t); }
+    }
+    return { ok: true };
+  },
+  // The admin lends powers to a player for this room only. They end with the game and can be taken back at any time.
+  delegate(b) {
+    const { t, p } = auth(b);
+    if (p.id !== t.adminId) throw httpErr(403, 'Only the admin can hand out powers');
+    const target = t.players.get(b.playerId);
+    if (!target || target.id === t.adminId) throw httpErr(404, 'Player not found');
+    if (t.ended) throw httpErr(400, 'The game has ended');
+    const roles = [...new Set((Array.isArray(b.roles) ? b.roles : []).filter((r) => ROLE_NAMES.includes(r)))];
+    const kept = (target.roles || []).filter((r) => !ROLE_NAMES.includes(r)); // e.g. event invitation power
+    target.roles = roles.concat(kept);
+    say(t, roles.length ? `${target.name} now has: ${roles.join(', ')}` : `${target.name}'s powers were taken back`);
+    if (t.eventId && target.memberId) club.saveDelegates(t.eventId, target.memberId, target.roles);
+    broadcast(t);
+    return { roles };
+  },
+  endgame(b) {
+    const { t, p } = auth(b); need(t, p, 'start');
+    if (t.ended) throw httpErr(400, 'The game has already ended');
+    if (t.hand && !t.hand.finished) { t.ending = true; say(t, 'The game will end after this hand'); broadcast(t); }
+    else finalize(t);
     return { ok: true };
   },
   sitout(b) {
@@ -433,6 +647,28 @@ const INDEX = process.env.INDEX_FILE || path.join(__dirname, 'index.html');
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
+    if (req.method === 'GET' && url.pathname === '/api/statement') {
+      const t = getTable(url.searchParams.get('code'));
+      const tok = url.searchParams.get('token');
+      const fin = t.final || Object.assign(buildFinal(t), { live: true, transfers: [] });
+      const asker = fin.people.find((x) => x.token === tok);
+      if (!asker) throw httpErr(401, 'You are not at this table');
+      const target = url.searchParams.get('pid') || asker.id;
+      if (target !== asker.id && !(t.players.has(t.adminId) && t.players.get(t.adminId).token === tok)) throw httpErr(403, 'Only the banker can download someone else\'s statement');
+      const pdf = statementPdf(fin, target);
+      if (!pdf) throw httpErr(404, 'No statement for that player');
+      const who = fin.people.find((x) => x.id === target).name.replace(/[^A-Za-z0-9]+/g, '-');
+      res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="Statement-${who}-${t.code}.pdf"`, 'Cache-Control': 'no-store' });
+      return res.end(pdf);
+    }
+    const sm = req.method === 'GET' && url.pathname.match(/^\/s\/([0-9a-f]{36})\.pdf$/);
+    if (sm) {
+      const l = statementLinks.get(sm[1]), t = l && tables.get(l.code), pdf = t && t.final && statementPdf(t.final, l.pid);
+      if (!pdf) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('This statement is no longer available'); }
+      const who = t.final.people.find((x) => x.id === l.pid).name.replace(/[^A-Za-z0-9]+/g, '-');
+      res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="Statement-${who}-${t.code}.pdf"`, 'Cache-Control': 'no-store' });
+      return res.end(pdf);
+    }
     if (req.method === 'GET' && url.pathname === '/api/club/events') return club.handleEvents(req, res, url);
     if (req.method === 'GET' && url.pathname === '/api/events') return handleEvents(req, res, url);
     if (req.method === 'GET' && url.pathname === '/ping') { res.writeHead(200); return res.end('ok'); }
@@ -462,6 +698,16 @@ setInterval(() => {
 
 const ready = club.load();
 ready.catch(() => {}); // reported where it matters (startup below)
+setInterval(() => {
+  for (const t of tables.values()) {
+    if (t.sessionNo > 0 && !t.ended && !t.sessionEnding && Date.now() >= t.sessionEndsAt) {
+      t.sessionEnding = true;
+      say(t, `Session ${t.sessionNo} time is up. Deck change after this hand.`);
+      broadcast(t);
+      if (t.running && !(t.hand && !t.hand.finished)) maybeStartHand(t);
+    }
+  }
+}, 2000).unref();
 const clubTimer = setInterval(() => { try { club.tick(); } catch (e) { console.error(e); } }, 5000);
 clubTimer.unref();
 
@@ -469,4 +715,4 @@ if (require.main === module) {
   ready.then(() => server.listen(PORT, () => console.log('Smart Buddies listening on ' + PORT)))
     .catch((e) => { console.error('Not starting: the club data could not be read (' + e.message + '). Check DRIVE_SCRIPT_URL and DRIVE_SECRET.'); process.exit(1); });
 }
-module.exports = { server, tables, routes, club, ready };
+module.exports = { server, tables, routes, club, ready, startSession, deckChange };
