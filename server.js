@@ -547,6 +547,7 @@ const routes = {
     if (target) {
       if (b.ok) {
         target.approved = true; target.stayUntil = t.sessionNo + 2;
+        if (target.memberId) autoBuyin(t, target);
         say(t, `${target.name} joins the table. Stays until the end of session ${target.stayUntil}`);
         broadcast(t); maybeStartHand(t);
       } else { say(t, `${target.name} was not let in`); removePlayer(t, target, 'The admin did not let you in this time.'); broadcast(t); }
@@ -609,7 +610,15 @@ const routes = {
   },
 };
 
-const club = createClub({ tables, makeTable, addPlayer, broadcast, say, httpErr, cleanName, cleanSettings });
+// members who tap In sit down with the table's minimum buy-in, no banker step needed
+function autoBuyin(t, p) {
+  if (p.bought || !p.approved) return;
+  const amount = t.settings.minBuyin;
+  credit(t, p, amount, 'buyin', 'minimum buy-in');
+  say(t, `${p.name} bought in for ${amount}`);
+  broadcast(t); maybeStartHand(t);
+}
+const club = createClub({ tables, makeTable, addPlayer, broadcast, say, httpErr, cleanName, cleanSettings, autoBuyin, publicBase });
 Object.assign(routes, club.routes);
 
 function handleEvents(req, res, url) {
@@ -661,6 +670,8 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="Statement-${who}-${t.code}.pdf"`, 'Cache-Control': 'no-store' });
       return res.end(pdf);
     }
+    const rm = req.method === 'GET' && url.pathname.match(/^\/r\/([0-9a-f]{40})\/([0-9a-f]{8})\/(in|out)$/);
+    if (rm) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(club.rsvpPage(rm[1], rm[2], rm[3])); }
     const sm = req.method === 'GET' && url.pathname.match(/^\/s\/([0-9a-f]{36})\.pdf$/);
     if (sm) {
       const l = statementLinks.get(sm[1]), t = l && tables.get(l.code), pdf = t && t.final && statementPdf(t.final, l.pid);

@@ -540,7 +540,7 @@ function onNotice(n){
 }
 function enableAlerts(){beep();try{if(!window.Notification){toast('This browser cannot show phone notifications. In-app alerts still work.');return;}Notification.requestPermission().then(function(p){toast(p==='granted'?'Phone notifications are on':'Notifications were not allowed');});}catch(e){}}
 function when(ts){return new Date(ts).toLocaleString([],{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});}
-function until(ts){var ms=ts-Date.now();if(ms<=0)return 'Started';var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),sc=s%60;if(d)return d+'d '+h+'h';if(h)return h+'h '+m+'m';if(m>=5)return m+' min';return m+':'+('0'+sc).slice(-2);}
+function until(ts){var ms=ts-Date.now();if(ms<=0)return 'Open now';var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),sc=s%60;if(d)return d+'d '+h+'h';if(h)return h+'h '+m+'m';if(m>=5)return m+' min';return m+':'+('0'+sc).slice(-2);}
 function linkFor(tok){return location.origin+'/?m='+tok;}
 function waLink(phone,text){var d=String(phone||'').replace(/[^\d]/g,'');return 'https://wa.me/'+d+'?text='+encodeURIComponent(text);}
 function copyText(t){if(navigator.clipboard)navigator.clipboard.writeText(t).then(function(){toast('Copied');});else{prompt('Copy this:',t);}}
@@ -549,14 +549,14 @@ function dval(id,def){return esc(S.draft[id]!==undefined?S.draft[id]:(def||''));
 function dfield(id,label,def,attrs){return '<div class="field" style="flex:1"><label for="'+id+'">'+label+'</label><input id="'+id+'" '+(attrs||'')+' value="'+dval(id,def)+'" oninput="S.draft[this.id]=this.value"></div>';}
 
 function enterGame(evId){capi('enter',{eventId:evId}).then(function(r){S.code=r.code;S.token=r.token;S.pid=r.pid;saveSession();S.quick=false;S.alert=null;connect();requestWake();render();}).catch(fail);}
+function rsvp(evId,a){capi('rsvp',{eventId:evId,answer:a}).catch(fail);}
 function interest(evId,on){capi('interest',{eventId:evId,on:on}).catch(fail);}
 function decide2(evId,mid,d){capi('decide',{eventId:evId,memberId:mid,decision:d}).catch(fail);}
 function cancelEv(evId){if(!confirm('Cancel this game? Everyone allotted a seat is told.'))return;capi('cancelevent',{eventId:evId}).then(function(){S.manage=null;}).catch(fail);}
 function doCreateEv(){
   var d=formVals(['c_title','c_when','c_sb','c_bb','c_seats','c_ts','c_mb','c_sm']),startAt=new Date(d.c_when||'').getTime();
-  if(!startAt){toast('Pick the date and time');return;}
   var inv='all';if(S.inv==='pick'){inv=Object.keys(S.pick).filter(function(k){return S.pick[k];});if(!inv.length){toast('Pick at least one member');return;}}
-  capi('createevent',{title:d.c_title,startAt:startAt,seats:d.c_seats||10,sb:d.c_sb||25,bb:d.c_bb||50,turnSeconds:d.c_ts||40,minBuyin:d.c_mn||1000,maxBuyin:d.c_mb||10000,sessionMinutes:d.c_sm||120,invited:inv}).then(function(){S.formOpen=false;S.draft={};S.pick={};S.inv='all';toast('Game created and invitations sent');}).catch(fail);
+  capi('createevent',{title:d.c_title,startAt:startAt||0,now:!startAt,seats:d.c_seats||10,sb:d.c_sb||25,bb:d.c_bb||50,turnSeconds:d.c_ts||40,minBuyin:d.c_mn||1000,maxBuyin:d.c_mb||10000,sessionMinutes:d.c_sm||120,invited:inv}).then(function(){S.formOpen=false;S.draft={};S.pick={};S.inv='all';toast(startAt?'Game created and invitations sent':'Game started. Invitations sent');}).catch(fail);
 }
 function doAddMember(){var d=formVals(['m_name','m_phone']);capi('addmember',{name:d.m_name,phone:d.m_phone}).then(function(r){S.newLink={name:d.m_name,phone:d.m_phone,token:r.token};S.draft={};render();}).catch(fail);}
 function toggleRole(evId,mid,role){var ev=S.cv.events.filter(function(x){return x.id===evId;})[0];var p=ev&&(ev.people||[]).filter(function(x){return x.id===mid;})[0];if(!p)return;var r=(p.roles||[]).slice(),i=r.indexOf(role);if(i<0)r.push(role);else r.splice(i,1);capi('setroles',{eventId:evId,memberId:mid,roles:r}).catch(fail);}
@@ -564,7 +564,7 @@ function newLinkFor(mid){if(!confirm('Make a new link? The old one stops working
 function removeMember(mid,name){if(!confirm('Remove '+name+' from the club?'))return;capi('removemember',{memberId:mid}).catch(fail);}
 function doSetup(){var d=formVals(['su_name','su_owner','su_phone','su_code']);fetch('/api/club/setup',{method:'POST',body:JSON.stringify({name:d.su_name||'Smart Buddies',ownerName:d.su_owner,phone:d.su_phone,setupCode:d.su_code})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error);return j;});}).then(function(j){setMember(j.mtoken);S.newLink={name:'Your admin link',token:j.mtoken,own:true};S.draft={};S.lobbyMode='join';S.clubExists=true;clubConnect();render();}).catch(fail);}
 
-function pillFor(my){var m={owner:['HOST','g'],invited:['INVITED',''],interested:['WAITING',''],approved:['SEAT ALLOTTED','g'],declined:['NO SEAT','']}[my]||['',''];return '<div class="pill2 '+m[1]+'">'+m[0]+'</div>';}
+function pillFor(my){var m={owner:['HOST','g'],invited:['INVITED',''],interested:['WAITING',''],approved:['SEAT ALLOTTED','g'],waitlist:['WAITING LIST',''],declined:['NO SEAT','']}[my]||['',''];return '<div class="pill2 '+m[1]+'">'+m[0]+'</div>';}
 function evCard(ev,cv){
   var me=cv.me,h='<div class="evc'+(ev.cancelled?' off':'')+'">';
   h+='<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><div class="disp" style="font-size:28px;line-height:1">'+esc(ev.title)+'</div><div class="muted small">'+when(ev.startAt)+' · blinds '+fmt(ev.settings.sb)+'/'+fmt(ev.settings.bb)+' · '+ev.seats+' seats</div></div>'+(ev.cancelled?'<div class="pill2">CANCELLED</div>':ev.done?'<div class="pill2">ENDED</div>':pillFor(ev.my))+'</div>';
@@ -572,12 +572,14 @@ function evCard(ev,cv){
   if(ev.myRoles&&ev.myRoles.length&&!ev.done)h+='<div class="muted small" style="margin-top:8px">The admin gave you powers for this game: '+ev.myRoles.map(function(r){return ROLE_LABEL[r];}).join(', ')+'. They end when the game ends.</div>';
   if(ev.done)h+='<div class="muted small" style="margin-top:10px">This game has ended.</div>';
   if(!ev.cancelled&&!ev.done){
-    if(ev.my==='invited')h+='<button class="btn" style="margin-top:12px;height:46px" onclick="interest(\''+ev.id+'\',true)">I\'m interested</button>';
+    if(ev.my==='invited'&&ev.auto)h+='<div class="muted small" style="margin-top:10px">Seats go first come, first served. Tap In and you sit down with the minimum buy-in of '+fmt(ev.settings.minBuyin)+'.</div><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'in\')">I\'m in</button><button class="btn ghost" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'out\')">I\'m out</button></div>';
+    else if(ev.my==='invited')h+='<button class="btn" style="margin-top:12px;height:46px" onclick="interest(\''+ev.id+'\',true)">I\'m interested</button>';
+    if(ev.my==='waitlist')h+='<div class="muted small" style="margin-top:10px">The table is full. You are number '+ev.wait+' on the waiting list and get a seat if someone drops out.</div><button class="btn ghost" style="margin-top:8px;height:42px" onclick="rsvp(\''+ev.id+'\',\'out\')">I\'m out</button>';
     if(ev.my==='interested')h+='<div class="muted small" style="margin-top:10px">You are on the list. The admin will allot seats.</div><button class="btn ghost" style="margin-top:8px;height:42px" onclick="interest(\''+ev.id+'\',false)">Withdraw</button>';
-    if(ev.my==='declined')h+='<div class="muted small" style="margin-top:10px">No seat this time.</div>';
+    if(ev.my==='declined')h+='<div class="muted small" style="margin-top:10px">'+(ev.auto?'You are out.':'No seat this time.')+'</div>'+(ev.auto?'<button class="btn ghost" style="margin-top:8px;height:42px" onclick="rsvp(\''+ev.id+'\',\'in\')">Change to In</button>':'');
     if(ev.my==='approved'||ev.my==='owner'){
       h+='<div class="pass"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.16em">'+(ev.my==='owner'?'YOUR TABLE':'TABLE ALLOTTED')+'</div><div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px"><div class="muted small">'+(ev.my==='owner'?ev.approvedCount+' of '+(ev.seats-1)+' guest seats filled':'Starts in')+'</div><div class="disp gold" style="font-size:30px" data-count="'+ev.startAt+'">'+until(ev.startAt)+'</div></div>'+
-        ((soon||ev.my==='owner')?'<button class="btn" style="margin-top:10px" onclick="enterGame(\''+ev.id+'\')">Join table</button>':'<button class="btn" style="margin-top:10px" disabled>Opens 15 minutes before the start</button>')+'</div>';
+        ((soon||ev.tableOpen||ev.my==='owner')?'<button class="btn" style="margin-top:10px" onclick="enterGame(\''+ev.id+'\')">Join table</button>':'<button class="btn" style="margin-top:10px" disabled>Opens 15 minutes before the start</button>')+'</div>';
     }
   }
   if(ev.manage&&!ev.cancelled&&!ev.done){
@@ -586,9 +588,11 @@ function evCard(ev,cv){
     if(open){
       (ev.people||[]).forEach(function(p){
         var msg='Table allotted! '+ev.title+', '+when(ev.startAt)+'. Open Smart Buddies: '+location.origin;
-        h+='<div class="row" style="margin-top:8px;flex-wrap:wrap"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(p.name)+'</div><div class="muted small">'+({invited:'Not replied',interested:'Interested',approved:'Seat allotted',declined:'No seat'}[p.state]||p.state)+'</div></div>'+
+        var mem=(cv.members||[]).filter(function(x){return x.id===p.id;})[0],inv='';
+        if(ev.auto&&mem&&p.phone&&p.state==='invited'){var L=location.origin+'/r/'+mem.token+'/'+ev.id+'/';inv='<a class="rolechip on" style="display:flex;align-items:center;text-decoration:none" target="_blank" rel="noopener" href="'+waLink(p.phone,'Smart Buddies: you are invited to '+ev.title+', '+when(ev.startAt)+'. Seats go first come, first served.\nIN: '+L+'in\nOUT: '+L+'out')+'">Invite on WhatsApp</a>';}
+        h+='<div class="row" style="margin-top:8px;flex-wrap:wrap"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(p.name)+'</div><div class="muted small">'+({invited:'Not replied',interested:'Interested',approved:'In',waitlist:'Waiting list',declined:ev.auto?'Out':'No seat'}[p.state]||p.state)+'</div></div>'+
           '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'+
-          (p.state!=='approved'?'<button class="rolechip on" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'approve\')">Allot seat</button>':'<button class="rolechip" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'reset\')">Take back</button><a class="rolechip" style="display:flex;align-items:center;text-decoration:none" target="_blank" rel="noopener" href="'+waLink(p.phone,msg)+'">WhatsApp</a>')+
+          inv+(p.state!=='approved'?'<button class="rolechip on" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'approve\')">Allot seat</button>':'<button class="rolechip" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'reset\')">Take back</button><a class="rolechip" style="display:flex;align-items:center;text-decoration:none" target="_blank" rel="noopener" href="'+waLink(p.phone,msg)+'">WhatsApp</a>')+
           (p.state==='interested'||p.state==='invited'?'<button class="rolechip" onclick="decide2(\''+ev.id+'\',\''+p.id+'\',\'decline\')">No seat</button>':'')+'</div>'+(cv.me.isOwner&&p.state==='approved'?'<div style="flex-basis:100%;margin-top:6px"><div class="muted" style="font-size:11px;letter-spacing:.08em;margin-bottom:6px">POWERS FOR THIS GAME ONLY</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+cv.roles.map(function(r){return '<button class="rolechip'+((p.roles||[]).indexOf(r)>=0?' on':'')+'" onclick="toggleRole(\''+ev.id+'\',\''+p.id+'\',\''+r+'\')">'+ROLE_LABEL[r]+'</button>';}).join('')+'</div></div>':'')+'</div>';
       });
       h+='<button class="btn ghost" style="margin-top:10px;height:42px;border-color:#6b2a2e;color:#d2454d" onclick="cancelEv(\''+ev.id+'\')">Cancel this game</button>';
@@ -598,7 +602,7 @@ function evCard(ev,cv){
 }
 function newEvForm(cv){
   var h='<div class="evc" style="border-color:#d8b45c"><div class="disp" style="font-size:26px">New game</div><div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">'+
-    dfield('c_title','NAME','Friday night','maxlength="40"')+dfield('c_when','DATE AND TIME','','type="datetime-local"')+
+    dfield('c_title','NAME','Friday night','maxlength="40"')+dfield('c_when','DATE AND TIME (EMPTY = START NOW)','','type="datetime-local"')+
     '<div style="display:flex;gap:8px">'+dfield('c_sb','SMALL','25','inputmode="numeric"')+dfield('c_bb','BIG','50','inputmode="numeric"')+dfield('c_seats','SEATS','10','inputmode="numeric"')+'</div>'+
     '<div style="display:flex;gap:8px">'+dfield('c_ts','TIMER (S)','40','inputmode="numeric"')+dfield('c_sm','SESSION (MIN)','120','inputmode="numeric"')+'</div><div style="display:flex;gap:8px">'+dfield('c_mn','MIN BUY-IN','1000','inputmode="numeric"')+dfield('c_mb','MAX BUY-IN','10000','inputmode="numeric"')+'</div>'+
     '<div class="h2" style="margin:4px 0 0">WHO IS INVITED</div><div style="display:flex;gap:8px"><button class="rolechip'+(S.inv==='all'?' on':'')+'" onclick="S.inv=\'all\';render()">All members</button><button class="rolechip'+(S.inv==='pick'?' on':'')+'" onclick="S.inv=\'pick\';render()">Pick members</button></div>';

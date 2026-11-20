@@ -74,6 +74,7 @@ async function sendExternal(phone, text, env = process.env, mediaUrl) {
 // ---------- the club ----------
 function createClub(ctx) {
   const { tables, makeTable, addPlayer, broadcast, say, httpErr, cleanName, cleanSettings } = ctx;
+  const baseUrl = () => (ctx.publicBase ? ctx.publicBase() : '');
   const env = ctx.env || process.env;
   const rid = (n = 16) => crypto.randomBytes(n).toString('hex');
   const store = ctx.store || pickStore(env);
@@ -128,6 +129,8 @@ function createClub(ctx) {
     return mgr || ev.invited === 'all' || (Array.isArray(ev.invited) && ev.invited.includes(m.id));
   }
   const approvedIds = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'approved');
+  const seatsLeft = (ev) => ev.seats - 1 - approvedIds(ev).length; // the admin holds one seat
+  const waitlist = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'waitlist').sort((a, b) => ev.people[a].at - ev.people[b].at);
   const tableOpen = (ev) => { const t = ev.tableCode && tables.get(ev.tableCode); return !!(t && !t.closed); };
 
   function viewFor(m) {
@@ -139,7 +142,7 @@ function createClub(ctx) {
         const manage = hasEv(m, ev, 'invite');
         const o = {
           id: ev.id, title: ev.title, startAt: ev.startAt, seats: ev.seats, cancelled: ev.status === 'cancelled', done: ev.status === 'done',
-          settings: ev.settings, approvedCount: approvedIds(ev).length, tableOpen: tableOpen(ev),
+          settings: ev.settings, approvedCount: approvedIds(ev).length, tableOpen: tableOpen(ev), auto: !!ev.auto, wait: mine && mine.state === 'waitlist' ? waitlist(ev).indexOf(m.id) + 1 : 0, waitCount: waitlist(ev).length,
           my: isOwner(m) ? 'owner' : (mine ? mine.state : 'invited'), manage, myRoles: isOwner(m) ? [] : evRoles(ev, m),
         };
         if (manage) {
@@ -169,6 +172,45 @@ function createClub(ctx) {
     for (const id of clients.keys()) { const m = state.members[id]; if (m) push(m, '', viewFor(m)); }
   }
   const changed = () => { persist(); broadcastClub(); };
+
+  // first come, first served: when a seat frees up the next person waiting gets it
+  function promote(ev) {
+    for (const id of waitlist(ev)) {
+      if (seatsLeft(ev) <= 0) break;
+      const x = state.members[id];
+      if (!x) { delete ev.people[id]; continue; }
+      ev.people[id] = { state: 'approved', at: Date.now() };
+      tell(x, 'allotted', `A seat opened up. You are in for ${ev.title}. Open Smart Buddies and tap Join table.`, { eventId: ev.id });
+    }
+  }
+  function rsvp(m, ev, answer) {
+    if (!ev || ev.status === 'cancelled' || ev.status === 'done' || !canSee(ev, m)) throw httpErr(404, 'This game is not open any more');
+    if (isOwner(m)) throw httpErr(400, 'You are the admin. You are always seated.');
+    const cur = ev.people[m.id];
+    if (answer === 'in') {
+      if (cur && (cur.state === 'approved' || cur.state === 'waitlist')) return cur.state;
+      ev.people[m.id] = seatsLeft(ev) > 0 ? { state: 'approved', at: Date.now() } : { state: 'waitlist', at: Date.now() };
+    } else {
+      const had = cur && cur.state === 'approved';
+      ev.people[m.id] = { state: 'declined', at: Date.now(), out: true };
+      if (had) promote(ev);
+    }
+    changed();
+    return ev.people[m.id].state;
+  }
+  const rsvpLink = (m, ev, a) => `${baseUrl()}/r/${m.token}/${ev.id}/${a}`;
+  function rsvpPage(mtoken, evId, answer) {
+    const m = memberByToken(mtoken), ev = state.events[evId];
+    const page = (title, msg, open) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart Buddies</title><body style="margin:0;background:#0b0e0c;color:#f2efe6;font-family:-apple-system,system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center"><div style="max-width:340px;padding:24px"><div style="color:#d8b45c;letter-spacing:.2em;font-size:12px;font-weight:700">SMART BUDDIES</div><h1 style="font-size:34px;margin:12px 0 8px">${title}</h1><p style="color:#a3aba5;line-height:1.5">${msg}</p>${open ? `<a href="/?m=${m.token}" style="display:block;margin-top:20px;padding:15px;border-radius:12px;background:#d8b45c;color:#1b1608;font-weight:700;text-decoration:none">Open the table</a>` : ''}</div></body>`;
+    const esc = (s) => String(s).replace(/[<>&"]/g, '');
+    if (!m || !ev) return page('Link not valid', 'Ask the admin for a new invite.', false);
+    try {
+      const st = rsvp(m, ev, answer === 'out' ? 'out' : 'in');
+      if (st === 'approved') return page("You're in", `${esc(ev.title)}. Your seat is held. Open the table whenever you like and you will be seated with the minimum buy-in.`, true);
+      if (st === 'waitlist') return page('Table is full', `${esc(ev.title)}. You are on the waiting list and will get a seat if someone drops out.`, true);
+      return page("You're out", `Thanks for letting us know. Changed your mind? Tap the In link again.`, false);
+    } catch (e) { return page('Sorry', esc(e.message), false); }
+  }
 
   function inviteText(ev) { return `${ev.title}: ${new Date(ev.startAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: env.TZ_LABEL || 'Asia/Kolkata' })}`; }
   function tell(m, kind, text, extra) {
@@ -257,19 +299,24 @@ function createClub(ctx) {
     },
     'club/createevent'(b) {
       const m = auth(b); ownerOnly(m);
-      const startAt = Math.floor(Number(b.startAt));
+      const startAt = b.now ? Date.now() : Math.floor(Number(b.startAt));
       if (!Number.isFinite(startAt) || startAt < Date.now() - 3600e3) throw httpErr(400, 'Pick a start time in the future');
       let invited = 'all';
       if (Array.isArray(b.invited)) invited = b.invited.filter((id) => state.members[id] && !isOwner(state.members[id]));
       const ev = {
         id: rid(4), title: cleanTitle(b.title), startAt, seats: Math.min(10, Math.max(2, Math.floor(Number(b.seats)) || 10)),
         settings: cleanSettings({ sb: b.sb, bb: b.bb, turnSeconds: b.turnSeconds, minBuyin: b.minBuyin, maxBuyin: b.maxBuyin, sessionMinutes: b.sessionMinutes }),
-        invited, people: {}, delegates: {}, status: 'scheduled', reminded: false, tableCode: '', createdBy: m.id, createdAt: Date.now(),
+        invited, auto: b.auto !== false, people: {}, delegates: {}, status: 'scheduled', reminded: false, tableCode: '', createdBy: m.id, createdAt: Date.now(),
       };
       state.events[ev.id] = ev;
       changed();
       const targets = invited === 'all' ? Object.values(state.members).filter((x) => !isOwner(x)) : invited.map((id) => state.members[id]);
-      for (const x of targets) if (x.id !== m.id) tell(x, 'invite', `You are invited: ${inviteText(ev)}. Open the app and tap "I'm interested".`, { eventId: ev.id });
+      for (const x of targets) {
+        if (x.id === m.id) continue;
+        const links = baseUrl() ? `\nIN: ${rsvpLink(x, ev, 'in')}\nOUT: ${rsvpLink(x, ev, 'out')}` : '';
+        tell(x, 'invite', ev.auto ? `You are invited: ${inviteText(ev)}. Are you in or out? Seats go first come, first served.${links}` : `You are invited: ${inviteText(ev)}. Open the app and tap "I'm interested".`, { eventId: ev.id });
+      }
+      if (b.now) { try { openTable(ev); ev.reminded = true; persist(); } catch (e) { console.error('Could not open table', e.message); } }
       return { id: ev.id };
     },
     'club/cancelevent'(b) {
@@ -294,9 +341,15 @@ function createClub(ctx) {
         ev.people[m.id] = { state: 'interested', at: Date.now() };
       } else if (cur && cur.state === 'approved') {
         delete ev.people[m.id]; // gives the seat back
+        promote(ev);
       } else delete ev.people[m.id];
       changed();
       return { state: ev.people[m.id] ? ev.people[m.id].state : 'invited' };
+    },
+    'club/rsvp'(b) {
+      const m = auth(b);
+      const st = rsvp(m, state.events[b.eventId], b.answer === 'out' ? 'out' : 'in');
+      return { state: st };
     },
     'club/decide'(b) {
       const m = auth(b);
@@ -317,6 +370,7 @@ function createClub(ctx) {
         tell(target, 'declined', `Sorry, no seat for you at ${ev.title} this time.`, { eventId: ev.id });
       } else if (d === 'reset') {
         ev.people[target.id] = { state: 'interested', at: Date.now() };
+        promote(ev);
         changed();
       } else throw httpErr(400, 'Unknown decision');
       return { ok: true };
@@ -328,13 +382,14 @@ function createClub(ctx) {
       if (ev.status === 'done') throw httpErr(400, 'This game has ended');
       const mine = ev.people[m.id];
       if (!isOwner(m) && !(mine && mine.state === 'approved')) throw httpErr(403, 'You have not been allotted a seat at this table');
-      if (!isOwner(m) && Date.now() < ev.startAt - 15 * 60e3) throw httpErr(400, 'The table opens 15 minutes before the start time');
+      if (!isOwner(m) && Date.now() < ev.startAt - 15 * 60e3 && !tableOpen(ev)) throw httpErr(400, 'The table opens 15 minutes before the start time');
       const t = openTable(ev);
       let p = [...t.players.values()].find((x) => x.memberId === m.id);
       if (!p) {
         p = addPlayer(t, m.name);
         p.memberId = m.id; p.roles = evRoles(ev, m).slice();
         say(t, `${m.name} sat down`);
+        if (!isOwner(m) && ctx.autoBuyin && ev.auto) ctx.autoBuyin(t, p);
         broadcast(t);
       }
       return { code: t.code, token: p.token, pid: p.id };
@@ -395,7 +450,7 @@ function createClub(ctx) {
     if (ev && m && !isOwner(m)) setDelegates(ev, m, roles, true);
   }
 
-  return { routes, handleEvents, load, tick, flush, viewFor, openTable, gameEnded, sendStatements, saveDelegates, state: () => state, ROLES };
+  return { routes, handleEvents, load, tick, flush, viewFor, openTable, gameEnded, sendStatements, rsvpPage, saveDelegates, state: () => state, ROLES };
 }
 
 module.exports = { createClub, fileStore, driveStore, pickStore, sendExternal, ROLES };
