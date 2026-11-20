@@ -55,7 +55,7 @@ function addPlayer(t, name) {
   if (seat < 0) throw httpErr(400, 'The table is full');
   const p = {
     id: rid(6), token: rid(24), name, seat, stack: 0, queued: 0, bought: 0,
-    connected: false, history: [], ledger: [], leaving: false,
+    connected: false, history: [], ledger: [], leaving: false, away: false, misses: 0,
   };
   t.players.set(p.id, p);
   t.order[seat] = p.id;
@@ -77,7 +77,7 @@ function viewFor(t, pid) {
     const p = t.players.get(id);
     const hp = hv && hv.players.find((x) => x.id === id);
     seats.push({
-      seat: s, id, name: p.name, isAdmin: id === t.adminId, connected: p.connected,
+      seat: s, id, name: p.name, isAdmin: id === t.adminId, connected: p.connected, away: p.away,
       stack: hp ? hp.stack : p.stack, inHand: !!hp, bet: hp ? hp.bet : 0,
       folded: hp ? hp.folded : false, allIn: hp ? hp.allIn : false,
       cards: hp ? hp.cards : null, isButton: !!(hp && hp.isButton),
@@ -89,7 +89,7 @@ function viewFor(t, pid) {
     now: Date.now(), code: t.code, settings: t.settings, running: t.running, handNo: t.handNo,
     you: {
       id: pid, name: me.name, isAdmin, seat: me.seat, stack: seats[me.seat].stack,
-      queued: me.queued, bought: me.bought, inHand: seats[me.seat].inHand,
+      queued: me.queued, bought: me.bought, inHand: seats[me.seat].inHand, away: me.away,
     },
     seats,
     hand: hv && { street: hv.street, board: hv.board, pot: hv.pot, currentBet: hv.currentBet, turnId: hv.turnId, finished: hv.finished, legal: hv.legal, deadline: t.deadline },
@@ -117,7 +117,7 @@ function eligibleSeats(t) {
     const id = t.order[s];
     if (!id) continue;
     const p = t.players.get(id);
-    if (p.stack > 0 && !p.leaving) out.push(p);
+    if (p.stack > 0 && !p.leaving && !p.away) out.push(p);
   }
   return out;
 }
@@ -143,21 +143,37 @@ function maybeStartHand(t) {
   afterHandChange(t);
 }
 
+const DISCONNECT_TURN_SECONDS = Number(process.env.DISCONNECT_TURN_SECONDS || 10);
+const MISSES_BEFORE_AWAY = 2;
+
+// (re)start the turn clock for whoever is to act
+function armTimer(t, secs) {
+  clearTimeout(t.timer);
+  t.deadline = Date.now() + secs * 1000;
+  t.timer = setTimeout(() => {
+    if (!t.hand || t.hand.finished) return;
+    const a = t.hand.autoAction();
+    try {
+      t.hand.act(a.id, a.type);
+      say(t, `${nameOf(t, a.id)} ran out of time and ${a.type === 'check' ? 'checks' : 'folds'}`);
+      const p = t.players.get(a.id);
+      if (p) {
+        p.misses++;
+        if (p.misses >= MISSES_BEFORE_AWAY && !p.away) { p.away = true; say(t, `${p.name} is sitting out`); }
+      }
+      afterHandChange(t);
+    } catch (e) { /* ignore */ }
+  }, secs * 1000 + 300);
+}
+
 function afterHandChange(t) {
   clearTimeout(t.timer);
   const h = t.hand;
   if (h && h.finished) return finishHand(t);
   if (h && h.turnId) {
-    t.deadline = Date.now() + t.settings.turnSeconds * 1000;
-    t.timer = setTimeout(() => {
-      if (!t.hand || t.hand.finished) return;
-      const a = t.hand.autoAction();
-      try {
-        t.hand.act(a.id, a.type);
-        say(t, `${nameOf(t, a.id)} ran out of time and ${a.type === 'check' ? 'checks' : 'folds'}`);
-        afterHandChange(t);
-      } catch (e) { /* ignore */ }
-    }, t.settings.turnSeconds * 1000 + 300);
+    const tp = t.players.get(h.turnId);
+    const secs = tp && !tp.connected ? Math.min(t.settings.turnSeconds, DISCONNECT_TURN_SECONDS) : t.settings.turnSeconds;
+    armTimer(t, secs);
   }
   broadcast(t);
 }
@@ -197,6 +213,17 @@ function removePlayer(t, p) {
   t.order[p.seat] = null;
   t.players.delete(p.id);
   t.clients.delete(p.id);
+}
+
+// remove a player now, or when the running hand ends if they are in it
+function takeOut(t, p, text) {
+  const inHand = t.hand && !t.hand.finished && t.hand.players.some((x) => x.id === p.id);
+  say(t, text);
+  p.leaving = true;
+  if (inHand) {
+    if (t.hand.turnId === p.id) { t.hand.act(p.id, 'fold'); afterHandChange(t); }
+    else { const hp = t.hand.players.find((x) => x.id === p.id); if (!hp.folded) { hp.folded = true; t.hand.afterAction(); afterHandChange(t); } }
+  } else { removePlayer(t, p); broadcast(t); }
 }
 
 function credit(t, p, amount, kind, by) {
@@ -316,19 +343,46 @@ const routes = {
     if (!t.hand || t.hand.finished) throw httpErr(400, 'No hand in progress');
     try { t.hand.act(p.id, String(b.type), b.amount); }
     catch (e) { throw httpErr(400, e.message); }
+    p.misses = 0;
     afterHandChange(t);
     return { ok: true };
   },
   leave(b) {
     const { t, p } = auth(b);
     if (p.id === t.adminId) throw httpErr(400, 'The admin cannot leave. Pause the game instead.');
-    const inHand = t.hand && !t.hand.finished && t.hand.players.some((x) => x.id === p.id);
-    say(t, `${p.name} left the table with ${p.stack + p.queued}`);
-    p.leaving = true;
-    if (inHand) {
-      if (t.hand.turnId === p.id) { t.hand.act(p.id, 'fold'); afterHandChange(t); }
-      else { const hp = t.hand.players.find((x) => x.id === p.id); if (!hp.folded) { hp.folded = true; t.hand.afterAction(); afterHandChange(t); } }
-    } else { removePlayer(t, p); broadcast(t); }
+    takeOut(t, p, `${p.name} left the table with ${p.stack + p.queued}`);
+    return { ok: true };
+  },
+  sitout(b) {
+    const { t, p } = auth(b);
+    p.away = true;
+    say(t, `${p.name} is sitting out`);
+    broadcast(t);
+    return { ok: true };
+  },
+  back(b) {
+    const { t, p } = auth(b);
+    p.away = false; p.misses = 0;
+    say(t, `${p.name} is back`);
+    broadcast(t); maybeStartHand(t);
+    return { ok: true };
+  },
+  setaway(b) {
+    const { t, p } = auth(b); adminOnly(t, p);
+    const target = t.players.get(b.playerId);
+    if (!target) throw httpErr(404, 'Player not found');
+    target.away = !!b.away;
+    if (!target.away) target.misses = 0;
+    say(t, target.away ? `Banker sat ${target.name} out` : `Banker brought ${target.name} back`);
+    broadcast(t); maybeStartHand(t);
+    return { ok: true };
+  },
+  kick(b) {
+    const { t, p } = auth(b); adminOnly(t, p);
+    const target = t.players.get(b.playerId);
+    if (!target) throw httpErr(404, 'Player not found');
+    if (target.id === t.adminId) throw httpErr(400, 'The banker cannot be removed');
+    takeOut(t, target, `Banker removed ${target.name} (${target.stack + target.queued} chips)`);
     return { ok: true };
   },
 };
@@ -352,7 +406,15 @@ function handleEvents(req, res, url) {
   req.on('close', () => {
     clearInterval(ka);
     const set = t.clients.get(p.id);
-    if (set) { set.delete(res); if (!set.size) { p.connected = false; t.clients.delete(p.id); broadcast(t); } }
+    if (set) { set.delete(res); if (!set.size) {
+      p.connected = false; t.clients.delete(p.id);
+      // dropped off during their own turn: shorten the clock
+      if (t.hand && !t.hand.finished && t.hand.turnId === p.id) {
+        const left = Math.max(0, Math.round((t.deadline - Date.now()) / 1000));
+        if (left > DISCONNECT_TURN_SECONDS) armTimer(t, DISCONNECT_TURN_SECONDS);
+      }
+      broadcast(t);
+    } }
   });
 }
 
