@@ -145,7 +145,8 @@ function createClub(ctx) {
     return mgr || ev.invited === 'all' || (Array.isArray(ev.invited) && ev.invited.includes(m.id));
   }
   const approvedIds = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'approved');
-  const seatsLeft = (ev) => ev.seats - 1 - approvedIds(ev).length; // the admin holds one seat
+  const seatCap = (ev) => ev.seats - (ev.adminPlays === false ? 0 : 1); // the admin holds a seat only when playing
+  const seatsLeft = (ev) => seatCap(ev) - approvedIds(ev).length;
   const waitlist = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'waitlist').sort((a, b) => ev.people[a].at - ev.people[b].at);
   const tableOpen = (ev) => { const t = ev.tableCode && tables.get(ev.tableCode); return !!(t && !t.closed); };
 
@@ -159,6 +160,8 @@ function createClub(ctx) {
         const o = {
           id: ev.id, title: ev.title, startAt: ev.startAt, seats: ev.seats, cancelled: ev.status === 'cancelled', done: ev.status === 'done',
           settings: ev.settings, approvedCount: approvedIds(ev).length, tableOpen: tableOpen(ev), auto: !!ev.auto, wait: mine && mine.state === 'waitlist' ? waitlist(ev).indexOf(m.id) + 1 : 0, waitCount: waitlist(ev).length,
+          proposal: !!ev.proposal, confirmed: !!ev.confirmed, adminPlays: ev.adminPlays !== false, guestSeats: seatCap(ev),
+          actingId: ev.actingId || '', actingName: ev.actingId && state.members[ev.actingId] ? state.members[ev.actingId].name : '',
           my: isOwner(m) ? 'owner' : (mine ? mine.state : 'invited'), manage, myRoles: isOwner(m) ? [] : evRoles(ev, m),
         };
         if (manage) {
@@ -200,13 +203,19 @@ function createClub(ctx) {
       tell(x, 'allotted', `A seat opened up. You are in for ${ev.title}. Open Smart Buddies and tap Join table.`, { eventId: ev.id });
     }
   }
+  function lateReply(m, ev, st) { // tell the admin so the game link can be sent
+    const o = owner(); if (!o) return;
+    tell(o, 'late', st === 'approved' ? `${m.name} replied late and was given a seat at ${ev.title}. Send them the game link.` : `${m.name} replied late. The table is full, so they are on the waiting list for ${ev.title}.`, { eventId: ev.id });
+  }
   function rsvp(m, ev, answer) {
     if (!ev || ev.status === 'cancelled' || ev.status === 'done' || !canSee(ev, m)) throw httpErr(404, 'This game is not open any more');
     if (isOwner(m)) throw httpErr(400, 'You are the admin. You are always seated.');
     const cur = ev.people[m.id];
     if (answer === 'in') {
       if (cur && (cur.state === 'approved' || cur.state === 'waitlist')) return cur.state;
+      if (ev.proposal && !ev.confirmed) { ev.people[m.id] = { state: 'interested', at: Date.now() }; changed(); return 'interested'; }
       ev.people[m.id] = seatsLeft(ev) > 0 ? { state: 'approved', at: Date.now() } : { state: 'waitlist', at: Date.now() };
+      if (ev.proposal) lateReply(m, ev, ev.people[m.id].state);
     } else {
       const had = cur && cur.state === 'approved';
       ev.people[m.id] = { state: 'declined', at: Date.now(), out: true };
@@ -223,6 +232,8 @@ function createClub(ctx) {
     if (!m || !ev) return page('Link not valid', 'Ask the admin for a new invite.', false);
     try {
       const st = rsvp(m, ev, answer === 'out' ? 'out' : 'in');
+      if (st === 'approved' && ev.proposal && ev.confirmed) return page("You're in", `${esc(ev.title)}. You replied after the group was confirmed and there was still a seat, so you are in. The admin will send you the game link.`, true);
+      if (st === 'interested') return page('Thanks, noted', `${esc(ev.title)}. You are marked as available. The admin will send you the game link once the group is confirmed.`, false);
       if (st === 'approved') return page("You're in", `${esc(ev.title)}. Your seat is held. Open the table whenever you like and you will be seated with the minimum buy-in.`, true);
       if (st === 'waitlist') return page('Table is full', `${esc(ev.title)}. You are on the waiting list and will get a seat if someone drops out.`, true);
       return page("You're out", `Thanks for letting us know. Changed your mind? Tap the In link again.`, false);
@@ -336,7 +347,12 @@ function createClub(ctx) {
     },
     'club/profile'(b) { // a member changes their own name and phone
       const m = auth(b);
-      if (b.name !== undefined && String(b.name).trim()) m.name = cleanName(b.name);
+      if (b.name !== undefined && String(b.name).trim()) {
+        const nm = cleanName(b.name);
+        if (Object.values(state.members).some((x) => x.id !== m.id && x.name.toLowerCase() === nm.toLowerCase())) throw httpErr(400, 'Another member already uses that nickname');
+        m.name = nm;
+        for (const t of tables.values()) if (!t.ended) for (const p of t.players.values()) if (p.memberId === m.id && p.name !== nm) { p.name = nm; broadcast(t); }
+      }
       if (b.phone !== undefined) m.phone = cleanPhone(b.phone);
       changed();
       return { ok: true };
@@ -386,15 +402,21 @@ function createClub(ctx) {
       const ev = {
         id: rid(4), title: cleanTitle(b.title), startAt, seats: Math.min(10, Math.max(2, Math.floor(Number(b.seats)) || 10)),
         settings: cleanSettings({ sb: b.sb, bb: b.bb, turnSeconds: b.turnSeconds, minBuyin: b.minBuyin, maxBuyin: b.maxBuyin, sessionMinutes: b.sessionMinutes }),
-        invited, auto: b.auto !== false, people: {}, delegates: {}, status: 'scheduled', reminded: false, tableCode: '', createdBy: m.id, createdAt: Date.now(),
+        invited, auto: b.auto !== false && !(b.proposal !== false && !b.now), proposal: b.proposal !== false && !b.now, adminPlays: b.adminPlays !== false, confirmed: false, people: {}, delegates: {}, status: 'scheduled', reminded: false, tableCode: '', createdBy: m.id, createdAt: Date.now(),
       };
+      let acting = null;
+      if (b.actingId) { acting = state.members[b.actingId]; if (!acting || isOwner(acting)) throw httpErr(400, 'Choose a member as acting admin'); }
+      if (!ev.adminPlays && !acting) throw httpErr(400, 'You are not playing, so choose a playing member as the acting admin for this game');
+      if (acting && Array.isArray(ev.invited) && !ev.invited.includes(acting.id)) ev.invited.push(acting.id);
       state.events[ev.id] = ev;
+      if (acting) { ev.actingId = acting.id; ev.delegates[acting.id] = ROLES.slice(); ev.people[acting.id] = { state: 'approved', at: Date.now() }; }
       changed();
       const targets = invited === 'all' ? Object.values(state.members).filter((x) => !isOwner(x)) : invited.map((id) => state.members[id]);
       for (const x of targets) {
         if (x.id === m.id) continue;
+        if (acting && x.id === acting.id) { tell(x, 'allotted', `You are the acting admin and have a seat for ${inviteText(ev)}.`, { eventId: ev.id }); continue; }
         const links = baseUrl() ? `\nIN: ${rsvpLink(x, ev, 'in')}\nOUT: ${rsvpLink(x, ev, 'out')}` : '';
-        tell(x, 'invite', ev.auto ? `You are invited: ${inviteText(ev)}. Are you in or out? Seats go first come, first served.${links}` : `You are invited: ${inviteText(ev)}. Open the app and tap "I'm interested".`, { eventId: ev.id });
+        tell(x, 'invite', ev.proposal ? `Proposal for a game: ${inviteText(ev)}. Smart Buddies is our private online poker portal, just for us friends. Are you available?${links}` : ev.auto ? `You are invited: ${inviteText(ev)}. Are you in or out? Seats go first come, first served.${links}` : `You are invited: ${inviteText(ev)}. Open the app and tap "I'm interested".`, { eventId: ev.id });
       }
       if (b.now) { try { openTable(ev); ev.reminded = true; persist(); } catch (e) { console.error('Could not open table', e.message); } }
       return { id: ev.id };
@@ -416,6 +438,11 @@ function createClub(ctx) {
       if (!ev || ev.status === 'cancelled' || !canSee(ev, m)) throw httpErr(404, 'Game not found');
       if (isOwner(m)) throw httpErr(400, 'You are the admin. You are always seated.');
       const cur = ev.people[m.id];
+      if (b.on && ev.proposal && ev.confirmed) { // a late reply after the group was confirmed: seat them if there is room
+        const st = rsvp(m, ev, 'in');
+        lateReply(m, ev, st);
+        return { state: st };
+      }
       if (b.on) {
         if (cur && (cur.state === 'approved' || cur.state === 'declined')) return { state: cur.state };
         ev.people[m.id] = { state: 'interested', at: Date.now() };
@@ -472,6 +499,23 @@ function createClub(ctx) {
       const st = rsvp(m, state.events[b.eventId], b.answer === 'out' ? 'out' : 'in');
       return { state: st };
     },
+    'club/confirm'(b) { // after the replies are in: seat the members who said they are available
+      const m = auth(b);
+      const ev = state.events[b.eventId];
+      if (!ev) throw httpErr(404, 'Not found');
+      if (!hasEv(m, ev, 'invite')) throw httpErr(403, 'You do not have permission to do that');
+      if (ev.status === 'cancelled' || ev.status === 'done') throw httpErr(400, 'This game is closed');
+      const asked = Object.keys(ev.people).filter((id) => ev.people[id].state === 'interested').sort((a, c) => ev.people[a].at - ev.people[c].at);
+      let seated = 0, waiting = 0;
+      for (const id of asked) {
+        const x = state.members[id]; if (!x) continue;
+        if (seatsLeft(ev) > 0) { ev.people[id] = { state: 'approved', at: Date.now() }; seated++; tell(x, 'allotted', `You have a seat at ${inviteText(ev)}. The admin is sending you the game link.`, { eventId: ev.id }); }
+        else { ev.people[id] = { state: 'waitlist', at: Date.now() }; waiting++; }
+      }
+      ev.confirmed = true; ev.auto = false;
+      changed();
+      return { seated, waiting };
+    },
     'club/decide'(b) {
       const m = auth(b);
       const ev = state.events[b.eventId];
@@ -481,7 +525,7 @@ function createClub(ctx) {
       if (ev.status === 'cancelled') throw httpErr(400, 'This game is cancelled');
       const d = String(b.decision);
       if (d === 'approve') {
-        if (approvedIds(ev).length >= ev.seats - 1 && !(ev.people[target.id] && ev.people[target.id].state === 'approved')) throw httpErr(400, 'The table is full');
+        if (approvedIds(ev).length >= seatCap(ev) && !(ev.people[target.id] && ev.people[target.id].state === 'approved')) throw httpErr(400, 'The table is full');
         ev.people[target.id] = { state: 'approved', at: Date.now() };
         changed();
         tell(target, 'allotted', `Table allotted! You have a seat at ${inviteText(ev)}. Your pass is in the app.`, { eventId: ev.id });

@@ -695,7 +695,12 @@ function restoreBackup(inp){
 function when(ts){return new Date(ts).toLocaleString([],{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});}
 function until(ts){var ms=ts-Date.now();if(ms<=0)return 'Open now';var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),sc=s%60;if(d)return d+'d '+h+'h';if(h)return h+'h '+m+'m';if(m>=5)return m+' min';return m+':'+('0'+sc).slice(-2);}
 function linkFor(tok){return location.origin+'/?m='+tok;}
-function invMsg(ev,mem){var L=location.origin+'/r/'+mem.token+'/'+ev.id+'/';return 'Smart Buddies: you are invited to '+ev.title+', '+when(ev.startAt)+'.\n\nTap to say you are IN. This also signs you in, no app needed:\n'+L+'in\n\nCannot make it? Tap:\n'+L+'out';}
+function saveNick(){capi('profile',{name:document.getElementById('pf_nick').value}).then(function(){toast('Nickname saved');}).catch(fail);}
+function confirmEv(id){capi('confirm',{eventId:id}).then(function(r){toast(r.seated+' seated'+(r.waiting?', '+r.waiting+' on the waiting list':'')+'. Game links are ready.');}).catch(fail);}
+function invMsg(ev,mem,mode){var L=location.origin+'/r/'+mem.token+'/'+ev.id+'/';
+  if(mode==='proposal')return 'Hi '+mem.name+'! Smart Buddies is our private online poker portal, just for us friends (play chips only, no real money in the app). A game is being planned: '+ev.title+', '+when(ev.startAt)+'.\n\nPlease confirm your availability:\nAvailable: '+L+'in\nNot available: '+L+'out';
+  if(mode==='game')return 'Smart Buddies: your seat is confirmed for '+ev.title+', '+when(ev.startAt)+'.\n\nOpen the game. This signs you in, no app needed:\n'+location.origin+'/?m='+mem.token+'\n\nTap Join table when it opens. You can change your nickname there too.';
+  return 'Smart Buddies: you are invited to '+ev.title+', '+when(ev.startAt)+'.\n\nTap to say you are IN. This also signs you in, no app needed:\n'+L+'in\n\nCannot make it? Tap:\n'+L+'out';}
 function findEv(id){return (S.cv.events||[]).filter(function(e){return e.id===id;})[0];}
 function findMem(id){return (S.cv.members||[]).filter(function(e){return e.id===id;})[0];}
 function markInv(e,m){S.sentInv=S.sentInv||{};S.sentInv[e+':'+m]=1;setTimeout(render,300);}
@@ -713,7 +718,8 @@ function cancelEv(evId){if(!confirm('Cancel this game? Everyone allotted a seat 
 function doCreateEv(){
   var d=formVals(['c_title','c_when','c_sb','c_bb','c_seats','c_ts','c_mb','c_sm']),startAt=new Date(d.c_when||'').getTime();
   var inv='all';if(S.inv==='pick'){inv=Object.keys(S.pick).filter(function(k){return S.pick[k];});if(!inv.length){toast('Pick at least one member');return;}}
-  capi('createevent',{title:d.c_title,startAt:startAt||0,now:!startAt,seats:d.c_seats||10,sb:d.c_sb||25,bb:d.c_bb||50,turnSeconds:d.c_ts||40,minBuyin:d.c_mn||1000,maxBuyin:d.c_mb||10000,sessionMinutes:d.c_sm||120,invited:inv}).then(function(){S.formOpen=false;S.draft={};S.pick={};S.inv='all';toast(startAt?'Game created and invitations sent':'Game started. Invitations sent');}).catch(fail);
+  if(S.adminPlays===false&&!S.actingId){toast('Choose a playing member as the acting admin');return;}
+  capi('createevent',{title:d.c_title,startAt:startAt||0,now:!startAt,seats:d.c_seats||10,sb:d.c_sb||25,bb:d.c_bb||50,turnSeconds:d.c_ts||40,minBuyin:d.c_mn||1000,maxBuyin:d.c_mb||10000,sessionMinutes:d.c_sm||120,invited:inv,proposal:S.proposal!==false,adminPlays:S.adminPlays!==false,actingId:S.actingId||''}).then(function(){S.formOpen=false;S.draft={};S.pick={};S.inv='all';S.adminPlays=true;S.actingId='';S.proposal=true;toast(startAt?'Game created and invitations sent':'Game started. Invitations sent');}).catch(fail);
 }
 function doAddMember(){var d=formVals(['m_name','m_phone']);capi('addmember',{name:d.m_name,phone:d.m_phone}).then(function(r){S.newLink={name:d.m_name,phone:d.m_phone,token:r.token};S.draft={};render();}).catch(fail);}
 function toggleRole(evId,mid,role){var ev=S.cv.events.filter(function(x){return x.id===evId;})[0];var p=ev&&(ev.people||[]).filter(function(x){return x.id===mid;})[0];if(!p)return;var r=(p.roles||[]).slice(),i=r.indexOf(role);if(i<0)r.push(role);else r.splice(i,1);capi('setroles',{eventId:evId,memberId:mid,roles:r}).catch(fail);}
@@ -727,15 +733,17 @@ function evCard(ev,cv){
   h+='<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><div class="disp" style="font-size:28px;line-height:1">'+esc(ev.title)+'</div><div class="muted small">'+when(ev.startAt)+' · blinds '+fmt(ev.settings.sb)+'/'+fmt(ev.settings.bb)+' · '+ev.seats+' seats</div></div>'+(ev.cancelled?'<div class="pill2">CANCELLED</div>':ev.done?'<div class="pill2">ENDED</div>':pillFor(ev.my))+'</div>';
   var soon=ev.startAt-Date.now()<=15*60000;
   if(ev.myRoles&&ev.myRoles.length&&!ev.done)h+='<div class="muted small" style="margin-top:8px">The admin gave you powers for this game: '+ev.myRoles.map(function(r){return ROLE_LABEL[r];}).join(', ')+'. They end when the game ends.</div>';
+  if(ev.actingName&&!ev.done)h+='<div class="muted small" style="margin-top:8px">Acting admin: <span class="gold">'+esc(ev.actingName)+'</span>'+(ev.adminPlays?'':' · the admin is not playing')+'</div>';
   if(ev.done)h+='<div class="muted small" style="margin-top:10px">This game has ended.</div>';
   if(!ev.cancelled&&!ev.done){
-    if(ev.my==='invited'&&ev.auto)h+='<div class="muted small" style="margin-top:10px">Seats go first come, first served. Tap In and you sit down with the minimum buy-in of '+fmt(ev.settings.minBuyin)+'.</div><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'in\')">I\'m in</button><button class="btn ghost" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'out\')">I\'m out</button></div>';
+    if(ev.my==='invited'&&ev.proposal)h+='<div class="muted small" style="margin-top:10px;white-space:normal">A game is being planned. Smart Buddies is our private online poker portal, just for us friends. Are you available?</div><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" style="height:48px" onclick="interest(\''+ev.id+'\',true)">I am available</button><button class="btn ghost" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'out\')">Not available</button></div>';
+    else if(ev.my==='invited'&&ev.auto)h+='<div class="muted small" style="margin-top:10px">Seats go first come, first served. Tap In and you sit down with the minimum buy-in of '+fmt(ev.settings.minBuyin)+'.</div><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'in\')">I\'m in</button><button class="btn ghost" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'out\')">I\'m out</button></div>';
     else if(ev.my==='invited')h+='<button class="btn" style="margin-top:12px;height:46px" onclick="interest(\''+ev.id+'\',true)">I\'m interested</button>';
     if(ev.my==='waitlist')h+='<div class="muted small" style="margin-top:10px">The table is full. You are number '+ev.wait+' on the waiting list and get a seat if someone drops out.</div><button class="btn ghost" style="margin-top:8px;height:42px" onclick="rsvp(\''+ev.id+'\',\'out\')">I\'m out</button>';
-    if(ev.my==='interested')h+='<div class="muted small" style="margin-top:10px">You are on the list. The admin will allot seats.</div><button class="btn ghost" style="margin-top:8px;height:42px" onclick="interest(\''+ev.id+'\',false)">Withdraw</button>';
-    if(ev.my==='declined')h+='<div class="muted small" style="margin-top:10px">'+(ev.auto?'You are out.':'No seat this time.')+'</div>'+(ev.auto?'<button class="btn ghost" style="margin-top:8px;height:42px" onclick="rsvp(\''+ev.id+'\',\'in\')">Change to In</button>':'');
+    if(ev.my==='interested')h+='<div class="muted small" style="margin-top:10px">'+(ev.proposal?'You are marked available. The admin will send you the game link once the group is confirmed.':'You are on the list. The admin will allot seats.')+'</div><button class="btn ghost" style="margin-top:8px;height:42px" onclick="interest(\''+ev.id+'\',false)">Withdraw</button>';
+    if(ev.my==='declined')h+='<div class="muted small" style="margin-top:10px">'+(ev.proposal&&!ev.confirmed?'You said you are not available.':ev.auto?'You are out.':'No seat this time.')+'</div>'+(ev.proposal&&!ev.confirmed?'<button class="btn ghost" style="margin-top:8px;height:42px" onclick="interest(\''+ev.id+'\',true)">Change to available</button>':'')+(ev.auto?'<button class="btn ghost" style="margin-top:8px;height:42px" onclick="rsvp(\''+ev.id+'\',\'in\')">Change to In</button>':'');
     if(ev.my==='approved'||ev.my==='owner'){
-      h+='<div class="pass"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.16em">'+(ev.my==='owner'?'YOUR TABLE':'TABLE ALLOTTED')+'</div><div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px"><div class="muted small">'+(ev.my==='owner'?ev.approvedCount+' of '+(ev.seats-1)+' guest seats filled':'Starts in')+'</div><div class="disp gold" style="font-size:30px" data-count="'+ev.startAt+'">'+until(ev.startAt)+'</div></div>'+
+      h+='<div class="pass"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.16em">'+(ev.my==='owner'?'YOUR TABLE':'TABLE ALLOTTED')+'</div><div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px"><div class="muted small">'+(ev.my==='owner'?ev.approvedCount+' of '+ev.guestSeats+' guest seats filled':'Starts in')+'</div><div class="disp gold" style="font-size:30px" data-count="'+ev.startAt+'">'+until(ev.startAt)+'</div></div>'+
         ((soon||ev.tableOpen||ev.my==='owner')?'<button class="btn" style="margin-top:10px" onclick="enterGame(\''+ev.id+'\')">Join table</button>':'<button class="btn" style="margin-top:10px" disabled>Opens 15 minutes before the start</button>')+'</div>';
     }
   }
@@ -743,16 +751,18 @@ function evCard(ev,cv){
     var open=S.manage===ev.id,waiting=(ev.people||[]).filter(function(p){return p.state==='interested';}).length;
     if(!ev.cancelled&&!ev.done){
       var io=S.invOpen===ev.id;
-      h+='<button class="btn" style="margin-top:10px;height:44px" onclick="S.invOpen='+(io?'null':'\''+ev.id+'\'')+';render()">'+(io?'Hide invite links':'Invite links (send on WhatsApp)')+'</button>';
+      h+='<button class="btn" style="margin-top:10px;height:44px" onclick="S.invOpen='+(io?'null':'\''+ev.id+'\'')+';render()">'+(io?'Hide':(ev.proposal?(ev.confirmed?'Send game links (WhatsApp)':'Send proposal (WhatsApp)'):'Invite links (send on WhatsApp)'))+'</button>';
       if(io){
-        h+='<div class="muted small" style="margin:10px 0 6px;white-space:normal">One link per member. It signs them in and takes them straight to this game, no app needed. Tap WhatsApp, then press send.</div>';
-        var rows=(ev.people||[]).filter(function(p){return (cv.members||[]).some(function(x){return x.id===p.id;});});
+        var mode=ev.proposal?(ev.confirmed?'game':'proposal'):'invite';
+        h+='<div class="muted small" style="margin:10px 0 6px;white-space:normal">'+({proposal:'Step 1: send each member the proposal. They reply Available or Not available. When the replies are in, confirm the group below and the game links are ready.',game:'Step 2: each confirmed member gets a link that signs them in and takes them straight to this game. No app needed. Tap WhatsApp, then press send.',invite:'One link per member. It signs them in and takes them straight to this game, no app needed. Tap WhatsApp, then press send.'})[mode]+'</div>';
+        if(mode==='proposal'){var av=(ev.people||[]).filter(function(p){return p.state==='interested';}).length;h+='<button class="btn ghost" style="height:42px;margin-bottom:6px" onclick="confirmEv(\''+ev.id+'\')">Confirm the '+av+' available member'+(av===1?'':'s')+' and get game links</button>';}
+        var rows=(ev.people||[]).filter(function(p){return (cv.members||[]).some(function(x){return x.id===p.id;})&&(mode!=='game'||p.state==='approved');});
         if(!rows.length)h+='<div class="muted small">No members to invite yet. Add them under Members.</div>';
         rows.forEach(function(p){
-          var mem=(cv.members||[]).filter(function(x){return x.id===p.id;})[0],msg=invMsg(ev,mem),done=S.sentInv&&S.sentInv[ev.id+':'+p.id];
-          h+='<div class="row" style="margin-top:8px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(p.name)+(done?' <span class="gold">&#10003; sent</span>':'')+'</div><div class="muted small">'+esc(p.phone||'No phone saved')+'</div></div>'+
+          var mem=(cv.members||[]).filter(function(x){return x.id===p.id;})[0],msg=invMsg(ev,mem,mode),done=S.sentInv&&S.sentInv[ev.id+':'+p.id];
+          h+='<div class="row" style="margin-top:8px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(p.name)+(done?' <span class="gold">&#10003; sent</span>':'')+'</div><div class="muted small">'+esc(p.phone||'No phone saved')+(mode==='proposal'?' · '+({invited:'No reply',interested:'Available',declined:'Not available',approved:'Seated',waitlist:'Waiting list'})[p.state]:'')+'</div></div>'+
             (p.phone?'<a class="rolechip on" style="display:flex;align-items:center;text-decoration:none" target="_blank" rel="noopener" href="'+waLink(p.phone,msg)+'" onclick="markInv(\''+ev.id+'\',\''+p.id+'\')">WhatsApp</a>':'')+
-            '<button class="rolechip" onclick="copyText(invMsg(findEv(\''+ev.id+'\'),findMem(\''+p.id+'\')));markInv(\''+ev.id+'\',\''+p.id+'\')">Copy</button></div>';
+            '<button class="rolechip" onclick="copyText(invMsg(findEv(\''+ev.id+'\'),findMem(\''+p.id+'\'),\''+mode+'\'));markInv(\''+ev.id+'\',\''+p.id+'\')">Copy</button></div>';
         });
       }
     }
@@ -778,6 +788,10 @@ function newEvForm(cv){
     '<div style="display:flex;gap:8px">'+dfield('c_sb','SMALL','25','inputmode="numeric"')+dfield('c_bb','BIG','50','inputmode="numeric"')+dfield('c_seats','SEATS','10','inputmode="numeric"')+'</div>'+
     '<div style="display:flex;gap:8px">'+dfield('c_ts','TIMER (S)','40','inputmode="numeric"')+dfield('c_sm','SESSION (MIN)','120','inputmode="numeric"')+'</div><div style="display:flex;gap:8px">'+dfield('c_mn','MIN BUY-IN','1000','inputmode="numeric"')+dfield('c_mb','MAX BUY-IN','10000','inputmode="numeric"')+'</div>'+
     '<div class="h2" style="margin:4px 0 0">WHO IS INVITED</div><div style="display:flex;gap:8px"><button class="rolechip'+(S.inv==='all'?' on':'')+'" onclick="S.inv=\'all\';render()">All members</button><button class="rolechip'+(S.inv==='pick'?' on':'')+'" onclick="S.inv=\'pick\';render()">Pick members</button></div>';
+  var ap=S.adminPlays!==false;
+  h+='<div class="h2" style="margin:4px 0 0">WILL YOU PLAY IN THIS GAME?</div><div style="display:flex;gap:8px"><button class="rolechip'+(ap?' on':'')+'" onclick="S.adminPlays=true;render()">Yes, I will play</button><button class="rolechip'+(!ap?' on':'')+'" onclick="S.adminPlays=false;render()">No, I will only run it</button></div>'+
+    '<div class="h2" style="margin:4px 0 0">'+(ap?'CO-ADMIN FOR THIS GAME (OPTIONAL)':'ACTING ADMIN (A PLAYING MEMBER)')+'</div><div class="muted small" style="white-space:normal">'+(ap?'You play, so you can name a member to share the admin duties.':'You will not play, so choose the member who runs the table for this game.')+' They get the powers of an acting admin: start, stop, bank, settings and players.</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+(cv.members||[]).map(function(m){return '<button class="rolechip'+(S.actingId===m.id?' on':'')+'" onclick="S.actingId=(S.actingId===\''+m.id+'\'?\'\':\''+m.id+'\');render()">'+esc(m.name)+'</button>';}).join('')+'</div>'+
+    '<div class="h2" style="margin:4px 0 0">AVAILABILITY</div><div style="display:flex;gap:8px"><button class="rolechip'+(S.proposal!==false?' on':'')+'" onclick="S.proposal=true;render()">Send a proposal first</button><button class="rolechip'+(S.proposal===false?' on':'')+'" onclick="S.proposal=false;render()">Straight invite</button></div><div class="muted small" style="white-space:normal">A proposal asks members to confirm they are available. Then you confirm the group and send the game links. A game that starts now is always a straight invite.</div>';
   if(S.inv==='pick')h+='<div style="display:flex;flex-wrap:wrap;gap:6px">'+(cv.members||[]).map(function(m){return '<button class="rolechip'+(S.pick[m.id]?' on':'')+'" onclick="S.pick[\''+m.id+'\']=!S.pick[\''+m.id+'\'];render()">'+esc(m.name)+'</button>';}).join('')+'</div>';
   return h+'<button class="btn" onclick="doCreateEv()">Create and invite</button><button class="btn ghost" onclick="S.formOpen=false;render()">Close</button></div></div>';
 }
@@ -787,6 +801,7 @@ function linkCard(){
 }
 function gamesTab(cv){
   var h=linkCard();
+  if(!cv.me.isOwner)h+='<div class="evc" style="margin-top:14px"><div class="muted small" style="margin-bottom:6px">YOUR NICKNAME AT THE TABLE</div><div style="display:flex;gap:8px"><input id="pf_nick" maxlength="14" value="'+esc(cv.me.name)+'" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;padding:0 12px;font-family:inherit"><button class="btn ghost" style="width:90px;height:46px" onclick="saveNick()">Save</button></div></div>';
   if(cv.me.manage)h+=S.formOpen?newEvForm(cv):'<button class="btn" style="margin-top:14px" onclick="S.formOpen=true;render()">+ New game</button>';
   if(!cv.events.length)h+='<div class="evc"><div class="muted small">No games scheduled yet.'+(cv.me.manage?'':' You will see invitations here.')+'</div></div>';
   cv.events.forEach(function(ev){h+=evCard(ev,cv);});
