@@ -12,6 +12,7 @@ const { buildFinal, statementPdf, sessionRows } = require('./statement');
 
 const PORT = process.env.PORT || 3000;
 const NEXT_HAND_DELAY_MS = Number(process.env.NEXT_HAND_DELAY_MS || 7000);
+const SHOW_HOLD_MS = Number(process.env.SHOW_HOLD_MS || 8000); // extra time when somebody shows a card
 const DRAW_SHOW_MS = Number(process.env.DRAW_SHOW_MS || 9000);
 const NOTICE_MS = 60 * 60 * 1000; // call time: at least one hour before standing up
 const SUIT_RANK = 'cdhs';       // clubs < diamonds < hearts < spades for breaking ties in the seat draw
@@ -35,13 +36,13 @@ function newCode() {
 }
 
 function cleanSettings(s = {}, old = {}) {
-  const sb = clampInt(s.sb, 1, 1e7, old.sb || 25);
+  const sb = clampInt(s.sb, 1, 1e7, old.sb || 100);
   const bb = clampInt(s.bb, sb, 1e7, old.bb || sb * 2);
   return {
     sb, bb,
     turnSeconds: clampInt(s.turnSeconds, 10, 180, old.turnSeconds || 40),
-    minBuyin: clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb),
-    maxBuyin: Math.max(clampInt(s.maxBuyin, bb, 1e9, old.maxBuyin || bb * 200), clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb)),
+    minBuyin: clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb * 50), // 100/200 blinds give the 10,000 minimum the club plays with
+    maxBuyin: Math.max(clampInt(s.maxBuyin, bb, 1e9, old.maxBuyin || bb * 500), clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb * 50)),
     bombAnteBB: clampInt(s.bombAnteBB, 1, 100, old.bombAnteBB || 5),   // bomb pot ante, in big blinds
     bombMax: clampInt(s.bombMax, 2, 10, old.bombMax || 10),            // most players in the 2-card bomb pot
     runItMin: clampInt(s.runItMin, 0, 1e9, old.runItMin || 0),         // pots at least this big can be run more than once (0 = off)
@@ -145,8 +146,10 @@ function viewFor(t, pid) {
     seats.push({
       seat: s, id, name: p.name, optIn: !!p.optIn, isAdmin: id === t.adminId, connected: p.connected, away: p.away, ghost: p.ghost, approved: p.approved, roles: (p.roles || []).filter((r) => ROLE_NAMES.includes(r)),
       stack: hp ? hp.stack : p.stack, inHand: !!hp, bet: hp ? hp.bet : 0,
+      // what they are down on their buy-ins, counting chips in front of them right now
+      behind: p.bought - ((hp ? hp.stack : p.stack) + p.queued),
       folded: hp ? hp.folded : false, allIn: hp ? hp.allIn : false,
-      stay: p.stayUntil, paying: p.paying || 0, cards: hp ? hp.cards : null, shown: shownFor(t, id), isButton: !!(hp && hp.isButton),
+      stay: p.stayUntil, paying: p.paying || 0, bought: p.bought, cards: hp ? hp.cards : null, shown: shownFor(t, id), isButton: !!(hp && hp.isButton),
       isTurn: !!(hv && hv.turnId === id), net: p.stack + (hp ? 0 : 0) - p.bought,
     });
   }
@@ -155,7 +158,7 @@ function viewFor(t, pid) {
     now: Date.now(), code: t.code, settings: t.settings, running: t.running, handNo: t.handNo,
     you: {
       id: pid, name: me.name, isAdmin, seat: me.seat, stack: seats[me.seat].stack,
-      optIn: !!me.optIn, queued: me.queued, bought: me.bought, inHand: seats[me.seat].inHand, away: me.away,
+      optIn: !!me.optIn, queued: me.queued, bought: me.bought, behind: seats[me.seat].behind, inHand: seats[me.seat].inHand, away: me.away,
       can: Object.fromEntries(ROLE_NAMES.map((r) => [r, can(t, me, r)])), member: !!me.memberId,
       approved: me.approved, leaveReq: !!me.leaveReq, paying: me.paying || 0, ghost: me.ghost, ghostUntil: me.ghostUntil, ghostEndsAt: me.ghost ? sessionEnd(t, me.ghostUntil) : 0, stayUntil: me.stayUntil, callAfter: me.callAfter,
       leave: leaveInfo(t, me), callOptions: callOptions(t, me),
@@ -298,13 +301,8 @@ function resetGame(t) {
 function leaveInfo(t, p) {
   if (p.id === t.adminId || p.ghost) return { free: false, none: true };
   if (t.sessionNo === 0 || !p.approved || t.ended) return { free: true };
-  let until;
-  if (t.sessionNo <= p.stayUntil) until = p.stayUntil; // early leaver: only the two-session minimum
-  else {
-    until = t.sessionNo; // no call time posted: one hour of notice, rounded up to a deck change
-    while (sessionEnd(t, until) < Date.now() + NOTICE_MS) until++;
-    if (p.callAfter) until = Math.max(p.stayUntil, Math.min(until, p.callAfter));
-  }
+  // not an emergency: the seat pays blinds to the end of the minimum sessions, or this session if that is already past
+  const until = Math.max(t.sessionNo, p.stayUntil);
   return { free: false, until, endsAt: sessionEnd(t, until) };
 }
 function callOptions(t, p) {
@@ -366,6 +364,7 @@ function maybeStartHand(t) {
     buttonIdx = players.findIndex((p) => p.id === btn.id);
   }
   t.handNo++;
+  t.nextAt = 0; t.nextBase = 0;
   t.lastResult = null;
   t.special = kind !== 'holdem';
   t.hand = new Hand({ players, buttonIdx, sb: t.settings.sb, bb: t.settings.bb, variant: kind, bombAnte: t.settings.bombAnteBB * t.settings.bb, runItMin: t.settings.runItMin });
@@ -458,7 +457,9 @@ function finishHand(t) {
   if (t.ending) return finalize(t);
   broadcast(t);
   clearTimeout(t.nextTimer);
-  t.nextTimer = setTimeout(() => maybeStartHand(t), r.uncontested ? NEXT_HAND_DELAY_MS : Math.max(NEXT_HAND_DELAY_MS, Math.min(NEXT_HAND_DELAY_MS * 2, 14000)));
+  const gap = r.uncontested ? NEXT_HAND_DELAY_MS : Math.max(NEXT_HAND_DELAY_MS, Math.min(NEXT_HAND_DELAY_MS * 2, 14000));
+  t.nextBase = Date.now() + gap; t.nextAt = t.nextBase;
+  t.nextTimer = setTimeout(() => maybeStartHand(t), gap);
 }
 
 function removePlayer(t, p, reason) {
@@ -584,16 +585,10 @@ const routes = {
     if (!amount) throw httpErr(400, `Enter an amount up to ${t.settings.maxBuyin}`);
     if (amount < t.settings.minBuyin && p.stack + p.queued + amount < t.settings.minBuyin)
       throw httpErr(400, `The minimum buy-in is ${t.settings.minBuyin}`);
-    if (p.id === t.adminId) {
-      credit(t, p, amount, 'buyin', 'banker');
-      say(t, `${p.name} bought in for ${amount}`);
-      broadcast(t); maybeStartHand(t);
-      return { ok: true };
-    }
-    if (t.pending.some((r) => r.playerId === p.id)) throw httpErr(400, 'You already have a request waiting');
-    t.pending.push({ id: rid(4), playerId: p.id, name: p.name, amount, at: Date.now() });
-    broadcast(t);
-    return { ok: true };
+    credit(t, p, amount, 'buyin', 'self');
+    say(t, `${p.name} bought in for ${amount} (total ${p.bought})`);
+    broadcast(t); maybeStartHand(t);
+    return { ok: true, bought: p.bought, stack: p.stack + p.queued };
   },
   note(b) { // a player sends a short request to the admin
     const { t, p } = auth(b);
@@ -750,7 +745,6 @@ const routes = {
   // fun: throw something at another player's bullseye, or post an emoji from your own
   react(b) {
     const { t, p } = auth(b);
-    if (t.frozen) throw httpErr(409, 'The admin has stopped the game for now');
     if (p.ghost || !p.approved) throw httpErr(400, 'You cannot do that right now');
     const k = String(b.kind || '');
     const now = Date.now();
@@ -778,6 +772,10 @@ const routes = {
     const idx = [...new Set((Array.isArray(b.idx) ? b.idx : []).map(Number))].filter((i) => Number.isInteger(i) && i >= 0 && i < hp.cards.length).sort();
     t.shown = t.shown && t.shown.handNo === t.handNo ? t.shown : { handNo: t.handNo, ids: {} };
     if (idx.length) t.shown.ids[p.id] = idx; else delete t.shown.ids[p.id];
+    if (idx.length && t.nextAt) { // give the table time to look, up to 20 seconds past the usual gap
+      const want = Math.min(Date.now() + SHOW_HOLD_MS, (t.nextBase || t.nextAt) + 20000);
+      if (want > t.nextAt) { t.nextAt = want; clearTimeout(t.nextTimer); t.nextTimer = setTimeout(() => maybeStartHand(t), want - Date.now()); }
+    }
     broadcast(t);
     return { ok: true };
   },
@@ -820,14 +818,24 @@ const routes = {
       return { ok: true, left: true };
     }
     p.leaveReq = Date.now();
-    say(t, `${p.name} asked to leave`);
+    p.away = true; // stop dealing them in while they wait for the admin
+    say(t, `${p.name} asked to leave and is sitting out until the admin decides`);
+    // fold them out of the hand in play so nobody waits on someone who is leaving
+    const inHand = t.hand && !t.hand.finished && t.hand.players.some((x) => x.id === p.id);
+    if (inHand) {
+      if (t.hand.turnId === p.id) { t.hand.act(p.id, 'fold'); afterHandChange(t); }
+      else { const hp = t.hand.players.find((x) => x.id === p.id); if (!hp.folded) { hp.folded = true; t.hand.afterAction(); afterHandChange(t); } }
+    }
     pushAdmins(t, p.id, 'Leave request', `${p.name} wants to leave room ${t.code}. Mark it emergency or not.`, 'leave');
     broadcast(t);
     return { ok: true, requested: true };
   },
   leavecancel(b) {
     const { t, p } = auth(b);
-    p.leaveReq = 0; broadcast(t);
+    if (!p.leaveReq) return { ok: true };
+    p.leaveReq = 0; p.away = false; p.misses = 0;
+    say(t, `${p.name} is staying after all`);
+    broadcast(t); maybeStartHand(t);
     return { ok: true };
   },
   // the admin (or anyone with the players power) marks a player's exit; only the main admin can do this for himself
@@ -835,6 +843,8 @@ const routes = {
     const { t, p } = auth(b);
     const target = t.players.get(String(b.playerId || ''));
     if (!target) throw httpErr(404, 'Player not found');
+    if (t.ended) throw httpErr(400, 'The game is over');
+    if (target.id === p.id && p.id !== t.adminId) throw httpErr(403, 'The admin decides your exit, not you');
     if (target.id === t.adminId) { if (p.id !== t.adminId) throw httpErr(403, 'Only the admin can do this for himself'); }
     else need(t, p, 'players');
     if (target.ghost || target.leaving) throw httpErr(400, 'That player has already left');
