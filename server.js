@@ -122,6 +122,17 @@ function specialInfo(t) {
 }
 
 // ---------- views ----------
+const FX_THROWS = ['bomb', 'flower', 'tomato', 'heart'];
+const FX_EMOJI = ['laugh', 'cry', 'cool', 'angry', 'shock', 'shh', 'pray', 'clap', 'smirk', 'clown'];
+// cards a player chose to show after a hand: only the chosen positions, the rest stay face down
+function shownFor(t, id) {
+  if (!t.shown || t.shown.handNo !== t.handNo || !t.hand || !t.hand.finished) return null;
+  const idx = t.shown.ids[id];
+  if (!idx || !idx.length) return null;
+  const hp = t.hand.players.find((x) => x.id === id);
+  if (!hp) return null;
+  return hp.cards.map((c, i) => (idx.includes(i) ? c : '??'));
+}
 function viewFor(t, pid) {
   const me = t.players.get(pid);
   const hv = t.hand ? t.hand.view(pid) : null;
@@ -135,7 +146,7 @@ function viewFor(t, pid) {
       seat: s, id, name: p.name, optIn: !!p.optIn, isAdmin: id === t.adminId, connected: p.connected, away: p.away, ghost: p.ghost, approved: p.approved, roles: (p.roles || []).filter((r) => ROLE_NAMES.includes(r)),
       stack: hp ? hp.stack : p.stack, inHand: !!hp, bet: hp ? hp.bet : 0,
       folded: hp ? hp.folded : false, allIn: hp ? hp.allIn : false,
-      cards: hp ? hp.cards : null, isButton: !!(hp && hp.isButton),
+      cards: hp ? hp.cards : null, shown: shownFor(t, id), isButton: !!(hp && hp.isButton),
       isTurn: !!(hv && hv.turnId === id), net: p.stack + (hp ? 0 : 0) - p.bought,
     });
   }
@@ -150,6 +161,7 @@ function viewFor(t, pid) {
       leave: leaveInfo(t, me), callOptions: callOptions(t, me),
     },
     frozen: !!t.frozen,
+    fx: (t.fx || []).filter((f) => Date.now() - f.at < 6000),
     startBy: autoCancelDue(t) ? t.createdAt + t.settings.waitMinutes * 60000 : 0, joined: joinedCount(t), minPlayers: t.settings.minPlayers,
     session: {
       no: t.sessionNo, endsAt: t.sessionEndsAt, ending: t.sessionEnding, minutes: t.settings.sessionMinutes,
@@ -689,6 +701,40 @@ const routes = {
     afterHandChange(t);
     return { ok: true };
   },
+  // fun: throw something at another player's bullseye, or post an emoji from your own
+  react(b) {
+    const { t, p } = auth(b);
+    if (t.frozen) throw httpErr(409, 'The admin has stopped the game for now');
+    if (p.ghost || !p.approved) throw httpErr(400, 'You cannot do that right now');
+    const k = String(b.kind || '');
+    const now = Date.now();
+    t.fxLast = t.fxLast || {};
+    if (now - (t.fxLast[p.id] || 0) < 900) throw httpErr(429, 'Easy there, one at a time');
+    let to = null;
+    if (FX_THROWS.includes(k)) {
+      const q = t.players.get(String(b.to));
+      if (!q || q.id === p.id || q.ghost || q.approved === false) throw httpErr(400, 'Pick another player');
+      to = q.id;
+    } else if (!FX_EMOJI.includes(k)) throw httpErr(400, 'Unknown reaction');
+    t.fxLast[p.id] = now;
+    t.fxSeq = (t.fxSeq || 0) + 1;
+    t.fx = (t.fx || []).filter((f) => now - f.at < 6000).slice(-20);
+    t.fx.push({ id: t.fxSeq, k, from: p.id, to, at: now });
+    broadcast(t);
+    return { ok: true };
+  },
+  // show some or all of your hole cards once the hand is over
+  showcards(b) {
+    const { t, p } = auth(b);
+    if (!t.hand || !t.hand.finished) throw httpErr(400, 'Wait until the hand is over');
+    const hp = t.hand.players.find((x) => x.id === p.id);
+    if (!hp || !hp.cards || !hp.cards.length) throw httpErr(400, 'You were not dealt in this hand');
+    const idx = [...new Set((Array.isArray(b.idx) ? b.idx : []).map(Number))].filter((i) => Number.isInteger(i) && i >= 0 && i < hp.cards.length).sort();
+    t.shown = t.shown && t.shown.handNo === t.handNo ? t.shown : { handNo: t.handNo, ids: {} };
+    if (idx.length) t.shown.ids[p.id] = idx; else delete t.shown.ids[p.id];
+    broadcast(t);
+    return { ok: true };
+  },
   // the special game: opt in or out for this session
   optin(b) {
     const { t, p } = auth(b);
@@ -971,7 +1017,7 @@ function dumpTables() {
   for (const t of tables.values()) {
     if (t.closed) continue;
     const o = {};
-    for (const k of Object.keys(t)) if (!['clients', 'timer', 'nextTimer', 'hand', 'players'].includes(k)) o[k] = t[k];
+    for (const k of Object.keys(t)) if (!['clients', 'timer', 'nextTimer', 'hand', 'players', 'fx', 'fxLast'].includes(k)) o[k] = t[k];
     o.players = [...t.players.values()].map((p) => ({ ...p, connected: false }));
     o.hadHand = !!(t.hand && !t.hand.finished);
     out[t.code] = JSON.parse(JSON.stringify(o));
@@ -1028,4 +1074,4 @@ if (require.main === module) {
   ready.then(() => server.listen(PORT, () => console.log('Smart Buddies listening on ' + PORT)))
     .catch((e) => { console.error('Not starting: the club data could not be read (' + e.message + '). Check DRIVE_SCRIPT_URL and DRIVE_SECRET.'); process.exit(1); });
 }
-module.exports = { server, tables, routes, club, ready, startSession, deckChange };
+module.exports = { server, tables, routes, club, ready, startSession, deckChange, viewFor };
