@@ -125,6 +125,7 @@ function connect(){
   es.onmessage=function(ev){
     var v=JSON.parse(ev.data);
     if(v.gone){clearSession();toast(v.text||'You have left the table.');return;}
+    if(v.session&&v.session.cancelled){clearSession();S.toClub=false;toast((v.session.cancelWhy||'The game was cancelled.')+' Nothing was played.');render();return;}
     S.offset=Date.now()-v.now; S.online=true; S.fails=0;
     var key=v.hand&&v.hand.legal?v.handNo+':'+v.hand.street+':'+v.hand.currentBet:'';
     if(key&&key!==S.turnKey){ S.raiseTo=null; if(navigator.vibrate) navigator.vibrate(120); }
@@ -195,7 +196,7 @@ function lobby(){
     '<div class="field"><label for="room">ROOM CODE</label><input id="room" autocapitalize="characters" autocomplete="off" maxlength="4" placeholder="e.g. 4F7K" value="'+esc(q.toUpperCase())+'" style="letter-spacing:.2em;text-transform:uppercase"></div>'+
     '<div class="field"><label for="nick">NICKNAME</label><input id="nick" maxlength="14" placeholder="Your name at the table" value="'+esc(ls('poker-name'))+'"></div></div>'+
     '<button class="btn" style="margin-top:18px" onclick="doJoin()">Take a seat</button>'+
-    '<button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'admin\';render()">Start a table as admin</button>'+(S.mtoken&&S.cv?'<button class="btn line" style="margin-top:10px" onclick="S.quick=false;render()">Back to the club</button>':'')+(S.clubExists===false?'<button class="btn line" style="margin-top:10px" onclick="S.lobbyMode=\'setup\';render()">Set up your club (first time, admin)</button>':'');
+    '<button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'admin\';render()">Start a table as admin</button>'+(S.mtoken?'':'<button class="btn line" style="margin-top:10px" onclick="S.signin=true;render()">Club member? Sign in</button>')+(S.mtoken&&S.cv?'<button class="btn line" style="margin-top:10px" onclick="S.quick=false;render()">Back to the club</button>':'')+(S.clubExists===false?'<button class="btn line" style="margin-top:10px" onclick="S.lobbyMode=\'setup\';render()">Set up your club (first time, admin)</button>':'');
   } else if(S.lobbyMode==='setup'){
     h+='<div style="margin-top:16px;width:100%;display:flex;flex-direction:column;gap:10px">'+dfield('su_name','CLUB NAME','Smart Buddies','maxlength="40"')+dfield('su_owner','YOUR NAME (ADMIN)','SV','maxlength="14"')+dfield('su_phone','YOUR PHONE (OPTIONAL)','9894079397','inputmode="tel"')+(S.needsCode?dfield('su_code','SETUP CODE','','type="password" autocomplete="off"'):'')+'</div><button class="btn" style="margin-top:16px" onclick="doSetup()">Create the club</button><button class="btn ghost" style="margin-top:10px" onclick="S.lobbyMode=\'join\';render()">Back</button>';
   } else {
@@ -376,12 +377,15 @@ function freezeOverlay(){
     (me.can.start?'<button class="btn" onclick="api(\'unfreeze\').catch(fail)">Resume the game</button>':'')+b+'</div>';
 }
 function linkScreen(){
-  return '<div class="sheet"><div style="display:flex;align-items:center;justify-content:space-between"><div class="disp" style="font-size:34px">Club home</div><button onclick="S.toClub=false;render()" aria-label="Close" style="width:44px;height:44px;border:0;background:transparent;color:#f2efe6;font-size:28px">×</button></div>'+
-    '<div class="muted small" style="margin:8px 0 14px;white-space:normal">This phone does not know who you are in the club yet. Paste your personal link (the one that ends with ?m=...) to open the members page. You only do this once.</div>'+
+  return '<div class="sheet"><div style="display:flex;align-items:center;justify-content:space-between"><div class="disp" style="font-size:34px">Club sign-in</div><button onclick="S.toClub=false;S.signin=false;render()" aria-label="Close" style="width:44px;height:44px;border:0;background:transparent;color:#f2efe6;font-size:28px">×</button></div>'+
+    '<div class="muted small" style="margin:8px 0 14px;white-space:normal">This phone does not know who you are in the club yet. Sign in with your mobile number and PIN, or paste your personal link. You only do this once.</div>'+
+    '<div class="field"><label for="lk_phone">MOBILE NUMBER</label><input id="lk_phone" inputmode="tel" placeholder="9894079397"></div><div class="field" style="margin-top:10px"><label for="lk_pin">PIN</label><input id="lk_pin" type="password" inputmode="numeric" maxlength="8" placeholder="Your sign-in PIN"></div><button class="btn" style="margin-top:12px" onclick="pinSignin()">Sign in</button><div class="muted small" style="margin:18px 0 8px">Or paste your personal link</div>'+
     '<div class="field"><label for="lk_url">YOUR PERSONAL LINK</label><input id="lk_url" placeholder="https://poker-portal.onrender.com/?m=..."></div>'+
-    '<button class="btn" style="margin-top:12px" onclick="useLink()">Open club home</button><button class="btn ghost" style="margin-top:10px" onclick="S.toClub=false;render()">Back to the table</button></div>';
+    '<button class="btn" style="margin-top:12px" onclick="useLink()">Open with my link</button><button class="btn ghost" style="margin-top:10px" onclick="S.toClub=false;S.signin=false;render()">'+(S.view?'Back to the table':'Close')+'</button></div>';
 }
-function useLink(){var x=(document.getElementById('lk_url').value||'').trim(),m=/[?&]m=([a-f0-9]+)/.exec(x)||/^([a-f0-9]{20,})$/.exec(x);if(!m){toast('That does not look like your personal link');return;}setMember(m[1]);clubConnect();render();}
+function pinSignin(){capi('signin',{phone:document.getElementById('lk_phone').value,pin:document.getElementById('lk_pin').value}).then(function(r){setMember(r.mtoken);S.signin=false;S.toClub=!!S.view;clubConnect();render();}).catch(fail);}
+function savePin(){var p=document.getElementById('pf_pin').value;capi('setpin',{pin:p}).then(function(){document.getElementById('pf_pin').value='';toast('PIN saved. You can now sign in with your mobile and PIN.');}).catch(fail);}
+function useLink(){var x=(document.getElementById('lk_url').value||'').trim(),m=/[?&]m=([a-f0-9]+)/.exec(x)||/^([a-f0-9]{20,})$/.exec(x);if(!m){toast('That does not look like your personal link');return;}setMember(m[1]);S.signin=false;S.toClub=!!S.view;clubConnect();render();}
 function waitActions(v){
   var me=v.you,b='display:flex;gap:8px;margin-top:14px';
   var bt=function(label,fn){return '<button class="btn ghost" style="flex:1;height:44px;font-size:13px" onclick="'+fn+'">'+label+'</button>';};
@@ -512,6 +516,9 @@ function sheet(){
     h+='<div style="margin-top:12px">'+(v.running?'<button class="btn ghost" onclick="api(\'pause\').catch(fail)">Pause after this hand</button>':'<button class="btn" onclick="doStart();S.sheet=false;render()">'+(v.handNo?'Resume the game':'Start the game')+'</button>')+(v.session.no&&!v.session.ended?'<button class="btn ghost" style="margin-top:8px" onclick="endGame()">'+(v.session.endingGame?'Ending after this hand':'End the game')+'</button>':'')+'</div>';
   }
   if(me.isAdmin&&!v.handNo&&!v.session.no&&!v.session.ended)h+='<button class="btn ghost" style="margin-top:10px;border-color:#d2454d;color:#ff8c93" onclick="closeTable()">Close this table (nothing played)</button>';
+  if(me.can.settings&&v.session.no&&!v.session.ended){
+    h+='<div class="h2">THIS SESSION</div><div class="muted small" style="margin-bottom:8px">Session '+v.session.no+' ends at '+clock(v.session.endsAt)+'. Move it if the group wants to play longer or stop sooner.</div><div style="display:flex;gap:8px">'+[-30,-15,15,30,60].map(function(m){return '<button class="btn line" style="flex:1;height:42px;padding:0;font-size:13px" onclick="api(\'sessiontime\',{minutes:'+m+'}).catch(fail)">'+(m>0?'+':'')+m+'m</button>';}).join('')+'</div>';
+  }
   if(me.can.settings){
     h+='<div class="h2">BLINDS AND TIMER</div><div style="display:flex;gap:8px"><div class="field" style="flex:1"><label for="s_sb">SMALL</label><input id="s_sb" inputmode="numeric" value="'+v.settings.sb+'"></div><div class="field" style="flex:1"><label for="s_bb">BIG</label><input id="s_bb" inputmode="numeric" value="'+v.settings.bb+'"></div><div class="field" style="flex:1"><label for="s_ts">TIMER (S)</label><input id="s_ts" inputmode="numeric" value="'+v.settings.turnSeconds+'"></div></div><div style="display:flex;gap:8px;margin-top:8px"><div class="field" style="flex:1"><label for="s_mn">MIN BUY-IN</label><input id="s_mn" inputmode="numeric" value="'+v.settings.minBuyin+'"></div><div class="field" style="flex:1"><label for="s_mb">MAX BUY-IN</label><input id="s_mb" inputmode="numeric" value="'+v.settings.maxBuyin+'"></div></div><div style="display:flex;gap:8px;margin-top:8px"><div class="field" style="flex:1"><label for="s_ba">BOMB ANTE (BB)</label><input id="s_ba" inputmode="numeric" value="'+v.settings.bombAnteBB+'"></div><div class="field" style="flex:1"><label for="s_bm">BOMB MAX</label><input id="s_bm" inputmode="numeric" value="'+v.settings.bombMax+'"></div><div class="field" style="flex:1"><label for="s_ri">RUN-IT POT</label><input id="s_ri" inputmode="numeric" value="'+v.settings.runItMin+'"></div></div><div class="muted small" style="margin-top:4px">Run-it pot: pots at least this big can be dealt more than once. 0 turns it off.</div><div class="field" style="margin-top:8px"><label for="s_sm">SESSION LENGTH (MINUTES)</label><input id="s_sm" inputmode="numeric" value="'+v.settings.sessionMinutes+'"></div>'+(v.settings.minPlayers!==undefined?'<div style="display:flex;gap:8px;margin-top:8px"><div class="field" style="flex:1"><label for="s_mp">MIN PLAYERS TO START</label><input id="s_mp" inputmode="numeric" value="'+v.settings.minPlayers+'"></div><div class="field" style="flex:1"><label for="s_wm">WAIT (MINUTES)</label><input id="s_wm" inputmode="numeric" value="'+v.settings.waitMinutes+'"></div></div><div class="muted small" style="margin-top:4px">A club game is cancelled if fewer players than this have chips after the wait. 0 turns it off.</div>':'')+'<button class="btn ghost" style="margin-top:8px" onclick="saveSettings()">Save from next hand</button>';
   }
@@ -614,9 +621,9 @@ function forget(){clearSession();render();}
 
 // ---- club: members, game nights, passes ----
 var ROLE_LABEL={start:'Start and pause the game',bank:'Banker: chips and buy-ins',settings:'Blinds and timer',players:'Sit out or remove players',invite:'Invitations and approvals'};
-S.mtoken=ls('sb-member');try{if(S.mtoken){var mf0=document.getElementById('mf');if(mf0)mf0.href='/manifest.webmanifest?m='+encodeURIComponent(S.mtoken);}}catch(e){}S.cv=null;S.tab='games';S.draft={};S.manage=null;S.formOpen=false;S.alert=null;S.clubExists=null;S.needsCode=false;S.newLink=null;S.quick=false;S.localReminded={};S.pick={};S.inv='all';
+S.mtoken=ls('sb-member')||(function(){try{var m=/(?:^|; )sb-member=([a-f0-9]+)/.exec(document.cookie);return m?m[1]:'';}catch(e){return '';}})();try{if(S.mtoken){var mf0=document.getElementById('mf');if(mf0)mf0.href='/manifest.webmanifest?m='+encodeURIComponent(S.mtoken);}}catch(e){}S.cv=null;S.tab='games';S.draft={};S.manage=null;S.formOpen=false;S.alert=null;S.clubExists=null;S.needsCode=false;S.newLink=null;S.quick=false;S.localReminded={};S.pick={};S.inv='all';
 function capi(name,data){return fetch('/api/club/'+name,{method:'POST',body:JSON.stringify(Object.assign({mtoken:S.mtoken},data||{}))}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'Something went wrong');return j;});});}
-function setMember(tok){S.mtoken=tok;try{localStorage.setItem('sb-member',tok);}catch(e){}try{var mf=document.getElementById('mf');if(mf)mf.href='/manifest.webmanifest?m='+encodeURIComponent(tok);}catch(e){}}
+function setMember(tok){S.mtoken=tok;try{document.cookie='sb-member='+tok+'; max-age=34000000; path=/; SameSite=Lax';}catch(e){}try{localStorage.setItem('sb-member',tok);}catch(e){}try{var mf=document.getElementById('mf');if(mf)mf.href='/manifest.webmanifest?m='+encodeURIComponent(tok);}catch(e){}}
 function clubForget(){try{localStorage.removeItem('sb-member');}catch(e){}S.mtoken='';S.cv=null;if(S.ces){S.ces.close();S.ces=null;}}
 function clubConnect(){
   if(S.ces)S.ces.close();if(!S.mtoken)return;
@@ -779,7 +786,7 @@ function membersTab(cv){
     if(own){h+='<div class="muted small" style="margin-top:10px">Powers are handed out per game: open a game under Games, tap Manage, and use the Powers buttons under an allotted member, or give them from the table menu during play. They end when that game ends.</div>';}
     h+='</div>';
   });
-  if(own)h+='<div class="h2">MY DETAILS</div><div style="display:flex;gap:8px"><div class="field" style="flex:1"><label for="pf_name">NAME</label><input id="pf_name" maxlength="14" value="'+esc(cv.me.name)+'"></div><div class="field" style="flex:1"><label for="pf_phone">MOBILE</label><input id="pf_phone" inputmode="tel" value="'+esc(cv.me.phone||'')+'"></div></div><button class="btn ghost" style="margin-top:8px" onclick="saveProfile()">Save my details</button>';
+  if(own)h+='<div class="h2">MY DETAILS</div><div style="display:flex;gap:8px"><div class="field" style="flex:1"><label for="pf_name">NAME</label><input id="pf_name" maxlength="14" value="'+esc(cv.me.name)+'"></div><div class="field" style="flex:1"><label for="pf_phone">MOBILE</label><input id="pf_phone" inputmode="tel" value="'+esc(cv.me.phone||'')+'"></div></div><button class="btn ghost" style="margin-top:8px" onclick="saveProfile()">Save my details</button><div class="field" style="margin-top:12px"><label for="pf_pin">SIGN-IN PIN (4 TO 8 DIGITS)</label><input id="pf_pin" type="password" inputmode="numeric" maxlength="8" placeholder="Set or change your PIN"></div><button class="btn ghost" style="margin-top:8px" onclick="savePin()">Save PIN</button><div class="muted small" style="margin-top:4px;white-space:normal">With a PIN you can sign in on any phone with your mobile number.</div>';
   if(own)h+='<div class="h2">BACKUP</div><div class="muted small" style="margin-bottom:8px">Everything about the club lives in one file in Google Drive. Keep your own copy as well. The backup holds everyone\'s sign-in links, so keep it private.</div><button class="btn ghost" style="height:46px" onclick="downloadBackup()">Download a backup</button><label class="btn ghost" style="height:46px;margin-top:8px;display:flex;align-items:center;justify-content:center;cursor:pointer">Restore from a backup file<input type="file" accept=".json,application/json" style="display:none" onchange="restoreBackup(this)"></label>';
   return h;
 }
@@ -813,13 +820,13 @@ setInterval(function(){
 // ---- render ----
 function render(){
   var active=document.activeElement&&document.activeElement.id, keep=null;
-  if(active&&/^(room|nick|sb|bb|ts|mb|sm|bamt|s_sb|s_bb|s_ts|s_sm|c_\w+|m_\w+|su_\w+|pf_\w+|lk_url)$/.test(active)){keep={id:active,v:document.activeElement.value,s:document.activeElement.selectionStart};}
+  if(active&&/^(room|nick|sb|bb|ts|mb|sm|bamt|s_sb|s_bb|s_ts|s_sm|c_\w+|m_\w+|su_\w+|pf_\w+|lk_\w+)$/.test(active)){keep={id:active,v:document.activeElement.value,s:document.activeElement.selectionStart};}
   // typing in a field must never be wiped by a live update: skip re-render while an input is focused
   if(keep&&S.view&&S.sheet&&/^(bamt|s_sb|s_bb|s_ts|s_sm|s_mp|s_wm)$/.test(keep.id)) return;
   if(keep&&!S.view&&/^(c_|m_|su_|pf_)/.test(keep.id)) return;
-  if(keep&&keep.id==='lk_url')return;
+  if(keep&&/^lk_/.test(keep.id))return;
   var old=document.querySelector('.sheet'),sc=old?old.scrollTop:0;
-  var h=(S.view&&S.toClub&&!S.mtoken)?linkScreen():(S.view&&!(S.toClub&&S.mtoken&&S.cv))?(table()+(S.sheet?sheet():'')+freezeOverlay()):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));
+  var h=((S.view&&S.toClub&&!S.mtoken)||(!S.view&&S.signin&&!S.mtoken))?linkScreen():(S.view&&!(S.toClub&&S.mtoken&&S.cv))?(table()+(S.sheet?sheet():'')+freezeOverlay()):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));
   h+=alertBar();
   if(S.toast) h+='<div class="toast">'+esc(S.toast)+'</div>';
   $stage.innerHTML=h;

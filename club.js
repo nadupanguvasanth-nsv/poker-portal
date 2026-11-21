@@ -120,6 +120,7 @@ function createClub(ctx) {
 
   // ----- helpers -----
   const owner = () => state.club && state.members[state.club.ownerId];
+  const signinFails = {};
   const memberByToken = (tok) => Object.values(state.members).find((m) => tok && m.token === tok);
   function auth(b) {
     const m = memberByToken(String(b.mtoken || ''));
@@ -288,6 +289,27 @@ function createClub(ctx) {
       return { mtoken: m.token };
     },
     'club/me'(b) { const m = auth(b); return viewFor(m); },
+    'club/setpin'(b) { // sign-in PIN, so a phone can sign back in with mobile + PIN
+      const m = auth(b);
+      const pin = String(b.pin || '');
+      if (!/^\d{4,8}$/.test(pin)) throw httpErr(400, 'The PIN must be 4 to 8 digits');
+      if (!m.phone) throw httpErr(400, 'Save your mobile number first');
+      const salt = crypto.randomBytes(16).toString('hex');
+      m.pin = { salt, hash: crypto.scryptSync(pin, salt, 32).toString('hex') };
+      changed();
+      return { ok: true };
+    },
+    'club/signin'(b) {
+      const phone = cleanPhone(b.phone), pin = String(b.pin || '');
+      const key = phone || 'none', f = (signinFails[key] = signinFails[key] || { n: 0, until: 0 });
+      if (Date.now() < f.until) throw httpErr(429, 'Too many tries. Wait a few minutes and try again.');
+      const m = phone && Object.values(state.members).find((x) => x.phone === phone && x.pin);
+      let ok = false;
+      if (m) { const h = crypto.scryptSync(pin, m.pin.salt, 32); ok = crypto.timingSafeEqual(h, Buffer.from(m.pin.hash, 'hex')); }
+      if (!ok) { f.n++; if (f.n >= 5) { f.until = Date.now() + 5 * 60000; f.n = 0; } throw httpErr(403, 'Mobile number or PIN is not right'); }
+      f.n = 0;
+      return { mtoken: m.token };
+    },
     'club/profile'(b) { // a member changes their own name and phone
       const m = auth(b);
       if (b.name !== undefined && String(b.name).trim()) m.name = cleanName(b.name);

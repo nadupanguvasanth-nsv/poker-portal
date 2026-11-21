@@ -606,9 +606,26 @@ const routes = {
     broadcast(t); maybeStartHand(t);
     return { ok: true };
   },
+  sessiontime(b) { // move the end of the session that is running now
+    const { t, p } = auth(b); need(t, p, 'settings');
+    if (!t.sessionNo || t.ended) throw httpErr(400, 'No session is running');
+    const d = Math.max(-240, Math.min(240, Math.round(Number(b.minutes) || 0)));
+    if (!d) throw httpErr(400, 'Choose how many minutes to add or remove');
+    t.sessionEndsAt += d * 60000;
+    if (t.sessionEnding && t.sessionEndsAt > Date.now()) t.sessionEnding = false;
+    say(t, `Session ${t.sessionNo} ${d > 0 ? 'extended' : 'shortened'} by ${Math.abs(d)} minutes`);
+    broadcast(t);
+    return { ok: true };
+  },
   settings(b) {
     const { t, p } = auth(b); need(t, p, 'settings');
+    const oldLen = t.settings.sessionMinutes;
     t.settings = cleanSettings(b.settings, t.settings);
+    if (t.settings.sessionMinutes !== oldLen && t.sessionNo > 0 && !t.ended) { // a new length also moves the end of the running session
+      t.sessionEndsAt += (t.settings.sessionMinutes - oldLen) * 60000;
+      if (t.sessionEnding && t.sessionEndsAt > Date.now()) t.sessionEnding = false;
+      say(t, `Session length is now ${t.settings.sessionMinutes} minutes`);
+    }
     say(t, `Blinds are now ${t.settings.sb}/${t.settings.bb} from the next hand`);
     broadcast(t);
     return { ok: true };
