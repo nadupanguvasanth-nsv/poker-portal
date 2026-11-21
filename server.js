@@ -153,7 +153,7 @@ function viewFor(t, pid) {
     startBy: autoCancelDue(t) ? t.createdAt + t.settings.waitMinutes * 60000 : 0, joined: joinedCount(t), minPlayers: t.settings.minPlayers,
     session: {
       no: t.sessionNo, endsAt: t.sessionEndsAt, ending: t.sessionEnding, minutes: t.settings.sessionMinutes,
-      ended: t.ended, cancelled: !!t.cancelled, endingGame: t.ending, draw: Date.now() < t.drawUntil + 4000 ? t.draw : null,
+      ended: t.ended, cancelled: !!t.cancelled, cancelWhy: t.cancelWhy || '', endingGame: t.ending, draw: Date.now() < t.drawUntil + 4000 ? t.draw : null,
     },
     joins: can(t, me, 'players') ? t.joins : [],
     settlement: t.final && {
@@ -630,7 +630,7 @@ const routes = {
   },
   freeze(b) { // the main admin stops everything exactly as it is
     const { t, p } = auth(b);
-    if (p.id !== t.adminId) throw httpErr(403, 'Only the main admin can stop the game');
+    need(t, p, 'start');
     if (t.frozen || t.ended) return { ok: true };
     t.frozen = { at: Date.now(), left: t.deadline ? Math.max(0, t.deadline - Date.now()) : 0 };
     clearTimeout(t.timer); clearTimeout(t.nextTimer); t.deadline = 0;
@@ -640,7 +640,7 @@ const routes = {
   },
   unfreeze(b) {
     const { t, p } = auth(b);
-    if (p.id !== t.adminId) throw httpErr(403, 'Only the main admin can resume the game');
+    need(t, p, 'start');
     const f = t.frozen; if (!f) return { ok: true };
     const dur = Date.now() - f.at;
     t.frozen = null;
@@ -765,6 +765,15 @@ const routes = {
     if (t.eventId && target.memberId) club.saveDelegates(t.eventId, target.memberId, target.roles);
     broadcast(t);
     return { roles };
+  },
+  closetable(b) { // throw away a table where nothing has been played
+    const { t, p } = auth(b);
+    if (p.id !== t.adminId) throw httpErr(403, 'Only the main admin can close the table');
+    if (t.ended) throw httpErr(400, 'The table is already closed');
+    if (t.handNo > 0 || t.sessionNo > 0) throw httpErr(400, 'Hands have been played. Use End the game so the accounts are settled.');
+    t.frozen = null;
+    cancelTable(t, 'The admin closed the table.');
+    return { ok: true };
   },
   endgame(b) {
     const { t, p } = auth(b); need(t, p, 'start');
@@ -918,7 +927,7 @@ const server = http.createServer(async (req, res) => {
 const joinedCount = (t) => [...t.players.values()].filter((p) => p.approved && !p.leaving && p.stack + (p.queued || 0) > 0).length;
 const autoCancelDue = (t) => !!(t.eventId && !t.ended && !t.cancelled && !t.sessionNo && !t.handNo && t.settings.minPlayers > 0);
 function cancelTable(t, why) {
-  t.cancelled = true; t.running = false; t.ended = true; t.ending = false;
+  t.cancelled = true; t.cancelWhy = why; t.running = false; t.ended = true; t.ending = false;
   clearTimeout(t.timer); clearTimeout(t.nextTimer); t.deadline = 0;
   say(t, why); club.cancelTable(t, why); broadcast(t);
 }
