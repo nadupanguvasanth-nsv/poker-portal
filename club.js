@@ -129,8 +129,10 @@ function createClub(ctx) {
   }
   const isOwner = (m) => !!state.club && m.id === state.club.ownerId;
   // Powers are delegated per game (one room) and end with that game; only the admin holds club-wide powers.
-  const evRoles = (ev, m) => (ev.delegates && ev.delegates[m.id]) || [];
+  const isCo = (m) => !!m.coAdmin && !isOwner(m); // a co-admin appointed by the admin: club-wide helper
+  const evRoles = (ev, m) => isCo(m) ? ROLES.slice() : ((ev.delegates && ev.delegates[m.id]) || []);
   const hasEv = (m, ev, role) => isOwner(m) || evRoles(ev, m).includes(role);
+  const mgrOnly = (m) => { if (!isOwner(m) && !isCo(m)) throw httpErr(403, 'Only the admin or a co-admin can do that'); };
   const ownerOnly = (m) => { if (!isOwner(m)) throw httpErr(403, 'Only the admin can do that'); };
   const cleanPhone = (p) => { const x = String(p || '').replace(/[^\d+]/g, '').slice(0, 16); return /^\d{10}$/.test(x) ? '+91' + x : x; };
   const cleanRoles = (r) => [...new Set((Array.isArray(r) ? r : []).filter((x) => ROLES.includes(x)))];
@@ -169,11 +171,11 @@ function createClub(ctx) {
       });
     const out = {
       club: { name: state.club.name },
-      me: { id: m.id, name: m.name, phone: m.phone || '', isOwner: isOwner(m), manage: isOwner(m) },
+      me: { id: m.id, name: m.name, phone: m.phone || '', isOwner: isOwner(m), isCo: isCo(m), manage: isOwner(m) || isCo(m), hasPin: !!m.pin },
       events, now: Date.now(), roles: ROLES, saveError: isOwner(m) ? lastError : '', storage: isOwner(m) ? store.name : '',
     };
     if (isOwner(m)) out.history = (state.history || []).slice().reverse().slice(0, 100);
-    if (isOwner(m)) out.members = Object.values(state.members).filter((x) => !isOwner(x)).map((x) => ({ id: x.id, name: x.name, phone: x.phone || '', token: x.token, createdAt: x.createdAt }));
+    if (isOwner(m) || isCo(m)) out.members = Object.values(state.members).filter((x) => !isOwner(x)).map((x) => ({ id: x.id, name: x.name, phone: x.phone || '', token: x.token, createdAt: x.createdAt, coAdmin: !!x.coAdmin }));
     return out;
   }
 
@@ -277,7 +279,17 @@ function createClub(ctx) {
 
   // ----- routes -----
   const routes = {
-    'club/status'() { return { exists: !!state.club, name: state.club ? state.club.name : '', needsSetupCode: !!env.SETUP_CODE }; },
+    'club/status'() { const o = state.club && state.members[state.club.ownerId]; return { exists: !!state.club, name: state.club ? state.club.name : '', needsSetupCode: !!env.SETUP_CODE, adminPin: !!(o && o.pin) }; },
+    'club/adminlogin'(b) { // the admin signs back in with the 4-digit PIN alone
+      const o = state.club && state.members[state.club.ownerId];
+      const f = (signinFails.admin = signinFails.admin || { n: 0, until: 0 });
+      if (Date.now() < f.until) throw httpErr(429, 'Too many tries. Wait a few minutes and try again.');
+      let ok = false;
+      if (o && o.pin) { const h = crypto.scryptSync(String(b.pin || ''), o.pin.salt, 32); ok = crypto.timingSafeEqual(h, Buffer.from(o.pin.hash, 'hex')); }
+      if (!ok) { f.n++; if (f.n >= 5) { f.until = Date.now() + 5 * 60000; f.n = 0; } throw httpErr(403, 'That PIN is not right'); }
+      f.n = 0;
+      return { mtoken: o.token };
+    },
     'club/setup'(b) {
       if (state.club) throw httpErr(400, 'The club is already set up');
       if (env.SETUP_CODE && String(b.setupCode || '') !== env.SETUP_CODE) throw httpErr(403, 'Wrong setup code');
@@ -289,11 +301,23 @@ function createClub(ctx) {
       return { mtoken: m.token };
     },
     'club/me'(b) { const m = auth(b); return viewFor(m); },
+    'club/coadmin'(b) { // the admin appoints or removes a co-admin
+      const o = auth(b); ownerOnly(o);
+      const m = state.members[b.memberId];
+      if (!m || isOwner(m)) throw httpErr(404, 'Member not found');
+      m.coAdmin = !!b.on;
+      for (const ev of Object.values(state.events)) {
+        const t = ev.tableCode && tables.get(ev.tableCode);
+        if (!t || t.ended) continue;
+        for (const p of t.players.values()) if (p.memberId === m.id) { p.roles = evRoles(ev, m).slice(); say(t, m.coAdmin ? `${m.name} is now a co-admin` : `${m.name} is no longer a co-admin`); broadcast(t); }
+      }
+      changed();
+      return { ok: true };
+    },
     'club/setpin'(b) { // sign-in PIN, so a phone can sign back in with mobile + PIN
       const m = auth(b);
       const pin = String(b.pin || '');
       if (!/^\d{4,8}$/.test(pin)) throw httpErr(400, 'The PIN must be 4 to 8 digits');
-      if (!m.phone) throw httpErr(400, 'Save your mobile number first');
       const salt = crypto.randomBytes(16).toString('hex');
       m.pin = { salt, hash: crypto.scryptSync(pin, salt, 32).toString('hex') };
       changed();
@@ -318,7 +342,7 @@ function createClub(ctx) {
       return { ok: true };
     },
     'club/addmember'(b) {
-      const o = auth(b); ownerOnly(o);
+      const o = auth(b); mgrOnly(o);
       const name = cleanName(b.name);
       if (Object.values(state.members).some((x) => x.name.toLowerCase() === name.toLowerCase())) throw httpErr(400, 'A member with that name already exists');
       const m = { id: rid(4), name, phone: cleanPhone(b.phone), token: rid(20), roles: [], createdAt: Date.now() };
@@ -337,7 +361,7 @@ function createClub(ctx) {
       return { ok: true };
     },
     'club/resetlink'(b) {
-      const o = auth(b); ownerOnly(o);
+      const o = auth(b); mgrOnly(o);
       const m = state.members[b.memberId];
       if (!m || isOwner(m)) throw httpErr(404, 'Member not found');
       m.token = rid(20);
@@ -346,7 +370,7 @@ function createClub(ctx) {
       return { token: m.token };
     },
     'club/setroles'(b) {
-      const o = auth(b); ownerOnly(o);
+      const o = auth(b); mgrOnly(o);
       const ev = state.events[b.eventId];
       const m = state.members[b.memberId];
       if (!ev || !m || isOwner(m)) throw httpErr(404, 'Not found');
@@ -354,7 +378,7 @@ function createClub(ctx) {
       return { roles: setDelegates(ev, m, b.roles) };
     },
     'club/createevent'(b) {
-      const m = auth(b); ownerOnly(m);
+      const m = auth(b); mgrOnly(m);
       const startAt = b.now ? Date.now() : Math.floor(Number(b.startAt));
       if (!Number.isFinite(startAt) || startAt < Date.now() - 3600e3) throw httpErr(400, 'Pick a start time in the future');
       let invited = 'all';
