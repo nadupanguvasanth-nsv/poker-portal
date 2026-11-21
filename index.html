@@ -207,7 +207,7 @@ function lobby(){
     h+='<div style="margin-top:22px;width:100%"><div class="disp" style="font-size:26px">Log in as admin</div>'+(S.adminPin?
       '<div class="field" style="margin-top:10px"><label for="lk_apin">YOUR 4-DIGIT PIN</label><input id="lk_apin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="PIN" style="letter-spacing:.4em;font-size:22px"></div><button class="btn" style="margin-top:12px" onclick="adminLogin()">Log in</button>':
       '<div class="muted small" style="margin:6px 0 10px;white-space:normal">First time on this phone: paste your personal admin link. You will then choose a 4-digit PIN for next time.</div><div class="field"><label for="lk_url">YOUR PERSONAL LINK</label><input id="lk_url" placeholder="https://poker-portal.onrender.com/?m=..."></div><button class="btn" style="margin-top:12px" onclick="useLink()">Continue</button>')+
-      '<div class="muted small" style="margin-top:16px;text-align:center;white-space:normal">Members: open the invite link the admin sent you on WhatsApp.</div><button class="btn line" style="margin-top:14px;height:40px;font-size:13px" onclick="S.lobbyMode=\'guest\';render()">I only have a room code</button></div>';
+      '<div class="muted small" style="margin-top:16px;text-align:center;white-space:normal">Members: open the invite link the admin sent you on WhatsApp.</div></div>';
   } else if(S.lobbyMode==='guest'){
     h+='<div style="margin-top:20px;width:100%;display:flex;flex-direction:column;gap:12px">'+
     '<div class="field"><label for="room">ROOM CODE</label><input id="room" autocapitalize="characters" autocomplete="off" maxlength="4" placeholder="e.g. 4F7K" value="'+esc(q.toUpperCase())+'" style="letter-spacing:.2em;text-transform:uppercase"></div>'+
@@ -401,7 +401,8 @@ function actionPanel(v){
     var turnSeat=v.seats.filter(function(x){return x&&x.id===hand.turnId;})[0];
     p+='<div id="tbar" class="abs" style="left:0;top:-1px;width:0;height:3px;background:#d8b45c"></div>';
   }
-  if(hand&&hand.finished&&v.result&&v.result.handNo===v.handNo){
+  if(v.session.ended){ p+='<div style="padding-top:14px;height:100%;box-sizing:border-box;overflow-y:auto">'+waitingBox(v)+'</div>'; }
+  else if(hand&&hand.finished&&v.result&&v.result.handNo===v.handNo){
     p+=showdownPanel(v);
   } else if(hand&&hand.runit){
     p+=runPanel(v);
@@ -455,6 +456,11 @@ function showdownPanel(v){
 }
 
 function needNote(v){return v.startBy?'<br>Needs '+v.minPlayers+' players with chips by '+clock(v.startBy)+' or the game is cancelled ('+v.joined+' so far).':'';}
+function endedOverlay(){
+  var v=S.view;if(!v||!v.session.ended||v.you.can.start)return '';
+  return '<div class="abs" style="left:0;right:0;top:0;bottom:0;z-index:40;background:#0a0c0b;padding:40px 24px;overflow:auto;display:flex;flex-direction:column;justify-content:center">'+
+    endedCard(v)+(v.you.member?'<button class="btn ghost" style="margin-top:18px" onclick="S.toClub=true;render()">Club home</button>':'<button class="btn ghost" style="margin-top:18px" onclick="forget()">Leave this table</button>')+'</div>';
+}
 function freezeOverlay(){
   var v=S.view;if(!v||!v.frozen||v.session.ended)return '';
   var me=v.you,b='<button class="btn ghost" style="margin-top:10px" onclick="S.sheet=true;render()">Menu</button><button class="btn ghost" style="margin-top:10px" onclick="S.toClub=true;render()">Club home</button>';
@@ -488,11 +494,27 @@ function waitActions(v){
   h+=bt('Club home','S.toClub=true;render()');
   return h+'</div>';
 }
-function waitingBox(v){var x=waitingBox0(v);return x?x+waitActions(v):x;}
+function waitingBox(v){
+  // when the game is over a player sees only their own result; the admin keeps the rest of the portal
+  if(v.session.ended&&!v.you.can.start)return endedCard(v)+(v.you.member?'<button class="btn ghost" style="margin-top:14px" onclick="S.toClub=true;render()">Club home</button>':'');
+  var x=waitingBox0(v);return x?x+waitActions(v):x;
+}
+function endedCard(v){
+  var me=v.you,row=(v.settlement&&v.settlement.people||[]).filter(function(p){return p.id===me.id;})[0];
+  var chips=row?row.final:me.stack+me.queued,inn=row?row.invested:me.bought;
+  var net=chips-inn;
+  return '<div class="disp" style="font-size:34px;line-height:1.05">'+esc(me.name)+'</div>'+
+    '<div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.18em;margin-top:6px">THE GAME HAS ENDED</div>'+
+    '<div style="display:flex;gap:8px;margin-top:16px"><div class="row" style="flex:1;display:block;padding:12px"><div class="muted" style="font-size:10.5px;letter-spacing:.1em">FINAL CHIPS</div><div class="disp" style="font-size:30px;line-height:1.1">'+fmt(chips)+'</div></div>'+
+    '<div class="row" style="flex:1;display:block;padding:12px"><div class="muted" style="font-size:10.5px;letter-spacing:.1em">TOTAL BUY-INS</div><div class="disp" style="font-size:30px;line-height:1.1">'+fmt(inn)+'</div></div></div>'+
+    '<div style="margin-top:10px;font-size:15px;font-weight:700;color:'+(net>0?'#7ddba0':net<0?'#f08a8f':'#a3aba5')+'">'+(net>0?'Up '+fmt(net):net<0?'Down '+fmt(-net):'Finished even')+'</div>'+
+    '<div class="muted small" style="margin-top:14px;white-space:normal">'+(me.member?'A detailed statement will be sent to your WhatsApp.':'Your detailed statement is ready to download.')+'</div>'+
+    (v.settlement?'<button class="btn ghost" style="margin-top:10px;height:42px;font-size:13px" onclick="getStatement()">Download it now (PDF)</button>':'');
+}
 function waitingBox0(v){
   var hand=v.hand,me=v.you,msg='';
   if(v.session.cancelled){return '<div class="disp" style="font-size:28px">Game cancelled</div><div class="muted small" style="margin:6px 0 0">'+esc(v.session.cancelWhy||'')+' Nothing was played, so nothing is owed.</div>';}
-  if(v.session.ended){return '<div class="disp" style="font-size:28px">The game is over</div><div class="muted small" style="margin:6px 0 14px">Thanks for playing.</div>'+(v.settlement?mySettle(v)+'<div class="muted small" style="margin:0 0 12px">'+(me.member?'Your full statement for the whole game is being sent to your WhatsApp.':'Your full statement for the whole game is ready.')+'</div><button class="btn" style="margin-bottom:8px" onclick="getStatement()">Download my full statement (PDF)</button><button class="btn ghost" style="margin-bottom:8px" onclick="S.sheet=true;render()">My statement</button>':'')+(me.can.start?'<button class="btn" onclick="doStart()">Start a new game</button>':'');}
+  if(v.session.ended){return endedCard(v)+'<div style="margin-top:16px"></div>'+(v.settlement?mySettle(v)+'<div class="muted small" style="margin:0 0 12px">'+(me.member?'Your full statement for the whole game is being sent to your WhatsApp.':'Your full statement for the whole game is ready.')+'</div><button class="btn" style="margin-bottom:8px" onclick="getStatement()">Download my full statement (PDF)</button><button class="btn ghost" style="margin-bottom:8px" onclick="S.sheet=true;render()">My statement</button>':'')+(me.can.start?'<button class="btn" onclick="doStart()">Start a new game</button>':'');}
   if(me.ghost){return '<div class="disp" style="font-size:28px">You left early</div><div class="muted small" style="margin:6px 0 0">Your seat keeps paying blinds until the end of session '+me.ghostUntil+(me.ghostEndsAt?' (about '+clock(me.ghostEndsAt)+')':'')+'. The admin can release you early in an emergency.</div>';}
   if(me.approved===false){return '<div class="disp" style="font-size:28px">Waiting for the admin</div><div class="muted small" style="margin:6px 0 0">The admin decides whether to let you in now that the game has started.</div>';}
   if(me.away){return '<div class="disp" style="font-size:28px">You are sitting out</div><div class="muted small" style="margin:6px 0 14px">You are skipped until you come back. Your chips stay safe.</div><button class="btn" onclick="api(\'back\').catch(fail)">I\'m back</button>';}
@@ -532,7 +554,7 @@ var PWR_SHORT={start:'start',bank:'chips',settings:'settings',players:'players',
 function togglePower(pid,role){var st=S.view.seats.filter(function(x){return x&&x.id===pid;})[0];if(!st)return;var r=(st.roles||[]).filter(function(x){return PWR.indexOf(x)>=0;}),i=r.indexOf(role);if(i<0)r.push(role);else r.splice(i,1);api('delegate',{playerId:pid,roles:r}).catch(fail);}
 function admit(id,ok){api('admit',{reqId:id,ok:ok}).catch(fail);}
 function closeTable(){if(!confirm('Close this table? Nobody has played, so nothing is recorded and no statements are sent.'))return;api('closetable').then(function(){S.sheet=false;render();}).catch(fail);}
-function endGame(){if(!confirm('End the game after this hand? No more hands are dealt, everyone is released and all delegated powers end.'))return;api('endgame').catch(fail);}
+function endGame(){if(!confirm('Close the game now, without waiting for the planned finish? The hand in play finishes, then everyone is settled and the table ends.'))return;api('endgame').catch(fail);}
 function postCall(n){api('calltime',{session:n}).then(function(){toast('Call time posted');}).catch(fail);}
 function cancelCall(){api('calltime',{cancel:true}).catch(fail);}
 function sessionBlock(v,me){
@@ -613,7 +635,7 @@ function sheet(){
     v.joins.forEach(function(r){h+='<div class="row" style="margin-bottom:8px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(r.name)+'</div><div class="muted small">stays this session and two more</div></div><button onclick="admit(\''+r.id+'\',false)" style="height:44px;padding:0 14px;border-radius:10px;border:1px solid #2a312d;background:transparent;color:#f2efe6;font-weight:600">Not now</button><button onclick="admit(\''+r.id+'\',true)" style="height:44px;padding:0 16px;border-radius:10px;border:0;background:#d8b45c;color:#14110a;font-weight:700">Let in</button></div>';});
   }
   if(me.can.start){
-    h+='<div style="margin-top:12px">'+(v.running?'<button class="btn ghost" onclick="api(\'pause\').catch(fail)">Pause after this hand</button>':'<button class="btn" onclick="doStart();S.sheet=false;render()">'+(v.handNo?'Resume the game':'Start the game')+'</button>')+(v.session.no&&!v.session.ended?'<button class="btn ghost" style="margin-top:8px" onclick="endGame()">'+(v.session.endingGame?'Ending after this hand':'End the game')+'</button>':'')+'</div>';
+    h+='<div style="margin-top:12px">'+(v.running?'<button class="btn ghost" onclick="api(\'pause\').catch(fail)">Pause after this hand</button>':'<button class="btn" onclick="doStart();S.sheet=false;render()">'+(v.handNo?'Resume the game':'Start the game')+'</button>')+(v.session.no&&!v.session.ended?'<button class="btn ghost" style="margin-top:8px" onclick="endGame()">'+(v.session.endingGame?'Ending after this hand':'Close the game now')+'</button><div class="muted small" style="margin-top:6px;white-space:normal">Closes the game before the planned finish. The hand in play finishes first, then everyone is settled.</div>':'')+'</div>';
   }
   if(me.isAdmin&&!v.handNo&&!v.session.no&&!v.session.ended)h+='<button class="btn ghost" style="margin-top:10px;border-color:#d2454d;color:#ff8c93" onclick="closeTable()">Close this table (nothing played)</button>';
   if(me.can.settings&&v.session.no&&!v.session.ended){
@@ -626,7 +648,7 @@ function sheet(){
   h+='<div class="h2">PLAYERS · ACCOUNTS</div>';
   v.seats.filter(Boolean).forEach(function(s){
     h+='<div class="row" style="margin-bottom:6px;flex-wrap:wrap"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+esc(s.name)+(s.isAdmin?' <span class="gold" style="font-size:11px">ADMIN</span>':'')+(s.id===me.id?' <span class="muted" style="font-size:11px">YOU</span>':'')+'</div><div class="muted small">'+accountLine(s.bought,s.bought-s.behind)+'</div><div class="muted small">'+(s.connected?'Online':'Offline')+(s.ghost?' · Left early, paying blinds':s.approved===false?' · Waiting to be let in':s.away?' · Sitting out':'')+(s.roles&&s.roles.length?' · Powers: '+s.roles.map(function(r){return PWR_SHORT[r];}).join(', '):'')+'</div></div><div style="font-size:15px;font-weight:700">'+fmt(s.stack)+'</div>'+
-    ((me.can.bank||me.can.players)?'<div style="flex-basis:100%;display:flex;gap:6px">'+(me.can.bank&&!(s.id===me.id&&!me.isAdmin)?'<button aria-label="Adjust chips for '+esc(s.name)+'" onclick="adjust(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">Adjust</button>':'')+(me.can.players&&s.id!==me.id&&!s.isAdmin?'<button onclick="setAway(\''+s.id+'\','+(!s.away)+')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">'+(s.away?'Bring back':'Sit out')+'</button><button onclick="kick(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #6b2a2e;background:transparent;color:#d2454d;font-size:12px">'+(s.ghost?'Release':'Remove')+'</button>':'')+(me.can.players&&!s.ghost&&!s.isAdmin&&s.approved!==false&&s.id!==me.id?'<button onclick="exitAsk(\''+s.id+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #d8b45c;background:transparent;color:#d8b45c;font-size:12px">Exit…</button>':'')+'</div>':'')+(me.isAdmin&&!s.isAdmin&&s.id!==me.id&&!s.ghost?'<div style="flex-basis:100%;margin-top:8px"><div class="muted" style="font-size:11px;letter-spacing:.08em;margin-bottom:6px">POWERS FOR THIS GAME ONLY</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+PWR.map(function(r){return '<button class="rolechip'+((s.roles||[]).indexOf(r)>=0?' on':'')+'" onclick="togglePower(\''+s.id+'\',\''+r+'\')">'+PWR_LABEL[r]+'</button>';}).join('')+'</div></div>':'')+'</div>';
+    ((me.can.bank||me.can.players)?'<div style="flex-basis:100%;display:flex;gap:6px">'+(me.can.players&&s.id!==me.id&&!s.isAdmin?'<button onclick="setAway(\''+s.id+'\','+(!s.away)+')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px">'+(s.away?'Bring back':'Sit out')+'</button><button onclick="kick(\''+s.id+'\',\''+esc(s.name)+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #6b2a2e;background:transparent;color:#d2454d;font-size:12px">'+(s.ghost?'Release':'Remove')+'</button>':'')+(me.can.players&&!s.ghost&&!s.isAdmin&&s.approved!==false&&s.id!==me.id?'<button onclick="exitAsk(\''+s.id+'\')" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid #d8b45c;background:transparent;color:#d8b45c;font-size:12px">Exit…</button>':'')+'</div>':'')+(me.isAdmin&&!s.isAdmin&&s.id!==me.id&&!s.ghost?'<div style="flex-basis:100%;margin-top:8px"><div class="muted" style="font-size:11px;letter-spacing:.08em;margin-bottom:6px">POWERS FOR THIS GAME ONLY</div><div style="display:flex;flex-wrap:wrap;gap:6px">'+PWR.map(function(r){return '<button class="rolechip'+((s.roles||[]).indexOf(r)>=0?' on':'')+'" onclick="togglePower(\''+s.id+'\',\''+r+'\')">'+PWR_LABEL[r]+'</button>';}).join('')+'</div></div>':'')+'</div>';
   });
   h+=totalsLine(v);
   if(v.settlement)h+=settleBlock(v);
@@ -727,7 +749,6 @@ function totalsLine(v){
   return '<div class="muted small" style="margin:6px 2px 0;white-space:normal">Total bought in '+fmt(tb)+' · chips on the table '+fmt(tc)+'. Everyone can see this list.</div>';
 }
 function decide(id,ok){api('approve',{reqId:id,ok:ok}).catch(fail);}
-function adjust(pid,name){var a=prompt('Chips to add for '+name+' (use a minus sign to remove):');if(a===null)return;var why=prompt('Reason (optional):')||'';api('adjust',{playerId:pid,delta:a,reason:why}).catch(fail);}
 function saveSettings(){api('settings',{settings:{sb:val('s_sb'),bb:val('s_bb'),turnSeconds:val('s_ts'),sessionMinutes:val('s_sm'),minBuyin:val('s_mn'),maxBuyin:val('s_mb'),bombAnteBB:val('s_ba'),bombMax:val('s_bm'),runItMin:val('s_ri'),minPlayers:val('s_mp'),waitMinutes:val('s_wm')}}).then(function(){toast('Saved');}).catch(fail);}
 function setAway(pid,away){api('setaway',{playerId:pid,away:away}).catch(fail);}
 function kick(pid,name){if(!confirm('Remove '+name+' from the table? Their chips are returned to the banker to settle.'))return;api('kick',{playerId:pid}).catch(fail);}
@@ -838,7 +859,7 @@ function evCard(ev,cv){
   var soon=ev.startAt-Date.now()<=15*60000;
   if(ev.myRoles&&ev.myRoles.length&&!ev.done)h+='<div class="muted small" style="margin-top:8px">The admin gave you powers for this game: '+ev.myRoles.map(function(r){return ROLE_LABEL[r];}).join(', ')+'. They end when the game ends.</div>';
   if(ev.actingName&&!ev.done)h+='<div class="muted small" style="margin-top:8px">Acting admin: <span class="gold">'+esc(ev.actingName)+'</span>'+(ev.adminPlays?'':' · the admin is not playing')+'</div>';
-  if(ev.done)h+='<div class="muted small" style="margin-top:10px">This game has ended.</div>';
+  if(ev.done)h+='<div class="muted small" style="margin-top:10px">This table has ended. The result and the best rounds are under Past games.</div>';
   if(!ev.cancelled&&!ev.done){
     if(ev.my==='invited'&&ev.proposal)h+='<div class="muted small" style="margin-top:10px;white-space:normal">A game is being planned. Smart Buddies is our private online poker portal, just for us friends. Are you available?</div><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" style="height:48px" onclick="interest(\''+ev.id+'\',true)">I am available</button><button class="btn ghost" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'out\')">Not available</button></div>';
     else if(ev.my==='invited'&&ev.auto)h+='<div class="muted small" style="margin-top:10px">Seats go first come, first served. Tap In and you sit down with the minimum buy-in of '+fmt(ev.settings.minBuyin)+'.</div><div style="display:flex;gap:10px;margin-top:10px"><button class="btn" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'in\')">I\'m in</button><button class="btn ghost" style="height:48px" onclick="rsvp(\''+ev.id+'\',\'out\')">I\'m out</button></div>';
@@ -922,13 +943,90 @@ function historyTab(cv){
       h+='<div style="margin-top:10px;border-top:1px solid #2a312d;padding-top:8px">';
       g.people.slice().sort(function(a,b){return b.net-a.net;}).forEach(function(p){h+='<div style="display:flex;gap:8px;font-size:14px;padding:3px 0"><span style="flex:1">'+esc(p.name)+'</span><span class="muted small" style="align-self:center">in '+fmt(p.invested)+' · out '+fmt(p.final)+'</span><b style="min-width:64px;text-align:right;color:'+(p.net>0?'#7ddba0':p.net<0?'#f08a8f':'#f2efe6')+'">'+(p.net>0?'+':p.net<0?'−':'')+fmt(Math.abs(p.net))+'</b></div>';});
       h+='<div class="h2" style="margin-top:12px">SETTLEMENT</div>'+(g.transfers.length?g.transfers.map(function(x){return '<div style="display:flex;justify-content:space-between;font-size:14px;padding:3px 0"><span>'+esc(x.from)+' pays '+esc(x.to)+'</span><b class="gold">'+fmt(x.amount)+'</b></div>';}).join(''):'<div class="muted small">Everyone finished even.</div>');
-      h+='<button class="rolechip" style="margin-top:12px;color:#d2454d;border-color:#6b2a2e" onclick="delGame(\''+g.id+'\')">Remove from history</button></div>';
+      h+=roundsBlock(g);
+      if(cv.me.isOwner)h+='<button class="rolechip" style="margin-top:12px;color:#d2454d;border-color:#6b2a2e" onclick="delGame(\''+g.id+'\')">Remove from history</button>';
+      h+='</div>';
     }
     h+='</div>';
   });
   return h;
 }
 function setCo(id,on){if(!confirm(on?'Make this member a co-admin? They get most admin powers, including at the table.':'Remove this co-admin?'))return;capi('coadmin',{memberId:id,on:on}).catch(fail);}
+var SNAMES={preflop:'PREFLOP',flop:'FLOP',turn:'TURN',river:'RIVER',showdown:'SHOWDOWN'};
+var ANAMES={sb:'small blind',bb:'big blind',ante:'antes',fold:'folds',check:'checks',call:'calls',bet:'bets',raise:'raises to',allin:'is all in for'};
+function roundsBlock(g){
+  if(!g.replays)return '<div class="muted small" style="margin-top:12px">The replays of this game have been cleared. Only the last 5 games keep them.</div>';
+  var got=S.rounds&&S.rounds[g.id];
+  if(!got)return '<button class="btn ghost" style="margin-top:12px;height:42px" onclick="loadRounds(\''+g.id+'\')">Best '+g.replays+' rounds of this game</button>';
+  var h='<div class="h2" style="margin-top:12px">BEST ROUNDS</div><div class="muted small" style="margin-bottom:6px;white-space:normal">Picked by the chips that moved and by the hands that won them.</div>';
+  got.forEach(function(r,i){
+    var w=r.won.map(function(x){return esc(x.name)+(x.handName?' · '+esc(x.handName.toLowerCase()):'');}).join(', ');
+    var big=r.won.filter(function(x){return x.handName&&/Royal flush|Straight flush|Four of a kind/.test(x.handName);})[0];
+    if(big)w='<span class="gold" style="font-weight:700">'+esc(big.handName.toUpperCase())+'</span> · '+w;
+    h+='<button class="row" style="width:100%;text-align:left;margin-bottom:6px;align-items:center" onclick="openReplay(\''+g.id+'\','+i+')"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700">Hand '+r.no+(r.variant!=='holdem'?' · '+esc(r.variantName):'')+'</div><div class="muted small" style="white-space:normal">'+w+'</div></div><div style="text-align:right"><div class="gold disp" style="font-size:20px;line-height:1">'+fmt(r.pot)+'</div><div class="muted" style="font-size:10px;letter-spacing:.1em">POT</div></div></button>';
+  });
+  return h;
+}
+function loadRounds(id){capi('rounds',{id:id}).then(function(r){S.rounds=S.rounds||{};S.rounds[id]=(r.rounds||[]).slice().sort(function(a,b){return b.score-a.score;});render();}).catch(fail);}
+function openReplay(gid,i){S.replay={gid:gid,i:i,step:0};S.win=null;render();}
+function closeReplay(){if(S.rtimer){clearInterval(S.rtimer);S.rtimer=null;}S.replay=null;S.win=null;render();}
+function rStep(d){
+  var R=S.replay,r=S.rounds[R.gid][R.i],n=r.acts.length;
+  R.step=Math.max(0,Math.min(n,R.step+d));
+  if(R.step>=n&&S.rtimer){clearInterval(S.rtimer);S.rtimer=null;}
+  render();
+}
+function rPlay(){
+  if(S.rtimer){clearInterval(S.rtimer);S.rtimer=null;render();return;}
+  var R=S.replay,r=S.rounds[R.gid][R.i];
+  if(R.step>=r.acts.length)R.step=0;
+  S.rtimer=setInterval(function(){rStep(1);},1100);
+  render();
+}
+function replayView(){
+  var R=S.replay,list=S.rounds&&S.rounds[R.gid],r=list&&list[R.i];
+  if(!r){S.replay=null;return clubScreen();}
+  var n=r.acts.length,done=R.step>=n,upto=r.acts.slice(0,R.step),cur=upto.length?upto[upto.length-1]:null;
+  var street=done?'showdown':(cur?cur.s:'preflop');
+  var nb={preflop:0,flop:3,turn:4,river:5,showdown:5}[street]||0;
+  var pot=cur?cur.pot:0;if(done)pot=r.pot;
+  var folded={},put={};
+  upto.forEach(function(a){if(a.k==='fold')folded[a.id]=1;put[a.id]=(a.k==='ante')?(put[a.id]||0)+a.a:Math.max(put[a.id]||0,a.a);});
+  S.win=null;
+  if(done&&!r.uncontested){S.win={};r.won.forEach(function(w){var rv=r.reveal[w.id];if(rv&&rv.best)rv.best.forEach(function(c){S.win[c]=1;});});}
+  var h='<div class="sheet" style="padding-bottom:120px">'+
+    '<button class="btn ghost" style="margin-bottom:12px" onclick="closeReplay()">Back to past games</button>'+
+    '<div class="disp" style="font-size:30px;line-height:1.05">Hand '+r.no+'</div>'+
+    '<div class="muted small">'+esc(r.variantName)+' · blinds '+fmt(r.sb)+'/'+fmt(r.bb)+' · session '+r.session+'</div>';
+  // board
+  h+='<div class="h2" style="margin-top:14px">'+(SNAMES[street]||'')+'</div>';
+  r.boards.forEach(function(b){
+    h+='<div style="display:flex;gap:5px;justify-content:center;margin-bottom:6px">';
+    for(var i=0;i<5;i++)h+=(i<nb&&b[i])?card(b[i],'sm'):'<div class="card sm empty"></div>';
+    h+='</div>';
+  });
+  h+='<div class="disp gold" style="text-align:center;font-size:28px;line-height:1.1">'+fmt(pot)+'</div><div class="muted" style="text-align:center;font-size:10px;letter-spacing:.14em;margin-bottom:10px">POT</div>';
+  // players
+  r.players.forEach(function(p){
+    var out=folded[p.id],w=r.won.filter(function(x){return x.id===p.id;})[0];
+    h+='<div class="row" style="margin-bottom:6px;align-items:center;opacity:'+(out?'.45':'1')+';border-color:'+(done&&w?'#d8b45c':'#2a312d')+'"><div style="display:flex;gap:3px;flex:none">'+p.cards.map(function(c){return card(c,'sm');}).join('')+'</div>'+
+      '<div style="flex:1;min-width:0;margin-left:8px"><div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(p.name)+(out?' · folded':'')+'</div>'+
+      '<div class="muted small">'+(put[p.id]?'in '+fmt(put[p.id]):'&nbsp;')+(done&&w&&w.handName?' · '+esc(w.handName):'')+'</div></div>'+
+      (done&&w?'<div class="gold disp" style="font-size:19px">+'+fmt(w.amount)+'</div>':'')+'</div>';
+  });
+  // the action, one line at a time
+  h+='<div class="h2" style="margin-top:12px">THE ACTION</div>';
+  if(!upto.length)h+='<div class="muted small">Cards are out. Step through the hand below.</div>';
+  var last='';
+  upto.forEach(function(a){
+    if(a.s!==last){h+='<div class="gold" style="font-size:10.5px;font-weight:700;letter-spacing:.14em;margin:8px 0 4px">'+(SNAMES[a.s]||'')+'</div>';last=a.s;}
+    var who=(r.players.filter(function(p){return p.id===a.id;})[0]||{}).name||'';
+    h+='<div style="font-size:13.5px;padding:2px 0">'+esc(who)+' <span class="muted">'+ANAMES[a.k]+'</span>'+(a.a?' <b>'+fmt(a.a)+'</b>':'')+'</div>';
+  });
+  if(done)h+='<div style="margin-top:10px;font-size:15px;font-weight:700">'+r.won.map(function(x){return esc(x.name)+' wins '+fmt(x.amount)+(x.handName?' with '+esc(x.handName.toLowerCase()):(r.uncontested?' (everyone folded)':''));}).join('<br>')+'</div>';
+  h+='</div><div class="tabs"><button onclick="rStep(-1)">‹ Back</button><button onclick="rPlay()">'+(S.rtimer?'Pause':'Play')+'</button><button onclick="rStep(1)">Next ›</button><button onclick="closeReplay()">Close</button></div>';
+  return h;
+}
 function delGame(id){if(!confirm('Remove this game from the history?'))return;capi('deletegame',{id:id}).then(function(){S.histOpen=null;}).catch(fail);}
 function membersTab(cv){
   var h=linkCard(),own=cv.me.isOwner;
@@ -951,8 +1049,9 @@ function clubScreen(){
   var h='<div class="sheet" style="padding-bottom:96px">'+(S.view?'<button class="btn" style="margin-bottom:14px" onclick="S.toClub=false;render()">Back to the table</button>':'')+'<div style="display:flex;align-items:center;justify-content:space-between"><div style="min-width:0"><div class="muted small" style="letter-spacing:.14em">'+esc(cv.club.name).toUpperCase()+'</div><div class="disp" style="font-size:36px;line-height:1.05">Hi, '+esc(me.name)+'</div></div>'+(me.isOwner?'<div class="pill2 g">ADMIN</div>':'')+'</div>';
   if(me.isOwner&&cv.storage&&/^file/.test(cv.storage))h+='<div class="evc" style="border-color:#d8b45c"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.14em">TEMPORARY STORAGE</div><div class="muted small" style="margin-top:6px">Club data is only kept on the server and is lost when it restarts. Connect the Google Drive storage to keep it safe.</div></div>';
   if(cv.saveError)h+='<div class="evc" style="border-color:#d2454d"><div style="font-size:13px">Club data could not be saved: '+esc(cv.saveError)+'</div></div>';
-  h+=(S.tab==='history'&&me.isOwner)?historyTab(cv):(S.tab==='members'&&me.manage)?membersTab(cv):gamesTab(cv);
-  h+='</div><div class="tabs"><button class="'+(S.tab==='games'?'on':'')+'" onclick="S.tab=\'games\';render()">Games</button>'+(me.manage?'<button class="'+(S.tab==='members'?'on':'')+'" onclick="S.tab=\'members\';render()">Members</button>':'')+(me.isOwner?'<button class="'+(S.tab==='history'?'on':'')+'" onclick="S.tab=\'history\';render()">History</button>':'')+'<button onclick="S.quick=true;S.lobbyMode=\'admin\';render()">Quick table</button><button onclick="'+(me.isOwner?'signOutAdmin()':'if(confirm(\'Leave the club on this phone? You can come back with your invite link.\')){clubForget();render();}')+'">Sign out</button></div>';
+  if(S.replay)return replayView();
+  h+=(S.tab==='history')?historyTab(cv):(S.tab==='members'&&me.manage)?membersTab(cv):gamesTab(cv);
+  h+='</div><div class="tabs"><button class="'+(S.tab==='games'?'on':'')+'" onclick="S.tab=\'games\';render()">Games</button>'+(me.manage?'<button class="'+(S.tab==='members'?'on':'')+'" onclick="S.tab=\'members\';render()">Members</button>':'')+'<button class="'+(S.tab==='history'?'on':'')+'" onclick="S.tab=\'history\';render()">History</button>'+'<button onclick="S.quick=true;S.lobbyMode=\'admin\';render()">Quick table</button><button onclick="'+(me.isOwner?'signOutAdmin()':'if(confirm(\'Leave the club on this phone? You can come back with your invite link.\')){clubForget();render();}')+'">Sign out</button></div>';
   return h;
 }
 function alertBar(){
@@ -981,7 +1080,7 @@ function render(){
   if(keep&&!S.view&&/^(c_|m_|su_|pf_)/.test(keep.id)) return;
   if(keep&&/^lk_/.test(keep.id))return;
   var old=document.querySelector('.sheet'),sc=old?old.scrollTop:0;
-  var h=((S.view&&S.toClub&&!S.mtoken)||(!S.view&&S.signin&&!S.mtoken))?linkScreen():(S.view&&!(S.toClub&&S.mtoken&&S.cv))?(table()+(S.sheet?sheet():'')+freezeOverlay()):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));
+  var h=((S.view&&S.toClub&&!S.mtoken)||(!S.view&&S.signin&&!S.mtoken))?linkScreen():(S.view&&!(S.toClub&&S.mtoken&&S.cv))?(table()+(S.sheet?sheet():'')+freezeOverlay()+endedOverlay()):((S.mtoken&&S.cv&&!S.quick)?clubScreen():((S.mtoken&&!S.cv&&!S.quick)?'<div class="abs muted" style="inset:0;display:flex;align-items:center;justify-content:center">Opening the club...</div>':lobby()));
   h+=alertBar();
   if(S.toast) h+='<div class="toast">'+esc(S.toast)+'</div>';
   $stage.innerHTML=h;

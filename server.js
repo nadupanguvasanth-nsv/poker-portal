@@ -12,6 +12,7 @@ const { buildFinal, statementPdf, sessionRows } = require('./statement');
 
 const PORT = process.env.PORT || 3000;
 const NEXT_HAND_DELAY_MS = Number(process.env.NEXT_HAND_DELAY_MS || 7000);
+const ROUNDS_KEPT = Number(process.env.ROUNDS_KEPT || 10); // best rounds kept for each game's replay
 const SHOW_HOLD_MS = Number(process.env.SHOW_HOLD_MS || 8000); // extra time when somebody shows a card
 const DRAW_SHOW_MS = Number(process.env.DRAW_SHOW_MS || 9000);
 const NOTICE_MS = 60 * 60 * 1000; // call time: at least one hour before standing up
@@ -61,7 +62,7 @@ function makeTable(adminName, settings) {
     pending: [], notes: [], log: [], clients: new Map(), timer: null, nextTimer: null,
     deadline: 0, lastResult: null, closed: false, forceVariant: null, variant: 'none', vmark: null, special: false,
     sessionNo: 0, sessionEndsAt: 0, sessionEnding: false, draw: null, drawUntil: 0,
-    ended: false, ending: false, joins: [], departed: [], sessLog: [],
+    ended: false, ending: false, joins: [], departed: [], sessLog: [], rounds: [],
   };
   tables.set(t.code, t);
   const admin = addPlayer(t, adminName);
@@ -287,7 +288,7 @@ function finalize(t) {
 
 function resetGame(t) {
   t.ended = false; t.ending = false; t.sessionNo = 0; t.sessionEnding = false; t.draw = null; t.drawUntil = 0;
-  t.final = null; t.departed = []; t.sessLog = []; t.vmark = null; t.special = false;
+  t.final = null; t.departed = []; t.sessLog = []; t.vmark = null; t.special = false; t.rounds = [];
   for (const p of t.players.values()) p.optIn = false;
   for (const p of t.players.values()) { // a new game starts from the chips people hold now
     p.stayUntil = 2; p.callAfter = 0;
@@ -446,6 +447,7 @@ function finishHand(t) {
     pots: r.pots.length,
   };
   for (const w of t.lastResult.won) say(t, `${w.name} wins ${w.amount}${w.handName ? ' with ' + w.handName.toLowerCase() : ''}`);
+  keepIfGood(t, h, r);
   // players who stood up during the hand, and early leavers who have paid everything they had
   for (const p of [...t.players.values()]) {
     if (p.leaving && p.exitCash) cashOut(t, p, `${p.name} left the game (emergency)`);
@@ -513,6 +515,33 @@ function doExit(t, target, emergency, by) {
   }
   broadcast(t);
 }
+// ---------- the ten best rounds of a game, kept for the replay ----------
+// A round earns its place by the chips that moved and by the hand that won it.
+const BIG_HANDS = { 'Royal flush': 6, 'Straight flush': 5, 'Four of a kind': 4, 'Full house': 2, 'Flush': 1.5, 'Straight': 1.3 };
+function roundScore(rec) {
+  let best = 1;
+  for (const w of rec.won) { const m = BIG_HANDS[w.handName]; if (m && m > best) best = m; }
+  const action = rec.acts.filter((a) => a.k === 'raise' || a.k === 'bet' || a.k === 'allin').length;
+  return Math.round(rec.pot * best + action * rec.bb * 2);
+}
+function keepIfGood(t, h, r) {
+  try {
+    const pot = Object.values(r.won).reduce((n, x) => n + x, 0);
+    if (!pot) return;
+    const rec = {
+      no: t.handNo, at: Date.now(), session: t.sessionNo, sb: t.settings.sb, bb: t.settings.bb,
+      variant: h.variant, variantName: h.v.name, boards: h.boards.map((b) => b.slice()), boardKind: h.boardKind, runs: h.runs,
+      players: h.players.filter((p) => !p.ghost).map((p) => ({ id: p.id, name: nameOf(t, p.id), seat: p.seat, start: p.start, cards: p.cards.slice(), folded: p.folded })),
+      acts: h.acts.map((a) => ({ ...a })), pot, uncontested: !!r.uncontested,
+      shown: (t.shown && t.shown.handNo === t.handNo) ? { ...t.shown.ids } : {},
+      won: Object.entries(r.won).map(([id, amount]) => ({ id, name: nameOf(t, id), amount, handName: r.reveal[id] ? r.reveal[id].handName : null })),
+      reveal: Object.fromEntries(Object.entries(r.reveal).map(([id, v]) => [id, { handName: v.handName, best: v.best }])),
+    };
+    rec.score = roundScore(rec);
+    t.rounds = (t.rounds || []).concat([rec]).sort((a, b) => b.score - a.score).slice(0, ROUNDS_KEPT);
+  } catch (e) { /* a replay is never worth breaking a hand for */ }
+}
+
 function takeOut(t, p, text) {
   const inHand = t.hand && !t.hand.finished && t.hand.players.some((x) => x.id === p.id);
   say(t, text);

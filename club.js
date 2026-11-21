@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const REPLAY_GAMES = Number(process.env.REPLAY_GAMES || 5); // games that keep their replays
 const webpush = require('./webpush');
 
 const ROLES = ['start', 'bank', 'settings', 'players', 'invite'];
@@ -177,7 +178,8 @@ function createClub(ctx) {
       me: { id: m.id, name: m.name, phone: m.phone || '', isOwner: isOwner(m), isCo: isCo(m), manage: isOwner(m) || isCo(m), hasPin: !!m.pin },
       events, now: Date.now(), roles: ROLES, saveError: isOwner(m) ? lastError : '', storage: isOwner(m) ? store.name : '',
     };
-    if (isOwner(m)) out.history = (state.history || []).slice().reverse().slice(0, 100);
+    // every member sees the past games and the replays; only the owner can remove one
+    out.history = (state.history || []).slice().reverse().slice(0, 100).map((g) => ({ ...g, rounds: undefined, replays: g.rounds ? g.rounds.length : 0 }));
     if (isOwner(m) || isCo(m)) out.members = Object.values(state.members).filter((x) => !isOwner(x)).map((x) => ({ id: x.id, name: x.name, phone: x.phone || '', token: x.token, createdAt: x.createdAt, coAdmin: !!x.coAdmin }));
     return out;
   }
@@ -485,6 +487,12 @@ function createClub(ctx) {
       changed();
       return { ok: true, members: Object.keys(state.members).length, games: Object.keys(state.events).length };
     },
+    'club/rounds'(b) { // the best rounds of one past game, fetched only when somebody opens it
+      auth(b);
+      const g = (state.history || []).find((x) => x.id === String(b.id || ''));
+      if (!g) throw httpErr(404, 'Game not found');
+      return { id: g.id, title: g.title, at: g.at, rounds: g.rounds || [] };
+    },
     'club/deletegame'(b) {
       const m = auth(b); ownerOnly(m);
       if (!state.history) state.history = [];
@@ -608,13 +616,21 @@ function createClub(ctx) {
         id: rid(4), code: t.code, title: ev ? ev.title : 'Quick table', at: t.final.at, startedAt: t.createdAt, sessions: t.final.sessions, sb: t.final.sb, bb: t.final.bb,
         people: t.final.people.map((x) => ({ name: x.name, invested: x.invested, final: x.final, net: x.net })),
         transfers: t.final.transfers.map((x) => ({ from: x.fromName, to: x.toName, amount: x.amount })),
+        rounds: (t.rounds || []).slice().sort((a, b) => a.no - b.no),
       });
       if (state.history.length > 300) state.history.splice(0, state.history.length - 300);
+      pruneRounds();
     }
     if (!ev) { changed(); return; }
     ev.delegates = {}; ev.status = 'done';
     changed();
   }
+  // replays are kept for the five most recent games only; the statements of older games stay for good
+  function pruneRounds() {
+    const withRounds = (state.history || []).filter((g) => g.rounds && g.rounds.length);
+    withRounds.slice(0, Math.max(0, withRounds.length - REPLAY_GAMES)).forEach((g) => { delete g.rounds; });
+  }
+
   // the game is over: each member with a phone gets their PDF statement on WhatsApp (needs Twilio and a public address)
   function sendStatements(t, linkFor) {
     for (const x of t.final.people) {

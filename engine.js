@@ -126,7 +126,7 @@ class Hand {
     if (players.length > this.v.max) throw new Error('too many players for ' + this.v.name);
     this.sb = sb; this.bb = bb; this.ante = ante; this.runItMin = runItMin;
     this.players = players.map((p) => ({
-      id: p.id, seat: p.seat, stack: p.stack, bet: 0, invested: 0,
+      id: p.id, seat: p.seat, stack: p.stack, start: p.stack, bet: 0, invested: 0,
       folded: false, allIn: false, cards: [], acted: false, canRaise: true, ghost: !!p.ghost,
     }));
     this.n = this.players.length;
@@ -143,10 +143,12 @@ class Hand {
     this.runit = null; // pending vote on running the board more than once
     this.runs = 1;
     this.log = [];
+    this.acts = []; // every chip that moves, in order, so a hand can be replayed later
 
     if (ante > 0) for (const p of this.players) {
       const a = Math.min(ante, p.stack);
       p.stack -= a; p.invested += a;
+      this.rec('ante', p.id, a);
       if (p.stack === 0) p.allIn = true;
     }
     if (this.v.bomb) {
@@ -154,6 +156,7 @@ class Hand {
       for (const p of this.players) {
         const a = Math.min(bombAnte, p.stack);
         p.stack -= a; p.invested += a;
+        this.rec('ante', p.id, a);
         if (p.stack === 0) p.allIn = true;
       }
       this.sbIdx = -1; this.bbIdx = -1;
@@ -170,7 +173,9 @@ class Hand {
     this.sbIdx = headsUp ? buttonIdx : (buttonIdx + 1) % this.n;
     this.bbIdx = headsUp ? (buttonIdx + 1) % this.n : (buttonIdx + 2) % this.n;
     this.postBet(this.sbIdx, sb);
+    this.rec('sb', this.players[this.sbIdx].id, this.players[this.sbIdx].bet);
     this.postBet(this.bbIdx, bb);
+    this.rec('bb', this.players[this.bbIdx].id, this.players[this.bbIdx].bet);
     // a seat whose player left early only pays its blinds: posted, then folded, never dealt
     for (const p of this.players) if (p.ghost) p.folded = true;
     for (let r = 0; r < this.v.hole; r++)
@@ -179,6 +184,11 @@ class Hand {
     const first = headsUp ? this.sbIdx : (this.bbIdx + 1) % this.n;
     this.turn = this.nextActor(first - 1, true);
     if (this.turn < 0 || this.roundDone()) this.advance();
+  }
+
+  // one line of the replay: who put in what, and the pot at that moment
+  rec(k, id, a) {
+    this.acts.push({ s: this.street, k, id, a: a || 0, pot: this.pot });
   }
 
   get board() { return this.boards[0]; }
@@ -237,13 +247,14 @@ class Hand {
     if (!L) throw new Error('not your turn');
     const p = this.players[this.turn];
     if (type === 'fold') {
-      p.folded = true; this.log.push(`${id} folds`);
+      p.folded = true; this.log.push(`${id} folds`); this.rec('fold', id, 0);
     } else if (type === 'check') {
       if (!L.canCheck) throw new Error('cannot check');
-      p.acted = true;
+      p.acted = true; this.rec('check', id, 0);
     } else if (type === 'call') {
       if (L.toCall <= 0) throw new Error('nothing to call');
       this.postBet(this.turn, L.toCall);
+      this.rec(p.allIn ? 'allin' : 'call', id, p.bet);
       p.acted = true;
     } else if (type === 'raise') {
       amount = Math.floor(Number(amount));
@@ -254,6 +265,7 @@ class Hand {
       const raiseSize = amount - this.currentBet;
       const full = raiseSize >= this.minRaise;
       this.postBet(this.turn, amount - p.bet);
+      this.rec(p.allIn ? 'allin' : (this.players.some((o) => o !== p && o.bet > 0 && o.acted) || this.street === 'preflop' ? 'raise' : 'bet'), id, p.bet);
       p.acted = true;
       if (full) this.minRaise = raiseSize;
       for (const o of this.players) {
