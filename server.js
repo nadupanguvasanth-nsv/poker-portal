@@ -1023,6 +1023,21 @@ const routes = {
     else finalize(t);
     return { ok: true };
   },
+  // The night is going well and nobody wants to stop: push the end of this session back.
+  // Later sessions keep their usual length unless the admin asks for that too.
+  extend(b) {
+    const { t, p } = auth(b); need(t, p, 'settings');
+    if (t.ended) throw httpErr(400, 'The game has ended');
+    const mins = Math.floor(Number(b.minutes));
+    if (!Number.isFinite(mins) || mins < 5 || mins > 600) throw httpErr(400, 'Add between 5 and 600 minutes');
+    if (!t.sessionNo) throw httpErr(400, 'The game has not started yet');
+    t.sessionEndsAt += mins * 60000;
+    t.sessionEnding = false; // a session that was about to close is open again
+    if (b.keep) t.settings.sessionMinutes = Math.min(600, t.settings.sessionMinutes + mins);
+    say(t, `Session ${t.sessionNo} extended by ${mins} minutes` + (b.keep ? ', and later sessions too' : ''));
+    broadcast(t);
+    return { ok: true, endsAt: t.sessionEndsAt, minutes: t.settings.sessionMinutes };
+  },
   sitout(b) {
     const { t, p } = auth(b);
     p.away = true;

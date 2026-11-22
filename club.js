@@ -190,7 +190,12 @@ function createClub(ctx) {
   const approvedIds = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'approved');
   const seatCap = (ev) => ev.seats - (ev.adminPlays === false ? 0 : 1); // the admin holds a seat only when playing
   const seatsLeft = (ev) => seatCap(ev) - approvedIds(ev).length;
-  const waitlist = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'waitlist').sort((a, b) => ev.people[a].at - ev.people[b].at);
+  // Two replies can land in the same millisecond, and then the clock alone cannot say who was
+  // first. Every reply also takes a ticket, so the queue is always the order they actually arrived.
+  let replyNo = 0;
+  const stamp = () => ({ at: Date.now(), seq: ++replyNo });
+  const waitlist = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'waitlist')
+    .sort((a, b) => (ev.people[a].at - ev.people[b].at) || ((ev.people[a].seq || 0) - (ev.people[b].seq || 0)));
   function tableOpen(ev) { const t = ev.tableCode && tables.get(ev.tableCode); return !!(t && !t.closed); }
 
   function viewFor(m) {
@@ -209,6 +214,8 @@ function createClub(ctx) {
           my: isOwner(m) ? 'owner' : (mine ? mine.state : 'invited'), manage, myRoles: isOwner(m) ? [] : evRoles(ev, m),
         };
         if (manage) {
+          o.table = tableSummary(ev, m);
+          o.messages = (ev.messages || []).slice(-20).reverse();
           o.invited = ev.invited;
           o.people = Object.values(state.members)
             .filter((x) => !isOwner(x) && (ev.invited === 'all' || (ev.invited || []).includes(x.id) || ev.people[x.id]))
@@ -223,7 +230,17 @@ function createClub(ctx) {
     };
     // every member sees the past games and the replays; only the owner can remove one
     out.history = (state.history || []).slice().reverse().slice(0, 100).map((g) => ({ ...g, rounds: undefined, replays: g.rounds ? g.rounds.length : 0 }));
-    if (isOwner(m) || isCo(m)) out.members = Object.values(state.members).filter((x) => !isOwner(x)).map((x) => ({ id: x.id, name: x.name, phone: x.phone || '', token: x.token, createdAt: x.createdAt, coAdmin: !!x.coAdmin }));
+    if (isOwner(m) || isCo(m)) {
+      // the one game that is on, so the member list can show who is in it and who is running it
+      const lv = liveEvent();
+      out.live = lv ? { id: lv.id, title: lv.title, startAt: lv.startAt, actingId: lv.actingId || '', adminPlays: lv.adminPlays !== false, playing: !!(lv.tableCode && tables.get(lv.tableCode) && !tables.get(lv.tableCode).ended) } : null;
+      out.members = Object.values(state.members).filter((x) => !isOwner(x)).map((x) => ({
+        id: x.id, name: x.name, phone: x.phone || '', token: x.token, createdAt: x.createdAt, coAdmin: !!x.coAdmin,
+        inGame: !!(lv && lv.people[x.id] && (lv.people[x.id].state === 'approved' || lv.people[x.id].state === 'waitlist')),
+        seatState: lv && lv.people[x.id] ? lv.people[x.id].state : '',
+        acting: !!(lv && lv.actingId === x.id),
+      }));
+    }
     return out;
   }
 
@@ -244,7 +261,7 @@ function createClub(ctx) {
       if (seatsLeft(ev) <= 0) break;
       const x = state.members[id];
       if (!x) { delete ev.people[id]; continue; }
-      ev.people[id] = { state: 'approved', at: Date.now() };
+      ev.people[id] = { state: 'approved', ...stamp() };
       tell(x, 'allotted', `A seat opened up. You are in for ${ev.title}. Open Smart Buddies and tap Join table.`, { eventId: ev.id });
     }
   }
@@ -252,18 +269,59 @@ function createClub(ctx) {
     const o = owner(); if (!o) return;
     tell(o, 'late', st === 'approved' ? `${m.name} replied late and was given a seat at ${ev.title}. Send them the game link.` : `${m.name} replied late. The table is full, so they are on the waiting list for ${ev.title}.`, { eventId: ev.id });
   }
+  // What the admin needs to run the game without sitting at the table: who came, how the
+  // session stands, what the powers are, and anything the players have asked for.
+  function tableSummary(ev, viewer) {
+    const t = ev.tableCode && tables.get(ev.tableCode);
+    if (!t) return null;
+    // the viewer's own seat token, so the game can be run from this page without opening the table
+    const mine = viewer && [...t.players.values()].find((p) => p.memberId === viewer.id);
+    return {
+      myToken: mine ? mine.token : '', myPid: mine ? mine.id : '',
+      code: t.code, started: !!t.startedAt, startedAt: t.startedAt || 0, running: !!t.running, ended: !!t.ended,
+      frozen: !!t.frozen, ending: !!t.ending, handNo: t.handNo || 0,
+      session: { no: t.sessionNo || 0, endsAt: t.sessionEndsAt || 0, minutes: t.settings.sessionMinutes, ending: !!t.sessionEnding },
+      players: [...t.players.values()].map((p) => ({
+        id: p.id, memberId: p.memberId || '', name: p.name, stack: p.stack + p.queued, bought: p.bought,
+        behind: p.bought - (p.stack + p.queued), connected: !!(p.clients && p.clients.size), away: !!p.away,
+        ghost: !!p.ghost, approved: p.approved !== false, isAdmin: p.id === t.adminId, roles: p.roles || [],
+        leaving: !!p.leaveReq,
+      })),
+      notes: (t.notes || []).map((n) => ({ id: n.id, name: n.name, text: n.text, at: n.at })),
+    };
+  }
+  // The one game that is on, if any: planned, waiting to start, or being played.
+  function liveEvent() {
+    return Object.values(state.events).find((e) => e.status !== 'done' && e.status !== 'cancelled') || null;
+  }
+  const DEVICES_KEPT = 4; // a phone, a tablet, a reinstall or two: beyond that the oldest drops off
+  function knownDevice(m, dev) { return !dev || !m.devices || !m.devices.length || m.devices.includes(String(dev)); }
+  function claimDevice(m, dev) {
+    dev = String(dev || ''); if (!dev) return;
+    m.devices = (m.devices || []).filter((d) => d !== dev);
+    m.devices.push(dev);
+    if (m.devices.length > DEVICES_KEPT) m.devices = m.devices.slice(-DEVICES_KEPT);
+    changed();
+  }
+  // Somebody wants in. The admin answers it where they are, at the table or in the lobby.
+  function askedForSeat(m, ev) {
+    const o = owner(); if (!o) return;
+    const free = seatsLeft(ev);
+    tell(o, 'seatreq', `${m.name} is asking for a seat at ${ev.title}.` + (free > 0 ? ` ${free} seat${free === 1 ? '' : 's'} free.` : ' The table is full.'),
+      { eventId: ev.id, memberId: m.id, who: m.name, free });
+  }
   function rsvp(m, ev, answer) {
     if (!ev || ev.status === 'cancelled' || ev.status === 'done' || !canSee(ev, m)) throw httpErr(404, 'This game is not open any more');
     if (isOwner(m)) throw httpErr(400, 'You are the admin. You are always seated.');
     const cur = ev.people[m.id];
     if (answer === 'in') {
       if (cur && (cur.state === 'approved' || cur.state === 'waitlist')) return cur.state;
-      if (ev.proposal && !ev.confirmed) { ev.people[m.id] = { state: 'interested', at: Date.now() }; changed(); return 'interested'; }
-      ev.people[m.id] = seatsLeft(ev) > 0 ? { state: 'approved', at: Date.now() } : { state: 'waitlist', at: Date.now() };
+      if (ev.proposal && !ev.confirmed) { ev.people[m.id] = { state: 'interested', ...stamp() }; changed(); return 'interested'; }
+      ev.people[m.id] = seatsLeft(ev) > 0 ? { state: 'approved', ...stamp() } : { state: 'waitlist', ...stamp() };
       if (ev.proposal) lateReply(m, ev, ev.people[m.id].state);
     } else {
       const had = cur && cur.state === 'approved';
-      ev.people[m.id] = { state: 'declined', at: Date.now(), out: true };
+      ev.people[m.id] = { state: 'declined', ...stamp(), out: true };
       if (had) promote(ev);
     }
     changed();
@@ -362,7 +420,14 @@ function createClub(ctx) {
       persist();
       return { mtoken: m.token };
     },
-    'club/me'(b) { const m = auth(b); noteTz(m, b.tz); return viewFor(m); },
+    'club/me'(b) {
+      const m = auth(b); noteTz(m, b.tz);
+      // a member with no PIN yet is still setting up, so the first phone to open the link is theirs
+      if (!m.pin && !(m.devices || []).length) claimDevice(m, b.dev);
+      const v = viewFor(m);
+      v.me.newDevice = !knownDevice(m, b.dev);
+      return v;
+    },
     'club/coadmin'(b) { // the admin appoints or removes a co-admin
       const o = auth(b); ownerOnly(o);
       const m = state.members[b.memberId];
@@ -385,6 +450,10 @@ function createClub(ctx) {
       changed();
       return { ok: true };
     },
+    // ----- which phones a member's link may be used on -----
+    // The link claims the first phone that opens it. Opened anywhere else, it asks for the PIN
+    // first, and only then does that phone count as theirs. A PIN is always the way back in, so
+    // clearing the browser or changing phone can never lock anyone out for good.
     'club/unlock'(b) { // this phone already knows who you are: the PIN just unlocks it
       const m = memberByToken(b.mtoken);
       const key = 'u' + (m ? m.id : 'none'), f = (signinFails[key] = signinFails[key] || { n: 0, until: 0 });
@@ -393,6 +462,7 @@ function createClub(ctx) {
       const ok = !!(m && m.pin && crypto.timingSafeEqual(Buffer.from(m.pin.hash, 'hex'), crypto.scryptSync(pin, m.pin.salt, 32)));
       if (!ok) { f.n++; if (f.n >= 5) { f.n = 0; f.until = Date.now() + 5 * 60e3; } throw httpErr(401, 'Wrong PIN'); }
       f.n = 0;
+      claimDevice(m, b.dev); // the right PIN makes this phone one of theirs
       return { ok: true };
     },
     'club/signin'(b) {
@@ -456,6 +526,10 @@ function createClub(ctx) {
     },
     'club/createevent'(b) {
       const m = auth(b); mgrOnly(m);
+      // One game at a time. A small group plays one table, and two live games only split the
+      // group and clutter everyone's screen.
+      const live = liveEvent();
+      if (live) throw httpErr(400, `${live.title} is still on. End or cancel it before starting another game.`);
       const startAt = b.now ? Date.now() : Math.floor(Number(b.startAt));
       if (!Number.isFinite(startAt) || startAt < Date.now() - 3600e3) throw httpErr(400, 'Pick a start time in the future');
       let invited = 'all';
@@ -470,7 +544,7 @@ function createClub(ctx) {
       if (!ev.adminPlays && !acting) throw httpErr(400, 'You are not playing, so choose a playing member as the acting admin for this game');
       if (acting && Array.isArray(ev.invited) && !ev.invited.includes(acting.id)) ev.invited.push(acting.id);
       state.events[ev.id] = ev;
-      if (acting) { ev.actingId = acting.id; ev.delegates[acting.id] = ROLES.slice(); ev.people[acting.id] = { state: 'approved', at: Date.now() }; }
+      if (acting) { ev.actingId = acting.id; ev.delegates[acting.id] = ROLES.slice(); ev.people[acting.id] = { state: 'approved', ...stamp() }; }
       changed();
       const targets = invited === 'all' ? Object.values(state.members).filter((x) => !isOwner(x)) : invited.map((id) => state.members[id]);
       for (const x of targets) {
@@ -506,13 +580,91 @@ function createClub(ctx) {
       }
       if (b.on) {
         if (cur && (cur.state === 'approved' || cur.state === 'declined')) return { state: cur.state };
-        ev.people[m.id] = { state: 'interested', at: Date.now() };
+        ev.people[m.id] = { state: 'interested', ...stamp() };
+        askedForSeat(m, ev);
       } else if (cur && cur.state === 'approved') {
         delete ev.people[m.id]; // gives the seat back
         promote(ev);
       } else delete ev.people[m.id];
       changed();
       return { state: ev.people[m.id] ? ev.people[m.id].state : 'invited' };
+    },
+    // The admin's answer to "may I join?". Allow seats them if there is room, or puts them on the
+    // waiting list if the table is full; deny closes it for this game.
+    'club/decideseat'(b) {
+      const m = auth(b);
+      if (!isOwner(m)) throw httpErr(403, 'Only the admin decides who comes in');
+      const ev = state.events[b.eventId];
+      if (!ev || ev.status === 'cancelled') throw httpErr(404, 'Game not found');
+      const who = state.members[b.memberId];
+      if (!who) throw httpErr(404, 'Member not found');
+      if (b.ok) {
+        const st = seatsLeft(ev) > 0 ? 'approved' : 'waitlist';
+        ev.people[who.id] = { state: st, at: Date.now() };
+        tell(who, st === 'approved' ? 'allotted' : 'notice', st === 'approved'
+          ? `You are in at ${ev.title}. Open Smart Buddies and take your seat.`
+          : `${ev.title} is full. You are on the waiting list and get a seat if someone drops out.`, { eventId: ev.id });
+        changed();
+        return { state: st };
+      }
+      ev.people[who.id] = { state: 'declined', ...stamp(), out: true };
+      tell(who, 'notice', `The admin could not fit you into ${ev.title} this time.`, { eventId: ev.id });
+      changed();
+      return { state: 'declined' };
+    },
+    // Hand the acting-admin duty to a playing member, move it to somebody else, or take it back.
+    'club/setacting'(b) {
+      const o = auth(b); ownerOnly(o);
+      const ev = state.events[b.eventId];
+      if (!ev || ev.status === 'done' || ev.status === 'cancelled') throw httpErr(404, 'Game not found');
+      const had = ev.actingId && state.members[ev.actingId];
+      if (had) { delete ev.delegates[had.id]; ev.actingId = ''; }
+      let now = null;
+      if (b.memberId) {
+        now = state.members[b.memberId];
+        if (!now || isOwner(now)) throw httpErr(400, 'Choose a member');
+        ev.actingId = now.id;
+        ev.delegates[now.id] = ROLES.slice();
+        if (!ev.people[now.id] || ev.people[now.id].state === 'declined') ev.people[now.id] = { state: 'approved', ...stamp() };
+        if (Array.isArray(ev.invited) && !ev.invited.includes(now.id)) ev.invited.push(now.id);
+      } else if (!ev.adminPlays) {
+        throw httpErr(400, 'You are not playing this game, so somebody has to run the table');
+      }
+      // the table, if it is already open, follows at once
+      const t = ev.tableCode && tables.get(ev.tableCode);
+      if (t && !t.ended) {
+        if (had) { const p = [...t.players.values()].find((x) => x.memberId === had.id); if (p) { p.roles = []; } }
+        if (now) { const p = [...t.players.values()].find((x) => x.memberId === now.id); if (p) p.roles = ROLES.slice(); }
+        broadcast(t);
+      }
+      if (had && (!now || had.id !== now.id)) tell(had, 'notice', `You are no longer the acting admin for ${ev.title}.`, { eventId: ev.id });
+      if (now) tell(now, 'notice', `You are the acting admin for ${ev.title}. You can start, stop, run the bank, change settings and manage players.`, { eventId: ev.id });
+      changed();
+      return { actingId: ev.actingId };
+    },
+    // A word to the admin before the table opens: running late, start without me, and so on.
+    'club/notify'(b) {
+      const m = auth(b);
+      const text = String(b.text || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+      if (!text) throw httpErr(400, 'Write a short message first');
+      const o = owner(); if (!o) throw httpErr(404, 'No admin');
+      const ev = b.eventId && state.events[b.eventId];
+      if (ev) { // kept on the game so the admin can read it on the game page, not just as it arrives
+        ev.messages = (ev.messages || []).filter((x) => !(x.memberId === m.id && x.text === text));
+        ev.messages.push({ id: rid(4), memberId: m.id, name: m.name, text, at: Date.now() });
+        if (ev.messages.length > 30) ev.messages.shift();
+        changed();
+      }
+      tell(o, 'member', `${m.name}: ${text}`, ev ? { eventId: ev.id, memberId: m.id } : { memberId: m.id });
+      return { ok: true };
+    },
+    'club/clearmsg'(b) {
+      const o = auth(b); mgrOnly(o);
+      const ev = state.events[b.eventId];
+      if (!ev) throw httpErr(404, 'Game not found');
+      ev.messages = (ev.messages || []).filter((x) => x.id !== b.id);
+      changed();
+      return { ok: true };
     },
     'club/pushkey'(b) { auth(b); return { key: state.vapid.publicKey }; },
     'club/pushsub'(b) {
@@ -587,8 +739,8 @@ function createClub(ctx) {
       let seated = 0, waiting = 0;
       for (const id of asked) {
         const x = state.members[id]; if (!x) continue;
-        if (seatsLeft(ev) > 0) { ev.people[id] = { state: 'approved', at: Date.now() }; seated++; tell(x, 'allotted', `You have a seat at ${inviteText(ev)}. The admin is sending you the game link.`, { eventId: ev.id }); }
-        else { ev.people[id] = { state: 'waitlist', at: Date.now() }; waiting++; }
+        if (seatsLeft(ev) > 0) { ev.people[id] = { state: 'approved', ...stamp() }; seated++; tell(x, 'allotted', `You have a seat at ${inviteText(ev)}. The admin is sending you the game link.`, { eventId: ev.id }); }
+        else { ev.people[id] = { state: 'waitlist', ...stamp() }; waiting++; }
       }
       ev.confirmed = true; ev.auto = false;
       changed();
@@ -604,15 +756,15 @@ function createClub(ctx) {
       const d = String(b.decision);
       if (d === 'approve') {
         if (approvedIds(ev).length >= seatCap(ev) && !(ev.people[target.id] && ev.people[target.id].state === 'approved')) throw httpErr(400, 'The table is full');
-        ev.people[target.id] = { state: 'approved', at: Date.now() };
+        ev.people[target.id] = { state: 'approved', ...stamp() };
         changed();
         tell(target, 'allotted', `Table allotted! You have a seat at ${inviteText(ev)}. Your pass is in the app.`, { eventId: ev.id });
       } else if (d === 'decline') {
-        ev.people[target.id] = { state: 'declined', at: Date.now() };
+        ev.people[target.id] = { state: 'declined', ...stamp() };
         changed();
         tell(target, 'declined', `Sorry, no seat for you at ${ev.title} this time.`, { eventId: ev.id });
       } else if (d === 'reset') {
-        ev.people[target.id] = { state: 'interested', at: Date.now() };
+        ev.people[target.id] = { state: 'interested', ...stamp() };
         promote(ev);
         changed();
       } else throw httpErr(400, 'Unknown decision');
