@@ -8,7 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const SEATS_MAX = Number(process.env.SEATS_MAX || 7);
-const REPLAY_GAMES = Number(process.env.REPLAY_GAMES || 5); // games that keep their replays
+// The last ten nights keep their replays. Account statements are never thrown away, however old.
+const REPLAY_GAMES = Number(process.env.REPLAY_GAMES || 10);
 const webpush = require('./webpush');
 
 const ROLES = ['start', 'bank', 'settings', 'players', 'invite'];
@@ -850,7 +851,7 @@ function createClub(ctx) {
     changed();
     return historyId;
   }
-  // replays are kept for the five most recent games only; the statements of older games stay for good
+  // replays are kept for the ten most recent games only; the statements of older games stay for good
   function pruneRounds() {
     const withRounds = (state.history || []).filter((g) => g.rounds && g.rounds.length);
     withRounds.slice(0, Math.max(0, withRounds.length - REPLAY_GAMES)).forEach((g) => { delete g.rounds; });

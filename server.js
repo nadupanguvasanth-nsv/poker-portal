@@ -1251,7 +1251,31 @@ setInterval(() => {
 // A snapshot is a consistent picture between hands: chips are only moved into a hand's own pot and are not taken from a
 // player's stack until the hand ends, so a hand that was running when the server stopped is simply cancelled and everyone
 // keeps what they had before it.
+// How long a table stays with us after it has finished. The statement, the accounts and the
+// replays are already in the club's history by then; this is only so the people who played can
+// still open the table and read the result for a day or two.
+const KEEP_ENDED_H = Number(process.env.KEEP_ENDED_H || 48);
+const KEEP_IDLE_H = Number(process.env.KEEP_IDLE_H || 24);
+function lastTouched(t) { return t.log && t.log.length ? t.log[t.log.length - 1].at : t.createdAt; }
+// Old games used to be cleared out only when the server restarted, so a server that stayed up for
+// weeks kept every finished night in memory and wrote them all to Drive on every single save.
+function forgetOldTables() {
+  const now = Date.now();
+  let dropped = false;
+  for (const [code, t] of tables) {
+    if (t.clients && t.clients.size) continue;          // somebody is still looking at it
+    const hours = t.ended ? KEEP_ENDED_H : KEEP_IDLE_H;
+    if (now - lastTouched(t) <= hours * 3600e3) continue;
+    tables.delete(code);
+    dropped = true;
+  }
+  if (dropped) markTables(); // so the stored copy loses it too, not just this server's memory
+}
+// on its own clock, so a quiet server still lets go of old games
+const sweepTimer = setInterval(forgetOldTables, Number(process.env.SWEEP_MS || 30 * 60000));
+if (sweepTimer.unref) sweepTimer.unref();
 function dumpTables() {
+  forgetOldTables();
   const out = {};
   for (const t of tables.values()) {
     if (t.closed) continue;
@@ -1276,7 +1300,7 @@ function restoreTables() {
   let n = 0;
   for (const [code, o] of Object.entries(saved)) {
     const last = o.log && o.log.length ? o.log[o.log.length - 1].at : o.createdAt;
-    if (now - last > (o.ended ? 48 : 24) * 3600e3) continue; // old and untouched: finished games live on in the club history
+    if (now - last > (o.ended ? KEEP_ENDED_H : KEEP_IDLE_H) * 3600e3) continue; // old and untouched: finished games live on in the club history
     const t = { ...o, players: new Map(), clients: new Map(), timer: null, nextTimer: null, hand: null, deadline: 0 };
     delete t.hadHand;
     for (const p of o.players) t.players.set(p.id, { ...p, connected: false });
