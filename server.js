@@ -187,7 +187,7 @@ function viewFor(t, pid) {
     settlement: t.final && {
       at: t.final.at, transfers: isAdmin ? t.final.transfers : t.final.transfers.filter((x) => x.from === pid || x.to === pid),
       people: t.final.people.filter((x) => isAdmin || x.id === pid).map((x) => {
-        const o = { id: x.id, name: x.name, invested: x.invested, final: x.final, net: x.net };
+        const o = { id: x.id, name: x.name, invested: x.invested, final: x.final, net: x.net, carried: x.carried || 0 };
         if (x.id === pid || isAdmin) { o.link = '/s/' + x.dl + '.pdf'; }
         if (isAdmin && x.memberId) { const m = club.state().members[x.memberId]; if (m) o.phone = m.phone || ''; }
         return o;
@@ -292,7 +292,7 @@ function finalize(t) {
   t.final = buildFinal(t);
   say(t, 'The game is over. Thanks for playing.');
   for (const x of t.final.people) statementLinks.set(x.dl, { code: t.code, pid: x.id });
-  club.gameEnded(t);
+  t.historyId = club.gameEnded(t) || null;
   club.sendStatements(t, (x) => publicBase() + '/s/' + x.dl + '.pdf');
   broadcast(t);
 }
@@ -744,6 +744,18 @@ const routes = {
     }
     say(t, `Blinds are now ${t.settings.sb}/${t.settings.bb} from the next hand`);
     broadcast(t);
+    return { ok: true };
+  },
+  // the night is not over after all: carry on with the same accounts and one statement at the end
+  continuegame(b) {
+    const { t, p } = auth(b); need(t, p, 'start');
+    if (!t.ended) throw httpErr(400, 'The game is still running');
+    if (t.historyId) { try { club.dropHistory(t.historyId); } catch (e) { /* the record may be gone already */ } }
+    t.historyId = null; t.ended = false; t.ending = false; t.final = null; t.running = true;
+    t.sessionEnding = false;
+    if (t.eventId) { const ev = club.state().events[t.eventId]; if (ev && ev.status === 'done') ev.status = 'open'; }
+    say(t, 'The night carries on. One statement at the end will cover every session');
+    broadcast(t); maybeStartHand(t);
     return { ok: true };
   },
   start(b) {

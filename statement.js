@@ -45,7 +45,8 @@ function buildFinal(t) {
   const add = (id, token, name, ledger, history, finalChips, isAdmin, memberId) => {
     const invested = ledger.filter((l) => l.kind !== 'cashout').reduce((s, l) => s + l.amount, 0);
     const bought = ledger.filter((l) => l.kind === 'buyin').reduce((s, l) => s + l.amount, 0);
-    people.push({ id, token, name, isAdmin, memberId, sessions: sessionRows(t.sessLog, history, ledger, finalChips), dl: require('crypto').randomBytes(18).toString('hex'), ledger: ledger.slice(), history: history.slice(), final: finalChips, invested, bought, net: finalChips - invested });
+    const carried = ledger.filter((l) => l.kind === 'buyin' && l.by === 'carried over').reduce((s, l) => s + l.amount, 0);
+    people.push({ id, token, name, isAdmin, memberId, sessions: sessionRows(t.sessLog, history, ledger, finalChips), dl: require('crypto').randomBytes(18).toString('hex'), ledger: ledger.slice(), history: history.slice(), final: finalChips, invested, bought, carried, net: finalChips - invested });
   };
   for (const d of t.departed) add(d.id, d.token, d.name, d.ledger, d.history, d.amount, false, d.memberId);
   for (const p of t.players.values()) add(p.id, p.token, p.name, p.ledger, p.history, p.stack + p.queued, p.id === t.adminId, p.memberId);
@@ -124,7 +125,7 @@ function statementPdf(final, personId, tz) {
   d.y = 842 - 118 - 26;
 
   // summary boxes
-  const boxes = [['TOTAL BOUGHT IN', fmt(me.invested), INK], [final.live ? 'CHIPS NOW' : 'FINAL CHIP COUNT', fmt(me.final), INK], [final.live ? (me.net >= 0 ? 'UP SO FAR' : 'DOWN SO FAR') : me.net >= 0 ? 'NET WON' : 'NET LOST', signed(me.net), me.net > 0 ? GREEN : me.net < 0 ? RED : INK]];
+  const boxes = [[me.carried >= me.invested && me.invested > 0 ? 'STARTED WITH' : 'TOTAL BOUGHT IN', fmt(me.invested), INK], [final.live ? 'CHIPS NOW' : 'FINAL CHIP COUNT', fmt(me.final), INK], [final.live ? (me.net >= 0 ? 'UP SO FAR' : 'DOWN SO FAR') : me.net >= 0 ? 'NET WON' : 'NET LOST', signed(me.net), me.net > 0 ? GREEN : me.net < 0 ? RED : INK]];
   const bw = (515 - 20) / 3;
   boxes.forEach((b, i) => {
     const x = 40 + i * (bw + 10);
@@ -197,14 +198,14 @@ function statementPdf(final, personId, tz) {
   d.text('DATE AND TIME', 40, d.y, 7.5, MUTED, { bold: true }); d.text('ENTRY', 190, d.y, 7.5, MUTED, { bold: true }); d.text('CHIPS', 555, d.y, 7.5, MUTED, { bold: true, align: 'right' }); d.y -= 14;
   me.ledger.forEach((l) => {
     d.need(18);
-    const label = l.kind === 'buyin' ? 'Buy-in' : l.kind === 'cashout' ? 'Cashed out' : 'Banker adjustment' + (l.reason ? ' - ' + l.reason : '');
+    const label = l.kind === 'buyin' ? (l.by === 'carried over' ? 'Chips carried over from the last game' : 'Buy-in') : l.kind === 'cashout' ? 'Cashed out' : 'Banker adjustment' + (l.reason ? ' - ' + l.reason : '');
     d.text(stamp(l.t, tz), 40, d.y, 9.5, INK); d.text(label, 190, d.y, 9.5, INK);
     d.text(signed(l.amount), 555, d.y, 9.5, l.amount < 0 ? RED : INK, { align: 'right' });
     d.line(40, d.y - 5, 555, d.y - 5, LINE, 0.3); d.y -= 16;
   });
   d.need(30);
   d.line(40, d.y + 6, 555, d.y + 6, INK, 0.8); d.y -= 8;
-  d.text('Total bought in', 190, d.y, 9.5, INK, { bold: true }); d.text(fmt(me.invested), 555, d.y, 9.5, INK, { align: 'right', bold: true }); d.y -= 16;
+  d.text(me.carried >= me.invested && me.invested > 0 ? 'Total put in (carried over)' : 'Total bought in', 190, d.y, 9.5, INK, { bold: true }); d.text(fmt(me.invested), 555, d.y, 9.5, INK, { align: 'right', bold: true }); d.y -= 16;
   d.text(final.live ? 'Chips now' : 'Final chip count', 190, d.y, 9.5, INK, { bold: true }); d.text(fmt(me.final), 555, d.y, 9.5, INK, { align: 'right', bold: true }); d.y -= 20;
   d.need(30);
   d.text('Chips are virtual. Settle the amounts above between yourselves in whatever way you have agreed.', 40, d.y, 8, MUTED);

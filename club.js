@@ -645,20 +645,23 @@ function createClub(ctx) {
   function gameEnded(t) {
     const ev = t.eventId && state.events[t.eventId];
     // keep a record of every finished game for the admin
+    let historyId = null;
     if (t.final) {
       if (!state.history) state.history = [];
+      historyId = rid(4);
       state.history.push({
-        id: rid(4), code: t.code, title: ev ? ev.title : 'Quick table', at: t.final.at, startedAt: t.createdAt, sessions: t.final.sessions, sb: t.final.sb, bb: t.final.bb,
-        people: t.final.people.map((x) => ({ name: x.name, invested: x.invested, final: x.final, net: x.net })),
+        id: historyId, code: t.code, title: ev ? ev.title : 'Quick table', at: t.final.at, startedAt: t.createdAt, sessions: t.final.sessions, sb: t.final.sb, bb: t.final.bb,
+        people: t.final.people.map((x) => ({ name: x.name, invested: x.invested, final: x.final, net: x.net, carried: x.carried || 0 })),
         transfers: t.final.transfers.map((x) => ({ from: x.fromName, to: x.toName, amount: x.amount })),
         rounds: (t.rounds || []).slice().sort((a, b) => a.no - b.no),
       });
       if (state.history.length > 300) state.history.splice(0, state.history.length - 300);
       pruneRounds();
     }
-    if (!ev) { changed(); return; }
+    if (!ev) { changed(); return historyId; }
     ev.delegates = {}; ev.status = 'done';
     changed();
+    return historyId;
   }
   // replays are kept for the five most recent games only; the statements of older games stay for good
   function pruneRounds() {
@@ -683,7 +686,14 @@ function createClub(ctx) {
     if (ev && m && !isOwner(m)) setDelegates(ev, m, roles, true);
   }
 
-  return { routes, handleEvents, load, tick, flush, setTables, getTables, pushMember, viewFor, openTable, gameEnded, cancelTable, sendStatements, rsvpPage, saveDelegates, state: () => state, ROLES };
+  // the night turned out not to be over: take that part-way record back out
+  function dropHistory(id) {
+    const i = (state.history || []).findIndex((g) => g.id === id);
+    if (i < 0) return false;
+    state.history.splice(i, 1); changed();
+    return true;
+  }
+  return { routes, handleEvents, load, tick, flush, setTables, getTables, pushMember, viewFor, openTable, gameEnded, dropHistory, cancelTable, sendStatements, rsvpPage, saveDelegates, state: () => state, ROLES };
 }
 
 module.exports = { createClub, fileStore, driveStore, pickStore, sendExternal, ROLES };
