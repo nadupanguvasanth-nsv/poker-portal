@@ -450,10 +450,9 @@ function finishHand(t) {
   keepIfGood(t, h, r);
   // players who stood up during the hand, and early leavers who have paid everything they had
   for (const p of [...t.players.values()]) {
-    if (p.leaving && p.exitCash) cashOut(t, p, `${p.name} left the game (emergency)`);
-    else if (p.leaving) removePlayer(t, p, 'You have left the table.');
+    if (p.leaving) finishLeave(t, p, p.exitCash ? `${p.name} left the game (emergency)` : (p.leaveText || `${p.name} left the table`));
     else if (p.paying && p.stack <= 0) { p.paying = 0; say(t, `${p.name} has no chips left to pay blinds`); }
-    else if (p.ghost && p.stack <= 0) { say(t, `${p.name} has no chips left to pay blinds and is released`); removePlayer(t, p, 'You are released, your chips are gone.'); }
+    else if (p.ghost && p.stack <= 0) finishLeave(t, p, `${p.name} has no chips left to pay blinds and is released`);
   }
   t.deadline = 0;
   if (t.ending) return finalize(t);
@@ -531,7 +530,7 @@ function keepIfGood(t, h, r) {
     const rec = {
       no: t.handNo, at: Date.now(), session: t.sessionNo, sb: t.settings.sb, bb: t.settings.bb,
       variant: h.variant, variantName: h.v.name, boards: h.boards.map((b) => b.slice()), boardKind: h.boardKind, runs: h.runs,
-      players: h.players.filter((p) => !p.ghost).map((p) => ({ id: p.id, name: nameOf(t, p.id), seat: p.seat, start: p.start, cards: p.cards.slice(), folded: p.folded })),
+      players: h.players.map((p) => ({ id: p.id, name: nameOf(t, p.id), seat: p.seat, start: p.start, cards: p.cards.slice(), folded: p.folded, ghost: !!p.ghost })),
       acts: h.acts.map((a) => ({ ...a })), pot, uncontested: !!r.uncontested,
       shown: (t.shown && t.shown.handNo === t.handNo) ? { ...t.shown.ids } : {},
       won: Object.entries(r.won).map(([id, amount]) => ({ id, name: nameOf(t, id), amount, handName: r.reveal[id] ? r.reveal[id].handName : null })),
@@ -542,14 +541,23 @@ function keepIfGood(t, h, r) {
   } catch (e) { /* a replay is never worth breaking a hand for */ }
 }
 
+// Everyone who leaves while a game is running goes through the books: a player with no chips left
+// still owes what they bought, so they must stay on the statement.
+function finishLeave(t, p, text) {
+  if (t.sessionNo > 0 && p.bought > 0) cashOut(t, p, text);
+  else { say(t, text); removePlayer(t, p, text); }
+}
+
 function takeOut(t, p, text) {
   const inHand = t.hand && !t.hand.finished && t.hand.players.some((x) => x.id === p.id);
+  p.leaveText = text;
+  if (!inHand) { finishLeave(t, p, text); broadcast(t); return; }
   say(t, text);
   p.leaving = true;
   if (inHand) {
     if (t.hand.turnId === p.id) { t.hand.act(p.id, 'fold'); afterHandChange(t); }
     else { const hp = t.hand.players.find((x) => x.id === p.id); if (!hp.folded) { hp.folded = true; t.hand.afterAction(); afterHandChange(t); } }
-  } else { removePlayer(t, p, text); broadcast(t); }
+  }
 }
 
 function credit(t, p, amount, kind, by) {
@@ -610,8 +618,11 @@ const routes = {
     const { t, p } = auth(b);
     if (!p.approved) throw httpErr(400, 'The admin has to let you in first');
     if (p.ghost) throw httpErr(400, 'You have left the table');
-    const amount = clampInt(b.amount, 1, t.settings.maxBuyin, 0);
-    if (!amount) throw httpErr(400, `Enter an amount up to ${t.settings.maxBuyin}`);
+    // an amount outside the table's limits is refused, never quietly rounded: an extra zero should
+    // not hand somebody the biggest buy-in on the table
+    const amount = Math.floor(Number(b.amount));
+    if (!Number.isFinite(amount) || amount <= 0) throw httpErr(400, `Enter an amount between ${t.settings.minBuyin} and ${t.settings.maxBuyin}`);
+    if (amount > t.settings.maxBuyin) throw httpErr(400, `The most you can buy in for is ${t.settings.maxBuyin}`);
     if (amount < t.settings.minBuyin && p.stack + p.queued + amount < t.settings.minBuyin)
       throw httpErr(400, `The minimum buy-in is ${t.settings.minBuyin}`);
     credit(t, p, amount, 'buyin', 'self');
@@ -1117,6 +1128,7 @@ function dumpTables() {
     const o = {};
     for (const k of Object.keys(t)) if (!['clients', 'timer', 'nextTimer', 'hand', 'players', 'fx', 'fxLast'].includes(k)) o[k] = t[k];
     o.players = [...t.players.values()].map((p) => ({ ...p, connected: false }));
+    if (t.ended) delete o.rounds; // the best rounds are kept with the game in the club's history
     o.hadHand = !!(t.hand && !t.hand.finished);
     out[t.code] = JSON.parse(JSON.stringify(o));
   }
@@ -1134,7 +1146,7 @@ function restoreTables() {
   let n = 0;
   for (const [code, o] of Object.entries(saved)) {
     const last = o.log && o.log.length ? o.log[o.log.length - 1].at : o.createdAt;
-    if (now - last > (o.ended ? 7 * 24 : 24) * 3600e3) continue; // old and untouched
+    if (now - last > (o.ended ? 48 : 24) * 3600e3) continue; // old and untouched: finished games live on in the club history
     const t = { ...o, players: new Map(), clients: new Map(), timer: null, nextTimer: null, hand: null, deadline: 0 };
     delete t.hadHand;
     for (const p of o.players) t.players.set(p.id, { ...p, connected: false });

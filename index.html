@@ -353,7 +353,7 @@ function table(){
     var showCards=st.cards&&st.cards[0]!=='??'&&RES&&st.cards.length<=2;
     h+='<div class="'+cls+'" style="left:'+(pos.x-38)+'px;top:'+(pos.y-26)+'px">'+
       '<div class="av">'+initials(st.name)+(fxCanPlay(v)&&!st.ghost&&st.approved!==false?'<span class="bull" onclick="fxOpen(\''+st.id+'\')">'+bullSvg()+'</span>':'')+(st.isButton?'<span class="badge">D</span>':'')+(st.connected?'':'<span style="position:absolute;right:-2px;bottom:-2px;width:10px;height:10px;border-radius:5px;background:#a3aba5;border:2px solid #0a0c0b"></span>')+'</div>'+
-      line2+'<div class="sstack">'+fmt(st.stack)+'</div>'+behindTag(st)+
+      line2+'<div class="sstack">'+fmt(st.stack)+'</div>'+((n>=8&&(rel===1||rel===n-1))?'':behindTag(st))+
       (showCards?'<div style="display:flex;gap:2px;margin-top:2px">'+st.cards.map(function(c){return card(c,'sm');}).join('')+'</div>':(st.shown?'<div style="display:flex;gap:2px;margin-top:2px">'+st.shown.map(function(c){return card(c,'sm');}).join('')+'</div>':''))+'</div>';
     if(st.bet>0){var bx=CX+(pos.x-CX)*0.62,by=CY+(pos.y-CY)*0.62;h+='<div class="bet" style="left:'+bx+'px;top:'+by+'px">'+fmt(st.bet)+'</div>';}
   }
@@ -369,7 +369,7 @@ function table(){
   if(fxCanPlay(v)){h+='<div class="abs" style="left:308px;top:448px;width:44px;height:44px"><div class="av" style="width:44px;height:44px;border-radius:22px;background:#1b2a22" onclick="fxOpen(\''+me.id+'\')">'+bullSvg()+'<span style="position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:13px">🙂</span></div></div>';}
   if(cardsHtml&&!shown&&!ls('sb-peek-hint')&&!S.hintShown){S.hintShown=true;setTimeout(function(){toast('Your cards are face down. Hold them to peek, tap to keep them open.');},400);}
   if(my&&my.bet>0){h+='<div class="bet" style="left:195px;top:402px">'+fmt(my.bet)+'</div>';}
-  h+='<div class="abs" style="left:0;top:514px;width:390px;display:flex;justify-content:center"><div style="height:26px;padding:0 14px;border-radius:13px;background:#141917;border:1px solid '+(my&&my.isTurn?'#d8b45c':'#2a312d')+';font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">'+esc(me.name)+(my&&my.isButton?' <span class="gold">D</span>':'')+' <span class="gold">'+fmt(me.stack)+'</span>'+(my?'<span style="font-size:11px;font-weight:700;color:'+(my.behind>0?'#f08a8f':my.behind<0?'#7ddba0':'#a3aba5')+'">'+(my.behind>0?'-'+kfmt(my.behind):my.behind<0?'+'+kfmt(-my.behind):'')+'</span>':'')+(me.queued?'<span class="muted" style="font-weight:500">+'+fmt(me.queued)+' next hand</span>':'')+'</div></div>';
+  h+='<div class="abs" style="left:0;top:521px;width:390px;display:flex;justify-content:center;pointer-events:none"><div style="height:25px;padding:0 14px;border-radius:13px;background:#141917;border:1px solid '+(my&&my.isTurn?'#d8b45c':'#2a312d')+';font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">'+esc(me.name)+(my&&my.isButton?' <span class="gold">D</span>':'')+' <span class="gold">'+fmt(me.stack)+'</span>'+(my?'<span style="font-size:11px;font-weight:700;color:'+(my.behind>0?'#f08a8f':my.behind<0?'#7ddba0':'#a3aba5')+'">'+(my.behind>0?'-'+kfmt(my.behind):my.behind<0?'+'+kfmt(-my.behind):'')+'</span>':'')+(me.queued?'<span class="muted" style="font-weight:500">+'+fmt(me.queued)+' next hand</span>':'')+'</div></div>';
   h+=specialBar(v);
   h+=actionPanel(v);
   h+=stmtPopup(v);
@@ -1008,9 +1008,10 @@ function replayView(){
   h+='<div class="disp gold" style="text-align:center;font-size:28px;line-height:1.1">'+fmt(pot)+'</div><div class="muted" style="text-align:center;font-size:10px;letter-spacing:.14em;margin-bottom:10px">POT</div>';
   // players
   r.players.forEach(function(p){
-    var out=folded[p.id],w=r.won.filter(function(x){return x.id===p.id;})[0];
+    var out=folded[p.id]||p.ghost,w=r.won.filter(function(x){return x.id===p.id;})[0];
+    if(p.ghost&&!put[p.id])return; // an empty seat only shows once it has paid a blind
     h+='<div class="row" style="margin-bottom:6px;align-items:center;opacity:'+(out?'.45':'1')+';border-color:'+(done&&w?'#d8b45c':'#2a312d')+'"><div style="display:flex;gap:3px;flex:none">'+p.cards.map(function(c){return card(c,'sm');}).join('')+'</div>'+
-      '<div style="flex:1;min-width:0;margin-left:8px"><div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(p.name)+(out?' · folded':'')+'</div>'+
+      '<div style="flex:1;min-width:0;margin-left:8px"><div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(p.name)+(p.ghost?' · seat paying blinds':out?' · folded':'')+'</div>'+
       '<div class="muted small">'+(put[p.id]?'in '+fmt(put[p.id]):'&nbsp;')+(done&&w&&w.handName?' · '+esc(w.handName):'')+'</div></div>'+
       (done&&w?'<div class="gold disp" style="font-size:19px">+'+fmt(w.amount)+'</div>':'')+'</div>';
   });
