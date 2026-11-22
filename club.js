@@ -219,7 +219,7 @@ function createClub(ctx) {
     const out = {
       club: { name: state.club.name },
       me: { id: m.id, name: m.name, phone: m.phone || '', isOwner: isOwner(m), isCo: isCo(m), manage: isOwner(m) || isCo(m), hasPin: !!m.pin },
-      events, now: Date.now(), tz: tzNow, roles: ROLES, saveError: isOwner(m) ? lastError : '', storage: isOwner(m) ? store.name : '',
+      events, now: Date.now(), tz: tzNow, roles: ROLES, seatsMax: SEATS_MAX, saveError: isOwner(m) ? lastError : '', storage: isOwner(m) ? store.name : '',
     };
     // every member sees the past games and the replays; only the owner can remove one
     out.history = (state.history || []).slice().reverse().slice(0, 100).map((g) => ({ ...g, rounds: undefined, replays: g.rounds ? g.rounds.length : 0 }));
@@ -282,9 +282,9 @@ function createClub(ctx) {
     try {
       const st = rsvp(m, ev, answer === 'out' ? 'out' : 'in');
       if (st === 'approved' && ev.proposal && ev.confirmed) return page("You're in", `${esc(ev.title)}. You replied after the group was confirmed and there was still a seat, so you are in. The admin will send you the game link.`, true);
-      if (st === 'interested') return page('Thanks, noted', `${esc(ev.title)}. You are marked as available. The admin will send you the game link once the group is confirmed.`, false);
-      if (st === 'approved') return page("You're in", `${esc(ev.title)}. Your seat is held. Open the table whenever you like and you will be seated with the minimum buy-in.`, true);
-      if (st === 'waitlist') return page('Table is full', `${esc(ev.title)}. You are on the waiting list and will get a seat if someone drops out.`, true);
+      if (st === 'interested') return page('Thanks, noted', `${esc(ev.title)}. You are marked as available. ${seatRule(ev)} The admin will send you the game link once the group is confirmed.`, false);
+      if (st === 'approved') return page("You're in", `${esc(ev.title)}. Your seat is held &mdash; you were in time, and it is a ${ev.seats}-player table. Open the table whenever you like and you will be seated with the minimum buy-in.`, true);
+      if (st === 'waitlist') return page('Table is full', `${esc(ev.title)}. All ${ev.seats} seats went to earlier replies. You are on the waiting list and will get a seat if someone drops out.`, true);
       return page("You're out", `Thanks for letting us know. Changed your mind? Tap the In link again.`, false);
     } catch (e) { return page('Sorry', esc(e.message), false); }
   }
@@ -302,6 +302,8 @@ function createClub(ctx) {
     if (dead.length) { m.push = subs.filter((s) => !dead.includes(s.endpoint)); persist(); }
   }
   function inviteText(ev) { return `${ev.title}: ${new Date(ev.startAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: env.TZ_LABEL || 'Asia/Kolkata' })}`; }
+  // every invite says the same thing about seats, so nobody is surprised by a waiting list
+  function seatRule(ev) { return `Max ${ev.seats} players. Seats are first come, first served and the portal allots them in the order replies arrive; after that you go on the waiting list.`; }
   function tell(m, kind, text, extra) {
     push(m, 'notice', { kind, text, ...extra });
     pushMember(m, { title: 'Smart Buddies', body: text, tag: kind + (extra && extra.eventId ? extra.eventId : ''), url: '/' });
@@ -475,7 +477,7 @@ function createClub(ctx) {
         if (x.id === m.id) continue;
         if (acting && x.id === acting.id) { tell(x, 'allotted', `You are the acting admin and have a seat for ${inviteText(ev)}.`, { eventId: ev.id }); continue; }
         const links = baseUrl() ? `\nIN: ${rsvpLink(x, ev, 'in')}\nOUT: ${rsvpLink(x, ev, 'out')}` : '';
-        tell(x, 'invite', ev.proposal ? `Proposal for a game: ${inviteText(ev)}. Smart Buddies is our private online poker portal, just for us friends. Are you available?${links}` : ev.auto ? `You are invited: ${inviteText(ev)}. Are you in or out? Seats go first come, first served.${links}` : `You are invited: ${inviteText(ev)}. Open the app and tap "I'm interested".`, { eventId: ev.id });
+        tell(x, 'invite', ev.proposal ? `Proposal for a game: ${inviteText(ev)}. Smart Buddies is our private online poker portal, just for us friends. Are you available? ${seatRule(ev)}${links}` : ev.auto ? `You are invited: ${inviteText(ev)}. Are you in or out? ${seatRule(ev)}${links}` : `You are invited: ${inviteText(ev)}. ${seatRule(ev)} Open the app and tap "I'm interested".`, { eventId: ev.id });
       }
       if (b.now) { try { openTable(ev); ev.reminded = true; persist(); } catch (e) { console.error('Could not open table', e.message); } }
       return { id: ev.id };
