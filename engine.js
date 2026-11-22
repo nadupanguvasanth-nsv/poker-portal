@@ -141,6 +141,7 @@ class Hand {
     this.minRaise = bb;
     this.turn = -1;
     this.runit = null; // pending vote on running the board more than once
+    this.runitDone = false; // one vote per hand, however it came out
     this.runs = 1;
     this.log = [];
     this.acts = []; // every chip that moves, in order, so a hand can be replayed later
@@ -300,8 +301,10 @@ class Hand {
     return need ? Math.min(3, Math.floor(this.deck.length / need)) : 0;
   }
   // all betting is over but cards are still to come: players may vote to deal them more than once
+  // One vote per hand. Without runitDone a vote that comes out as "once" leaves runs at 1, so the
+  // next street opens another vote, and a table where nobody votes never finishes the hand.
   runItDue() {
-    return !this.runit && this.runs === 1 && canRunIt(this.variant) && this.runItMin > 0 && this.pot >= this.runItMin
+    return !this.runit && !this.runitDone && this.runs === 1 && canRunIt(this.variant) && this.runItMin > 0 && this.pot >= this.runItMin
       && this.street !== 'river' && this.live().length > 1 && this.canAct().length <= 1 && this.maxRuns() >= 2;
   }
 
@@ -324,6 +327,7 @@ class Hand {
     this.runs = best;
     const was = this.runit;
     this.runit = null;
+    this.runitDone = true;
     this.runitInfo = { votes: was.votes, voters: was.voters, runs: best };
     this.advance();
   }

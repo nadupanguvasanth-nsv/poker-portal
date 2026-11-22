@@ -40,8 +40,11 @@ function newCode() {
 }
 
 function cleanSettings(s = {}, old = {}) {
-  const sb = clampInt(s.sb, 1, 1e7, old.sb || 100);
-  const bb = clampInt(s.bb, sb, 1e7, old.bb || sb * 2);
+  // a blank or zero blind means "leave it alone", never "play for one chip": clearing the field
+  // in the settings form must not quietly turn 100/200 into 1/1
+  const want = (v, min) => { const n = Math.floor(Number(v)); return Number.isFinite(n) && n >= min ? n : undefined; };
+  const sb = clampInt(want(s.sb, 1), 1, 1e7, old.sb || 100);
+  const bb = clampInt(want(s.bb, 1), sb, 1e7, old.bb || sb * 2);
   return {
     sb, bb,
     turnSeconds: clampInt(s.turnSeconds, 10, 180, old.turnSeconds || 40),
@@ -421,15 +424,21 @@ function armTimer(t, secs) {
 }
 
 function afterHandChange(t) {
+  const hand = t.hand;
+  // a run-it vote gets one clock, started when the vote opens. Votes arriving afterwards must not
+  // push it back, or two people changing their minds could hold the table up for ever.
+  if (hand && hand.runit && !t.frozen && t.runitFor === hand) return broadcast(t);
   clearTimeout(t.timer);
   if (t.frozen) return broadcast(t);
   const h = t.hand;
-  if (h && h.finished) return finishHand(t);
+  if (h && h.finished) { t.runitFor = null; return finishHand(t); }
   if (h && h.runit) {
+    t.runitFor = h;
     t.deadline = Date.now() + RUNIT_SECONDS * 1000;
     t.timer = setTimeout(() => { if (t.hand === h && h.runit) { h.resolveRunIt(); afterHandChange(t); } }, RUNIT_SECONDS * 1000 + 300);
     return broadcast(t);
   }
+  t.runitFor = null;
   if (h && h.turnId) {
     const tp = t.players.get(h.turnId);
     const secs = tp && !tp.connected ? Math.min(t.settings.turnSeconds, DISCONNECT_TURN_SECONDS) : t.settings.turnSeconds;
@@ -801,6 +810,7 @@ const routes = {
     if (t.frozen || t.ended) return { ok: true };
     t.frozen = { at: Date.now(), left: t.deadline ? Math.max(0, t.deadline - Date.now()) : 0 };
     clearTimeout(t.timer); clearTimeout(t.nextTimer); t.deadline = 0;
+    t.runitFor = null; // the vote's clock stopped with everything else; resuming starts it again
     say(t, 'The admin stopped the game');
     broadcast(t);
     return { ok: true };
@@ -1231,7 +1241,7 @@ function dumpTables() {
   for (const t of tables.values()) {
     if (t.closed) continue;
     const o = {};
-    for (const k of Object.keys(t)) if (!['clients', 'timer', 'nextTimer', 'hand', 'players', 'fx', 'fxLast', 'watchers'].includes(k)) o[k] = t[k];
+    for (const k of Object.keys(t)) if (!['clients', 'timer', 'nextTimer', 'hand', 'runitFor', 'players', 'fx', 'fxLast', 'watchers'].includes(k)) o[k] = t[k];
     o.players = [...t.players.values()].map((p) => ({ ...p, connected: false }));
     if (t.ended) delete o.rounds; // the best rounds are kept with the game in the club's history
     o.hadHand = !!(t.hand && !t.hand.finished);
