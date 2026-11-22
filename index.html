@@ -5,6 +5,12 @@
 <title>Smart Buddies</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="theme-color" content="#0a0c0b">
+<meta property="og:title" content="Smart Buddies · Private Poker Party">
+<meta property="og:description" content="Our own poker table. Play chips only, settle up outside the app.">
+<meta property="og:image" content="{{BASE}}/poster.jpg">
+<meta property="og:url" content="{{BASE}}/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -200,7 +206,7 @@ function lobby(){
   var h='<div class="abs" style="inset:0;overflow-y:auto;padding:28px 24px 24px;display:flex;flex-direction:column;align-items:center;background:radial-gradient(ellipse 320px 300px at 50% 235px,#12402f 0%,#0a0c0b 100%)">'+
   '<div style="display:flex;align-items:center;gap:12px;width:100%;justify-content:center"><div style="height:1px;flex:1;background:#2a312d"></div><div class="disp gold" style="font-size:22px;letter-spacing:.32em;padding-left:.32em">SMART BUDDIES</div><div style="height:1px;flex:1;background:#2a312d"></div></div>'+
   '<div class="poster" style="margin-top:20px;width:100%;max-width:342px;aspect-ratio:5/4"><img alt="Smart Buddies at the card table" src="'+IMG.dogs+'" style="width:100%;height:100%;object-fit:cover"></div>'+
-  '<div class="disp" style="margin-top:20px;font-size:40px;line-height:1;text-align:center">Private poker night</div>'+
+  '<div class="disp" style="margin-top:20px;font-size:40px;line-height:1;text-align:center">Private poker party</div>'+
   '<div class="muted small" style="margin-top:8px;text-align:center;font-size:13px">Play chips only. Settle up outside the app.</div>';
   if(!admin&&S.lobbyMode!=='setup'&&S.lobbyMode!=='guest'&&S.clubExists===false){S.lobbyMode='setup';}
   if(!admin&&S.lobbyMode!=='setup'&&S.lobbyMode!=='guest'){
@@ -361,7 +367,9 @@ function table(){
   var my=v.seats[mySeat];
   var cardsHtml='',shown=false;
   if(my&&my.cards&&my.cards.length){
-    var cn=my.cards.length,stp=cn>2?(cn>4?27:34):44,rot=cn>2?7:12,cw=(cn-1)*stp+62;
+    // four and five card hands fan out far enough that every rank and suit is readable,
+    // and still clear of the emoji bullseye on the right
+    var cn=my.cards.length,stp=cn>4?42:(cn>2?46:44),rot=cn>4?6:(cn>2?7:12),cw=(cn-1)*stp+62;
     shown=!!(S.peek||S.lock)||!!(RES&&RES.reveal&&RES.reveal[me.id]);
     cardsHtml='<div id="hero" class="abs'+(shown?' up':'')+'" style="left:'+(195-cw/2)+'px;top:418px;height:90px;width:'+cw+'px;'+(cn>2?'transform:scale(.8);transform-origin:50% 100%;':'')+(my.folded?'opacity:.35':'')+'">'+my.cards.map(function(c,i){return '<div class="abs" style="left:'+(i*stp)+'px;top:6px;transform:rotate('+((i-(cn-1)/2)*rot)+'deg)"><div class="hc"><div class="hb">'+card('??','lg')+'</div><div class="hf">'+card(c,'lg')+'</div></div></div>';}).join('')+'</div>';
   }

@@ -258,11 +258,15 @@ function createClub(ctx) {
     return ev.people[m.id].state;
   }
   const rsvpLink = (m, ev, a) => `${baseUrl()}/r/${m.token}/${ev.id}/${a}`;
-  function rsvpPage(mtoken, evId, answer) {
+  function rsvpPage(mtoken, evId, answer, opt) {
     const m = memberByToken(mtoken), ev = state.events[evId];
-    const page = (title, msg, open) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart Buddies</title><body style="margin:0;background:#0b0e0c;color:#f2efe6;font-family:-apple-system,system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center"><div style="max-width:340px;padding:24px"><div style="color:#d8b45c;letter-spacing:.2em;font-size:12px;font-weight:700">SMART BUDDIES</div><h1 style="font-size:34px;margin:12px 0 8px">${title}</h1><p style="color:#a3aba5;line-height:1.5">${msg}</p>${open ? `<a href="/?m=${m.token}" style="display:block;margin-top:20px;padding:15px;border-radius:12px;background:#d8b45c;color:#1b1608;font-weight:700;text-decoration:none">Open the table</a>` : ''}</div></body>`;
+    const base = (opt && opt.base) || baseUrl();
+    const og = (t, d) => `<meta property="og:title" content="${String(t).replace(/[<>&"]/g, '')}"><meta property="og:description" content="${String(d).replace(/[<>&"]/g, '')}"><meta property="og:image" content="${base}/poster.jpg"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image">`;
+    const page = (title, msg, open) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart Buddies</title>${og(ev ? ev.title : 'Smart Buddies', ev ? 'A private poker party for us. Tap to say if you are in.' : 'Our own poker table.')}<body style="margin:0;background:#0b0e0c;color:#f2efe6;font-family:-apple-system,system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center"><div style="max-width:340px;padding:24px"><div style="color:#d8b45c;letter-spacing:.2em;font-size:12px;font-weight:700">SMART BUDDIES</div><h1 style="font-size:34px;margin:12px 0 8px">${title}</h1><p style="color:#a3aba5;line-height:1.5">${msg}</p>${open ? `<a href="/?m=${m.token}" style="display:block;margin-top:20px;padding:15px;border-radius:12px;background:#d8b45c;color:#1b1608;font-weight:700;text-decoration:none">Open the table</a>` : ''}</div></body>`;
     const esc = (s) => String(s).replace(/[<>&"]/g, '');
     if (!m || !ev) return page('Link not valid', 'Ask the admin for a new invite.', false);
+    // a link preview is only looking: never answer for the member
+    if (opt && opt.preview) return page(ev.title, 'A private poker party for us. Open this on your phone to reply.', false);
     try {
       const st = rsvp(m, ev, answer === 'out' ? 'out' : 'in');
       if (st === 'approved' && ev.proposal && ev.confirmed) return page("You're in", `${esc(ev.title)}. You replied after the group was confirmed and there was still a seat, so you are in. The admin will send you the game link.`, true);

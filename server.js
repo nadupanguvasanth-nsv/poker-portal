@@ -1057,6 +1057,19 @@ function handleEvents(req, res, url) {
 }
 
 const INDEX = process.env.INDEX_FILE || path.join(__dirname, 'index.html');
+// The page carries its own address so WhatsApp and the like can find the poster image.
+const siteBase = (req) => publicBase() || 'https://' + String((req.headers && req.headers.host) || 'localhost').replace(/[^A-Za-z0-9.:-]/g, '');
+let indexCache = { base: null, mtime: 0, html: '' };
+function indexFor(base) {
+  const mtime = fs.statSync(INDEX).mtimeMs;
+  if (indexCache.base !== base || indexCache.mtime !== mtime) {
+    indexCache = { base, mtime, html: fs.readFileSync(INDEX, 'utf8').split('{{BASE}}').join(base) };
+  }
+  return indexCache.html;
+}
+// Link previews fetch the address before anyone taps it, so a reply is never recorded for a robot.
+const CRAWLERS = /bot|crawler|spider|facebookexternalhit|whatsapp|telegram|slack|discord|skype|embedly|preview|validator|curl|wget|python-requests|okhttp|headless/i;
+const isCrawler = (req) => CRAWLERS.test(String((req.headers && req.headers['user-agent']) || ''));
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
@@ -1074,6 +1087,12 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="Statement-${who}-${t.code}.pdf"`, 'Cache-Control': 'no-store' });
       return res.end(pdf);
     }
+    if (req.method === 'GET' && url.pathname === '/poster.jpg') {
+      const pf = path.join(__dirname, 'poster.jpg');
+      if (!fs.existsSync(pf)) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
+      return res.end(fs.readFileSync(pf));
+    }
     if (req.method === 'GET' && (url.pathname === '/sw.js' || /^\/icon-(192|512)\.png$/.test(url.pathname))) {
       const file = path.join(__dirname, url.pathname.slice(1));
       if (!fs.existsSync(file)) { res.writeHead(404); return res.end(); }
@@ -1090,7 +1109,10 @@ const server = http.createServer(async (req, res) => {
       }));
     }
     const rm = req.method === 'GET' && url.pathname.match(/^\/r\/([0-9a-f]{40})\/([0-9a-f]{8})\/(in|out)$/);
-    if (rm) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(club.rsvpPage(rm[1], rm[2], rm[3])); }
+    if (rm) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(club.rsvpPage(rm[1], rm[2], rm[3], { base: siteBase(req), preview: isCrawler(req) }));
+    }
     const sm = req.method === 'GET' && url.pathname.match(/^\/s\/([0-9a-f]{36})\.pdf$/);
     if (sm) {
       const l = statementLinks.get(sm[1]), t = l && tables.get(l.code), pdf = t && t.final && statementPdf(t.final, l.pid);
@@ -1111,7 +1133,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
-      return fs.createReadStream(INDEX).pipe(res);
+      return res.end(indexFor(siteBase(req)));
     }
     res.writeHead(404); res.end('Not found');
   } catch (e) {
