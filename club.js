@@ -197,7 +197,9 @@ function createClub(ctx) {
   const stamp = () => ({ at: Date.now(), seq: ++replyNo });
   const waitlist = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'waitlist')
     .sort((a, b) => (ev.people[a].at - ev.people[b].at) || ((ev.people[a].seq || 0) - (ev.people[b].seq || 0)));
-  function tableOpen(ev) { const t = ev.tableCode && tables.get(ev.tableCode); return !!(t && !t.closed); }
+  // A table people can still walk into. A table whose game has ended is not one, or the app would
+  // keep trying to take them back into a night that is over.
+  function tableOpen(ev) { const t = ev.tableCode && tables.get(ev.tableCode); return !!(t && !t.closed && !t.ended); }
 
   function viewFor(m) {
     const tzNow = clubTz();
