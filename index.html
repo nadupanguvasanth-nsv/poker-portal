@@ -421,7 +421,7 @@ function table(){
   h+='<div class="abs" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 20px;display:flex;align-items:center;gap:12px">'+
   '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM '+esc(v.code)+'</div><div class="muted" style="margin-top:2px;font-size:13px">'+(v.handNo?'Hand '+v.handNo:'Not started')+(v.session.no?' · <span data-sess="1">'+sessLeft(v.session)+'</span>':'')+(S.online?'':' · reconnecting')+'</div></div>'+
   '<div style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #2a312d;background:#141917;font-size:13px;font-weight:600;display:flex;align-items:center">'+fmt(v.settings.sb)+' / '+fmt(v.settings.bb)+'</div>'+
-  (me.can.start&&!v.session.ended?'<button aria-label="'+(v.frozen?'Resume':'Stop')+'" onclick="'+(v.frozen?"api(\'unfreeze\').catch(fail)":"if(confirm(\'Stop everything exactly as it is? Nobody can act until you resume.\'))api(\'freeze\').catch(fail)")+'" style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #d2454d;background:'+(v.frozen?'#d8b45c':'#d2454d')+';color:'+(v.frozen?'#14110a':'#fff')+';font-size:12px;font-weight:700;letter-spacing:.08em">'+(v.frozen?'RESUME':'STOP')+'</button>':'')+'<button aria-label="Table menu" onclick="S.sheet=true;render()" style="position:relative;width:44px;height:44px;border:0;background:transparent;padding:0;display:flex;align-items:center;justify-content:center">'+(((me.can.bank?(v.pending||[]).length+(v.notes||[]).length:0)+(me.can.players?(v.leaveReqs||[]).length:0))?'<span style="position:absolute;right:4px;top:4px;min-width:18px;height:18px;border-radius:9px;background:#d2454d;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px">'+((me.can.bank?(v.pending||[]).length+(v.notes||[]).length:0)+(me.can.players?(v.leaveReqs||[]).length:0))+'</span>':'')+'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f2efe6" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'+(me.isAdmin&&v.pending.length?'<span style="position:absolute;margin:-18px -14px 0 0;width:10px;height:10px;border-radius:5px;background:#d2454d"></span>':'')+'</button></div>';
+  (me.can.start&&!v.session.ended?'<button aria-label="'+(v.frozen?'Resume':'Stop')+'" onclick="'+(v.frozen?"api(\'unfreeze\').catch(fail)":"if(confirm(\'Stop everything exactly as it is? Nobody can act until you resume.\'))api(\'freeze\').catch(fail)")+'" style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #d2454d;background:'+(v.frozen?'#d8b45c':'#d2454d')+';color:'+(v.frozen?'#14110a':'#fff')+';font-size:12px;font-weight:700;letter-spacing:.08em">'+(v.frozen?'RESUME':'STOP')+'</button>':'')+'<button aria-label="Table menu" onclick="'+(me.watching?'stopWatching()':'S.sheet=true;render()')+'" style="position:relative;width:44px;height:44px;border:0;background:transparent;padding:0;display:flex;align-items:center;justify-content:center">'+(((me.can.bank?(v.pending||[]).length+(v.notes||[]).length:0)+(me.can.players?(v.leaveReqs||[]).length:0))?'<span style="position:absolute;right:4px;top:4px;min-width:18px;height:18px;border-radius:9px;background:#d2454d;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px">'+((me.can.bank?(v.pending||[]).length+(v.notes||[]).length:0)+(me.can.players?(v.leaveReqs||[]).length:0))+'</span>':'')+'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f2efe6" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'+(me.isAdmin&&v.pending.length?'<span style="position:absolute;margin:-18px -14px 0 0;width:10px;height:10px;border-radius:5px;background:#d2454d"></span>':'')+'</button></div>';
   // felt
   h+='<div class="abs felt" style="left:30px;top:106px;width:330px;height:240px"></div>';
   h+='<div class="abs" style="left:0;top:'+MINE+'px;width:390px;height:'+(844-MINE)+'px;background:linear-gradient(#18231d,#0c110f 62%);border-top:2px solid #d8b45c"></div>';
@@ -466,12 +466,13 @@ function table(){
     cardsHtml='<div id="hero" class="abs'+(shown?' up':'')+'" style="left:18px;top:422px;height:104px;width:'+cw+'px;transform:scale('+sc+');transform-origin:0 0;'+(my.folded?'opacity:.35':'')+'">'+
       my.cards.map(function(c,i){return '<div class="abs" style="left:'+(i*stp)+'px;top:6px;transform:rotate('+((i-(cn-1)/2)*rot)+'deg)"><div class="hc"><div class="hb">'+card('??','xl')+'</div><div class="hf">'+card(c,'xl')+'</div></div></div>';}).join('')+'</div>';
   }
-  h+=cardsHtml;
-  if(my)h+=plaque(v,my,208,436,145,0,hand,RES,n);
+  if(!me.watching)h+=cardsHtml;
+  if(my&&!me.watching)h+=plaque(v,my,208,436,145,0,hand,RES,n);
+  if(me.watching)h+=watchBar(v);
   if(fxCanPlay(v)){h+='<div class="abs" style="left:306px;top:452px;width:40px;height:40px"><div class="pmini" style="width:40px;height:40px;border-radius:20px;background:#1b2a22" onclick="fxOpen(\''+me.id+'\')">'+bullSvg()+'<span style="position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:14px">🙂</span></div></div>';}
-  if(cardsHtml&&!shown&&!ls('sb-peek-hint')&&!S.hintShown){S.hintShown=true;setTimeout(function(){toast('Your cards are face down. Hold them to peek, tap to keep them open.');},400);}
+  if(cardsHtml&&!me.watching&&!shown&&!ls('sb-peek-hint')&&!S.hintShown){S.hintShown=true;setTimeout(function(){toast('Your cards are face down. Hold them to peek, tap to keep them open.');},400);}
   h+=specialBar(v);
-  h+=actionPanel(v);
+  if(!me.watching)h+=actionPanel(v);
   h+=stmtPopup(v);
   h+=drawOverlay(v);
   h+=fxTray(v);
@@ -493,6 +494,17 @@ function runPanel(v){
   if(mine){for(var i=1;i<=mx;i++)b+='<button class="btn'+(r.mine===i?'':' ghost')+'" style="height:52px" onclick="doRun('+i+')">'+(i===1?'Once':i===2?'Twice':'Three times')+'</button>';p+='<div style="display:flex;gap:8px;margin-top:14px">'+b+'</div>';}
   else p+='<div class="disp" style="font-size:24px;text-align:center;margin-top:18px">Players are voting</div>';
   return p+'<div class="muted small" style="text-align:center;margin-top:10px">'+r.voted+' of '+r.voters.length+' voted</div></div>';
+}
+// the bottom half for someone looking on: no cards, no buttons, a way in
+function watchBar(v){
+  var free=v.you.seatsFree||0,ev=liveEvent();
+  return '<div class="abs" style="left:0;top:'+MINE+'px;width:390px;height:'+(844-MINE)+'px;padding:26px 20px;box-sizing:border-box;text-align:center">'+
+    '<div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.18em">WATCHING</div>'+
+    '<div class="disp" style="font-size:28px;line-height:1.1;margin-top:6px">'+esc(v.you.name)+', you have no seat in this game</div>'+
+    '<div class="muted small" style="margin-top:8px;white-space:normal">You can follow every hand from here. Cards stay face down until a showdown, the same as for the players.</div>'+
+    '<div class="muted small" style="margin-top:12px">'+(free?free+' seat'+(free===1?'':'s')+' free at this table':'The table is full')+'</div>'+
+    (ev?'<button class="btn" style="margin-top:12px" onclick="askSeat(\''+ev.id+'\')">'+(free?'Ask the admin for a seat':'Ask to be next')+'</button>':'')+
+    '<button class="btn ghost" style="margin-top:10px" onclick="stopWatching()">Back to the club</button></div>';
 }
 function actionPanel(v){
   var hand=v.hand,L=hand&&hand.legal,me=v.you;
@@ -557,7 +569,7 @@ function showdownPanel(v){
 
 function needNote(v){return v.startBy?'<br>Needs '+v.minPlayers+' players with chips by '+clock(v.startBy)+' or the game is cancelled ('+v.joined+' so far).':'';}
 function endedOverlay(){
-  var v=S.view;if(!v||!v.session.ended||v.you.can.start)return '';
+  var v=S.view;if(!v||!v.session.ended||v.you.can.start||v.you.watching)return '';
   return '<div class="abs" style="left:0;right:0;top:0;bottom:0;z-index:40;background:#0a0c0b;padding:40px 24px;overflow:auto;display:flex;flex-direction:column;justify-content:center">'+
     endedCard(v)+(v.you.member?'<button class="btn ghost" style="margin-top:18px" onclick="S.toClub=true;render()">Club home</button>':'<button class="btn ghost" style="margin-top:18px" onclick="forget()">Leave this table</button>')+'</div>';
 }
@@ -576,12 +588,44 @@ function linkScreen(){
     '<button class="btn" style="margin-top:12px" onclick="useLink()">Open with my link</button><button class="btn ghost" style="margin-top:10px" onclick="S.toClub=false;S.signin=false;render()">'+(S.view?'Back to the table':'Close')+'</button></div>';
 }
 function adminLogin(){capi('adminlogin',{pin:document.getElementById('lk_apin').value}).then(function(r){setMember(r.mtoken);S.signin=false;S.toClub=!!S.view;clubConnect();render();}).catch(fail);}
+function isiOS(){return /iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);}
+function isAndroid(){return /Android/.test(navigator.userAgent);}
+function installSteps(){
+  if(isiOS())return ['Tap the <b>Share</b> button at the bottom of Safari','Scroll down and tap <b>Add to Home Screen</b>','Tap <b>Add</b>. Smart Buddies now sits with your apps.'];
+  if(isAndroid())return ['Tap the <b>⋮</b> menu at the top right of Chrome','Tap <b>Install app</b>, or <b>Add to Home screen</b>','Confirm. Smart Buddies now sits with your apps.'];
+  return ['Press <b>Ctrl + D</b> (<b>⌘ + D</b> on a Mac)','Save the bookmark somewhere you will find it','Open it from there whenever we play.'];
+}
+function welcome(){
+  var cv=S.cv,me=cv.me,admin=me.isOwner;
+  if(S.wstep===2)return pinSetup();
+  var steps=installSteps().map(function(t,i){return '<div style="display:flex;gap:10px;margin-top:10px"><div class="gold" style="font-family:\'Bebas Neue\',sans-serif;font-size:20px;line-height:1;width:16px;flex:none">'+(i+1)+'</div><div style="font-size:14px;line-height:1.45;white-space:normal">'+t+'</div></div>';}).join('');
+  return '<div class="sheet"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.18em">WELCOME, '+esc(me.name).toUpperCase()+'</div>'+
+    '<div class="disp" style="font-size:34px;line-height:1.05;margin-top:6px">Keep Smart Buddies<br>on your phone</div>'+
+    '<div class="muted small" style="margin:10px 0 2px;white-space:normal">This link is yours alone. Save it now and you will never have to look for it again, and your turn alerts will reach you.</div>'+
+    '<div class="evc" style="margin-top:12px">'+steps+'</div>'+
+    '<button class="btn" style="margin-top:16px" onclick="S.wstep=2;render()">Done, next</button>'+
+    '<button class="btn ghost" style="margin-top:8px" onclick="S.wstep=2;render()">Skip for now</button></div>';
+}
 function pinSetup(){
-  return '<div class="sheet"><div class="disp" style="font-size:34px">Choose your PIN</div><div class="muted small" style="margin:8px 0 14px;white-space:normal">Pick a 4-digit PIN. Next time you sign out, this PIN is all you need to log in as admin.</div>'+
+  var admin=S.cv&&S.cv.me&&S.cv.me.isOwner;
+  return '<div class="sheet"><div class="disp" style="font-size:34px">Choose your PIN</div><div class="muted small" style="margin:8px 0 14px;white-space:normal">'+(admin?'Pick a 4-digit PIN. From now on this PIN is all you need to log in as admin.':'Pick a 4-digit PIN. You will type it to open Smart Buddies, see your account, your past games and the replays you played in.')+'</div>'+
     '<div class="field"><label for="pf_pin1">NEW PIN</label><input id="pf_pin1" type="password" inputmode="numeric" maxlength="8" autocomplete="off" style="letter-spacing:.4em;font-size:22px"></div><div class="field" style="margin-top:10px"><label for="pf_pin2">TYPE IT AGAIN</label><input id="pf_pin2" type="password" inputmode="numeric" maxlength="8" autocomplete="off" style="letter-spacing:.4em;font-size:22px"></div>'+
     '<button class="btn" style="margin-top:14px" onclick="firstPin()">Save PIN and continue</button></div>';
 }
-function firstPin(){var a=document.getElementById('pf_pin1').value,b=document.getElementById('pf_pin2').value;if(a!==b){toast('The two PINs do not match');return;}capi('setpin',{pin:a}).then(function(){S.adminPin=true;toast('PIN saved');}).catch(fail);}
+function firstPin(){var a=document.getElementById('pf_pin1').value,b=document.getElementById('pf_pin2').value;if(a!==b){toast('The two PINs do not match');return;}capi('setpin',{pin:a}).then(function(){S.adminPin=true;S.wstep=0;unlockedNow();toast('PIN saved');setTimeout(autoEnter,60);}).catch(fail);}
+// ---------- opening the portal again on a phone that already knows you ----------
+function unlockedNow(){S.unlocked=true;try{sessionStorage.setItem('sb-unlocked','1');}catch(e){}}
+try{S.unlocked=!!sessionStorage.getItem('sb-unlocked');}catch(e){S.unlocked=true;}
+function lockScreen(){
+  var me=S.cv.me;
+  return '<div class="sheet" style="padding-top:60px"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.18em">SMART BUDDIES</div>'+
+    '<div class="disp" style="font-size:34px;line-height:1.05;margin-top:6px">Hello '+esc(me.name)+'</div>'+
+    '<div class="muted small" style="margin:8px 0 16px">Your 4-digit PIN opens your account.</div>'+
+    '<div class="field"><label for="uk_pin">YOUR PIN</label><input id="uk_pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" style="letter-spacing:.4em;font-size:22px"></div>'+
+    '<button class="btn" style="margin-top:14px" onclick="doUnlock()">Open</button>'+
+    '<button class="btn ghost" style="margin-top:10px" onclick="if(confirm(\'Forget this phone? You will need your personal link again.\'))clubForget(),render()">Not you?</button></div>';
+}
+function doUnlock(){var p=(document.getElementById('uk_pin')||{}).value||'';capi('unlock',{pin:p}).then(function(){unlockedNow();autoEnter();render();}).catch(fail);}
 function signOutAdmin(){if(!confirm('Sign out on this phone? You can log back in with your PIN.'))return;clearSession();try{document.cookie='sb-member=; max-age=0; path=/';}catch(e){}clubForget();S.toClub=false;S.lobbyMode='join';S.adminPin=true;render();}
 function pinSignin(){capi('signin',{phone:document.getElementById('lk_phone').value,pin:document.getElementById('lk_pin').value}).then(function(r){setMember(r.mtoken);S.signin=false;S.toClub=!!S.view;clubConnect();render();}).catch(fail);}
 function savePin(){var p=document.getElementById('pf_pin').value;capi('setpin',{pin:p}).then(function(){document.getElementById('pf_pin').value='';toast('PIN saved. You can now sign in with your mobile and PIN.');}).catch(fail);}
@@ -869,8 +913,9 @@ function setMember(tok){S.mtoken=tok;try{document.cookie='sb-member='+tok+'; max
 function clubForget(){try{localStorage.removeItem('sb-member');}catch(e){}try{document.cookie='sb-member=; max-age=0; path=/';}catch(e){}S.mtoken='';S.cv=null;if(S.ces){S.ces.close();S.ces=null;}}
 function clubConnect(){
   if(S.ces)S.ces.close();if(!S.mtoken)return;
+  try{capi('me',{tz:Intl.DateTimeFormat().resolvedOptions().timeZone}).catch(function(){});}catch(e){}
   var es=new EventSource('/api/club/events?mtoken='+encodeURIComponent(S.mtoken));S.ces=es;
-  es.onmessage=function(e){S.cv=JSON.parse(e.data);S.cfails=0;render();};
+  es.onmessage=function(e){S.cv=JSON.parse(e.data);S.cfails=0;autoEnter();render();};
   es.addEventListener('notice',function(e){onNotice(JSON.parse(e.data));});
   es.onerror=function(){if(es.readyState===2){S.cfails=(S.cfails||0)+1;if(S.cfails>=3){clubForget();toast('That invite link no longer works. Ask the admin for a new one.');return;}setTimeout(clubConnect,1500);}};
 }
@@ -938,9 +983,26 @@ function formVals(ids){var d={};ids.forEach(function(id){var e=document.getEleme
 function dval(id,def){return esc(S.draft[id]!==undefined?S.draft[id]:(def||''));}
 function dfield(id,label,def,attrs){return '<div class="field" style="flex:1"><label for="'+id+'">'+label+'</label><input id="'+id+'" '+(attrs||'')+' value="'+dval(id,def)+'" oninput="S.draft[this.id]=this.value"></div>';}
 
+function watchGame(evId){capi('watch',{eventId:evId}).then(function(r){S.code=r.code;S.token=r.token;S.pid=r.pid;S.watching=!r.seated;saveSession();S.quick=false;S.toClub=false;S.alert=null;connect();render();}).catch(fail);}
+function stopWatching(){clearSession();S.watching=false;S.toClub=true;render();}
+function askSeatHere(){
+  var v=S.view,ev=liveEvent();
+  if(!ev){toast('Ask the admin for a seat');return;}
+  askSeat(ev.id);
+}
+function liveEvent(){var cv=S.cv;if(!cv)return null;return (cv.events||[]).filter(function(e){return e.tableOpen;})[0]||null;}
+// at game time a member is taken to the table, not the club home
+function autoEnter(){
+  if(S.view||S.autoEntered||!S.cv||!S.unlocked)return;
+  var ev=(S.cv.events||[]).filter(function(e){return e.tableOpen&&(e.my==='approved'||e.my==='owner');})[0];
+  if(!ev)return;
+  S.autoEntered=true;
+  enterGame(ev.id);
+}
 function enterGame(evId){capi('enter',{eventId:evId}).then(function(r){S.code=r.code;S.token=r.token;S.pid=r.pid;saveSession();S.quick=false;S.alert=null;connect();requestWake();render();}).catch(fail);}
 function rsvp(evId,a){capi('rsvp',{eventId:evId,answer:a}).catch(fail);}
 function interest(evId,on){capi('interest',{eventId:evId,on:on}).catch(fail);}
+function askSeat(id){if(!confirm('Ask the admin to let you into this game? You will be seated if there is room.'))return;capi('interest',{eventId:id,on:true}).then(function(r){toast(r&&r.state==='approved'?'You are in. Open the table.':'Asked. The admin will let you know.');}).catch(fail);}
 function decide2(evId,mid,d){capi('decide',{eventId:evId,memberId:mid,decision:d}).catch(fail);}
 function cancelEv(evId){if(!confirm('Cancel this game? Everyone allotted a seat is told.'))return;capi('cancelevent',{eventId:evId}).then(function(){S.manage=null;}).catch(fail);}
 function doCreateEv(){
@@ -969,6 +1031,8 @@ function evCard(ev,cv){
     else if(ev.my==='invited')h+='<button class="btn" style="margin-top:12px;height:46px" onclick="interest(\''+ev.id+'\',true)">I\'m interested</button>';
     if(ev.my==='waitlist')h+='<div class="muted small" style="margin-top:10px">The table is full. You are number '+ev.wait+' on the waiting list and get a seat if someone drops out.</div><button class="btn ghost" style="margin-top:8px;height:42px" onclick="rsvp(\''+ev.id+'\',\'out\')">I\'m out</button>';
     if(ev.my==='interested')h+='<div class="muted small" style="margin-top:10px">'+(ev.proposal?'You are marked available. The admin will send you the game link once the group is confirmed.':'You are on the list. The admin will allot seats.')+'</div><button class="btn ghost" style="margin-top:8px;height:42px" onclick="interest(\''+ev.id+'\',false)">Withdraw</button>';
+    if(ev.tableOpen&&ev.my!=='approved'&&ev.my!=='owner'&&ev.my!=='interested'&&ev.my!=='waitlist')
+      h+='<div class="muted small" style="margin-top:10px;white-space:normal">This game is being played now.</div><button class="btn line" style="margin-top:8px;height:44px" onclick="watchGame(\''+ev.id+'\')">Watch the table</button><button class="btn ghost" style="margin-top:8px;height:44px" onclick="askSeat(\''+ev.id+'\')">Ask the admin for a seat</button>';
     if(ev.my==='declined')h+='<div class="muted small" style="margin-top:10px">'+(ev.proposal&&!ev.confirmed?'You said you are not available.':ev.auto?'You are out.':'No seat this time.')+'</div>'+(ev.proposal&&!ev.confirmed?'<button class="btn ghost" style="margin-top:8px;height:42px" onclick="interest(\''+ev.id+'\',true)">Change to available</button>':'')+(ev.auto?'<button class="btn ghost" style="margin-top:8px;height:42px" onclick="rsvp(\''+ev.id+'\',\'in\')">Change to In</button>':'');
     if(ev.my==='approved'||ev.my==='owner'){
       h+='<div class="pass"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.16em">'+(ev.my==='owner'?'YOUR TABLE':'TABLE ALLOTTED')+'</div><div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px"><div class="muted small">'+(ev.my==='owner'?ev.approvedCount+' of '+ev.guestSeats+' guest seats filled':'Starts in')+'</div><div class="disp gold" style="font-size:30px" data-count="'+ev.startAt+'">'+until(ev.startAt)+'</div></div>'+
@@ -1041,7 +1105,7 @@ function historyTab(cv){
   if(!hs.length)return h+'<div class="muted small">Finished games appear here with their settlements.</div>';
   hs.forEach(function(g){
     var open=S.histOpen===g.id,tot=g.people.reduce(function(a,x){return a+(x.net>0?x.net:0);},0);
-    h+='<div class="evc" style="margin-top:8px"><button onclick="S.histOpen='+(open?'null':'\''+g.id+'\'')+';render()" style="width:100%;text-align:left;background:transparent;border:0;padding:0;color:inherit"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><div class="disp" style="font-size:24px;line-height:1.1">'+esc(g.title)+'</div><div class="muted small">'+esc(g.code)+'</div></div><div class="muted small">'+new Date(g.at).toLocaleString([],{dateStyle:'medium',timeStyle:'short'})+' · '+g.people.length+' players · '+g.sessions+' session'+(g.sessions===1?'':'s')+' · blinds '+fmt(g.sb)+'/'+fmt(g.bb)+' · '+fmt(tot)+' changed hands</div></button>';
+    h+='<div class="evc" style="margin-top:8px"><button onclick="S.histOpen='+(open?'null':'\''+g.id+'\'')+';render()" style="width:100%;text-align:left;background:transparent;border:0;padding:0;color:inherit"><div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><div class="disp" style="font-size:24px;line-height:1.1">'+esc(g.title)+'</div><div class="muted small">'+esc(g.code)+'</div></div><div class="muted small">'+new Date(g.startedAt||g.at).toLocaleString([],{dateStyle:'medium',timeStyle:'short'})+(g.startedAt?' to '+new Date(g.at).toLocaleTimeString([],{timeStyle:'short'}):'')+' · '+g.people.length+' players · '+g.sessions+' session'+(g.sessions===1?'':'s')+' · blinds '+fmt(g.sb)+'/'+fmt(g.bb)+' · '+fmt(tot)+' changed hands</div></button>';
     if(open){
       h+='<div style="margin-top:10px;border-top:1px solid #2a312d;padding-top:8px">';
       g.people.slice().sort(function(a,b){return b.net-a.net;}).forEach(function(p){h+='<div style="display:flex;gap:8px;font-size:14px;padding:3px 0"><span style="flex:1">'+esc(p.name)+'</span><span class="muted small" style="align-self:center">'+(p.carried&&p.carried>=p.invested?'carried in':'in')+' '+fmt(p.invested)+' · out '+fmt(p.final)+'</span><b style="min-width:64px;text-align:right;color:'+(p.net>0?'#7ddba0':p.net<0?'#f08a8f':'#f2efe6')+'">'+(p.net>0?'+':p.net<0?'−':'')+fmt(Math.abs(p.net))+'</b></div>';});
@@ -1149,7 +1213,8 @@ function membersTab(cv){
 function saveProfile(){capi('profile',{name:document.getElementById('pf_name').value,phone:document.getElementById('pf_phone').value}).then(function(){toast('Saved');}).catch(fail);}
 function clubScreen(){
   var cv=S.cv,me=cv.me;
-  if(me.isOwner&&!me.hasPin)return pinSetup();
+  if(!me.hasPin)return welcome();
+  if(!S.unlocked)return lockScreen();
   var h='<div class="sheet" style="padding-bottom:96px">'+(S.view?'<button class="btn" style="margin-bottom:14px" onclick="S.toClub=false;render()">Back to the table</button>':'')+'<div style="display:flex;align-items:center;justify-content:space-between"><div style="min-width:0"><div class="muted small" style="letter-spacing:.14em">'+esc(cv.club.name).toUpperCase()+'</div><div class="disp" style="font-size:36px;line-height:1.05">Hi, '+esc(me.name)+'</div></div>'+(me.isOwner?'<div class="pill2 g">ADMIN</div>':'')+'</div>';
   if(me.isOwner&&cv.storage&&/^file/.test(cv.storage))h+='<div class="evc" style="border-color:#d8b45c"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.14em">TEMPORARY STORAGE</div><div class="muted small" style="margin-top:6px">Club data is only kept on the server and is lost when it restarts. Connect the Google Drive storage to keep it safe.</div></div>';
   if(cv.saveError)h+='<div class="evc" style="border-color:#d2454d"><div style="font-size:13px">Club data could not be saved: '+esc(cv.saveError)+'</div></div>';

@@ -84,7 +84,7 @@ async function sendExternal(phone, text, env = process.env, mediaUrl) {
 
 // ---------- the club ----------
 function createClub(ctx) {
-  const { tables, makeTable, addPlayer, broadcast, say, httpErr, cleanName, cleanSettings } = ctx;
+  const { tables, makeTable, addPlayer, addWatcher, broadcast, say, httpErr, cleanName, cleanSettings } = ctx;
   const baseUrl = () => (ctx.publicBase ? ctx.publicBase() : '');
   const env = ctx.env || process.env;
   const rid = (n = 16) => crypto.randomBytes(n).toString('hex');
@@ -146,6 +146,14 @@ function createClub(ctx) {
   const ownerOnly = (m) => { if (!isOwner(m)) throw httpErr(403, 'Only the admin can do that'); };
   const cleanPhone = (p) => { const x = String(p || '').replace(/[^\d+]/g, '').slice(0, 16); return /^\d{10}$/.test(x) ? '+91' + x : x; };
   const cleanRoles = (r) => [...new Set((Array.isArray(r) ? r : []).filter((x) => ROLES.includes(x)))];
+  // the time zone of the admin's own phone or computer, learned when they open the club
+  function clubTz() { return (state.club && state.club.tz) || env.STATEMENT_TZ || env.TZ_LABEL || 'Asia/Kolkata'; }
+  function noteTz(m, tz) {
+    if (!isOwner(m) || !tz || typeof tz !== 'string' || tz.length > 64 || !/^[A-Za-z0-9_\/+-]+$/.test(tz)) return;
+    try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); } catch (e) { return; }
+    if (state.club && state.club.tz !== tz) { state.club.tz = tz; changed(); }
+  }
+
   const cleanTitle = (t) => String(t || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40) || 'Game night';
 
   // A game with no name of its own gets one from the day and hour it is set for,
@@ -158,7 +166,7 @@ function createClub(ctx) {
     night: ['Night Showdown', 'Night Shootout', 'Late Shuffle', 'Night Owls', 'All-in Night'],
   };
   function autoTitle(startAt) {
-    const tz = env.STATEMENT_TZ || env.TZ_LABEL || 'Asia/Kolkata';
+    const tz = clubTz();
     let day, hour;
     try {
       const f = new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'long', hour: 'numeric', hour12: false });
@@ -175,15 +183,18 @@ function createClub(ctx) {
     const mgr = isOwner(m) || evRoles(ev, m).length > 0;
     if (ev.status === 'cancelled') return mgr ? Date.now() < ev.startAt + 6 * 3600e3 : false;
     if (Date.now() > ev.startAt + 6 * 3600e3 && ev.status !== 'live') return false;
+    // a game being played is visible to the whole club, so anyone can ask the admin for a seat
+    if (ev.status === 'live' || tableOpen(ev)) return true;
     return mgr || ev.invited === 'all' || (Array.isArray(ev.invited) && ev.invited.includes(m.id));
   }
   const approvedIds = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'approved');
   const seatCap = (ev) => ev.seats - (ev.adminPlays === false ? 0 : 1); // the admin holds a seat only when playing
   const seatsLeft = (ev) => seatCap(ev) - approvedIds(ev).length;
   const waitlist = (ev) => Object.keys(ev.people).filter((id) => ev.people[id].state === 'waitlist').sort((a, b) => ev.people[a].at - ev.people[b].at);
-  const tableOpen = (ev) => { const t = ev.tableCode && tables.get(ev.tableCode); return !!(t && !t.closed); };
+  function tableOpen(ev) { const t = ev.tableCode && tables.get(ev.tableCode); return !!(t && !t.closed); }
 
   function viewFor(m) {
+    const tzNow = clubTz();
     const events = Object.values(state.events)
       .filter((ev) => canSee(ev, m))
       .sort((a, b) => a.startAt - b.startAt)
@@ -208,7 +219,7 @@ function createClub(ctx) {
     const out = {
       club: { name: state.club.name },
       me: { id: m.id, name: m.name, phone: m.phone || '', isOwner: isOwner(m), isCo: isCo(m), manage: isOwner(m) || isCo(m), hasPin: !!m.pin },
-      events, now: Date.now(), roles: ROLES, saveError: isOwner(m) ? lastError : '', storage: isOwner(m) ? store.name : '',
+      events, now: Date.now(), tz: tzNow, roles: ROLES, saveError: isOwner(m) ? lastError : '', storage: isOwner(m) ? store.name : '',
     };
     // every member sees the past games and the replays; only the owner can remove one
     out.history = (state.history || []).slice().reverse().slice(0, 100).map((g) => ({ ...g, rounds: undefined, replays: g.rounds ? g.rounds.length : 0 }));
@@ -349,7 +360,7 @@ function createClub(ctx) {
       persist();
       return { mtoken: m.token };
     },
-    'club/me'(b) { const m = auth(b); return viewFor(m); },
+    'club/me'(b) { const m = auth(b); noteTz(m, b.tz); return viewFor(m); },
     'club/coadmin'(b) { // the admin appoints or removes a co-admin
       const o = auth(b); ownerOnly(o);
       const m = state.members[b.memberId];
@@ -370,6 +381,16 @@ function createClub(ctx) {
       const salt = crypto.randomBytes(16).toString('hex');
       m.pin = { salt, hash: crypto.scryptSync(pin, salt, 32).toString('hex') };
       changed();
+      return { ok: true };
+    },
+    'club/unlock'(b) { // this phone already knows who you are: the PIN just unlocks it
+      const m = memberByToken(b.mtoken);
+      const key = 'u' + (m ? m.id : 'none'), f = (signinFails[key] = signinFails[key] || { n: 0, until: 0 });
+      if (Date.now() < f.until) throw httpErr(429, 'Too many tries. Wait a few minutes and try again.');
+      const pin = String(b.pin || '');
+      const ok = !!(m && m.pin && crypto.timingSafeEqual(Buffer.from(m.pin.hash, 'hex'), crypto.scryptSync(pin, m.pin.salt, 32)));
+      if (!ok) { f.n++; if (f.n >= 5) { f.n = 0; f.until = Date.now() + 5 * 60e3; } throw httpErr(401, 'Wrong PIN'); }
+      f.n = 0;
       return { ok: true };
     },
     'club/signin'(b) {
@@ -523,6 +544,17 @@ function createClub(ctx) {
       changed();
       return { ok: true, members: Object.keys(state.members).length, games: Object.keys(state.events).length };
     },
+    'club/watch'(b) { // look in on a game you have no seat at
+      const m = auth(b);
+      const ev = state.events[String(b.eventId || '')];
+      if (!ev || !canSee(ev, m)) throw httpErr(404, 'Game not found');
+      const t = ev.tableCode && tables.get(ev.tableCode);
+      if (!t || t.closed) throw httpErr(400, 'That table is not open');
+      const seated = [...t.players.values()].find((p) => p.memberId === m.id);
+      if (seated) return { code: t.code, token: seated.token, pid: seated.id, seated: true };
+      const w = addWatcher(t, m);
+      return { code: t.code, token: w.token, pid: w.id, watching: true };
+    },
     'club/rounds'(b) { // the best rounds of one past game, fetched only when somebody opens it
       auth(b);
       const g = (state.history || []).find((x) => x.id === String(b.id || ''));
@@ -651,7 +683,7 @@ function createClub(ctx) {
       if (!state.history) state.history = [];
       historyId = rid(4);
       state.history.push({
-        id: historyId, code: t.code, title: ev ? ev.title : 'Quick table', at: t.final.at, startedAt: t.createdAt, sessions: t.final.sessions, sb: t.final.sb, bb: t.final.bb,
+        id: historyId, code: t.code, title: ev ? ev.title : 'Quick table', at: t.final.at, startedAt: t.final.startedAt || t.createdAt, planned: ev ? ev.startAt : 0, sessions: t.final.sessions, sb: t.final.sb, bb: t.final.bb,
         people: t.final.people.map((x) => ({ name: x.name, invested: x.invested, final: x.final, net: x.net, carried: x.carried || 0 })),
         transfers: t.final.transfers.map((x) => ({ from: x.fromName, to: x.toName, amount: x.amount })),
         rounds: (t.rounds || []).slice().sort((a, b) => a.no - b.no),

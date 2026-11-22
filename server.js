@@ -22,6 +22,7 @@ const SUIT_RANK = 'cdhs';       // clubs < diamonds < hearts < spades for breaki
 const RANK_RANK = '23456789TJQKA';
 const tables = new Map();
 const statementLinks = new Map(); // unguessable download token -> who it belongs to
+const clubTz = () => { try { const c = club.state().club; return (c && c.tz) || process.env.STATEMENT_TZ || 'Asia/Kolkata'; } catch (e) { return process.env.STATEMENT_TZ || 'Asia/Kolkata'; } };
 const publicBase = () => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
 
 const rid = (n = 16) => crypto.randomBytes(n).toString('hex');
@@ -64,7 +65,7 @@ function makeTable(adminName, settings) {
     pending: [], notes: [], log: [], clients: new Map(), timer: null, nextTimer: null,
     deadline: 0, lastResult: null, closed: false, forceVariant: null, variant: 'none', vmark: null, special: false,
     sessionNo: 0, sessionEndsAt: 0, sessionEnding: false, draw: null, drawUntil: 0,
-    ended: false, ending: false, joins: [], departed: [], sessLog: [], rounds: [],
+    ended: false, ending: false, joins: [], departed: [], sessLog: [], rounds: [], watchers: new Map(),
   };
   tables.set(t.code, t);
   const admin = addPlayer(t, adminName);
@@ -147,8 +148,9 @@ function shownFor(t, id) {
   if (!hp) return null;
   return hp.cards.map((c, i) => (idx.includes(i) ? c : '??'));
 }
-function viewFor(t, pid) {
+function viewFor(t, pid, watcher) {
   const me = t.players.get(pid);
+  if (!me && !watcher) throw httpErr(404, 'Not at this table');
   const hv = t.hand ? t.hand.view(pid) : null;
   const seats = [];
   for (let s = 0; s < t.settings.maxSeats; s++) {
@@ -160,7 +162,7 @@ function viewFor(t, pid) {
       seat: s, id, name: p.name, optIn: !!p.optIn, isAdmin: id === t.adminId, connected: p.connected, away: p.away, ghost: p.ghost, approved: p.approved, roles: (p.roles || []).filter((r) => ROLE_NAMES.includes(r)),
       stack: hp ? hp.stack : p.stack, inHand: !!hp, bet: hp ? hp.bet : 0,
       // a mark on the seat for anyone who can deal with it: this player has asked for something
-      wants: can(t, me, 'bank') || can(t, me, 'players') ? (!!p.leaveReq || (t.notes || []).some((x) => x.playerId === p.id)) : false,
+      wants: me && (can(t, me, 'bank') || can(t, me, 'players')) ? (!!p.leaveReq || (t.notes || []).some((x) => x.playerId === p.id)) : false,
       // what they are down on their buy-ins, counting chips in front of them right now
       behind: p.bought - ((hp ? hp.stack : p.stack) + p.queued),
       folded: hp ? hp.folded : false, allIn: hp ? hp.allIn : false,
@@ -171,22 +173,27 @@ function viewFor(t, pid) {
   const isAdmin = pid === t.adminId;
   return {
     now: Date.now(), code: t.code, settings: t.settings, running: t.running, handNo: t.handNo,
-    you: {
+    you: me ? {
       id: pid, name: me.name, isAdmin, seat: me.seat, stack: seats[me.seat].stack,
       optIn: !!me.optIn, queued: me.queued, bought: me.bought, behind: seats[me.seat].behind, myUndo: ownUndo(me), inHand: seats[me.seat].inHand, away: me.away,
       can: Object.fromEntries(ROLE_NAMES.map((r) => [r, can(t, me, r)])), member: !!me.memberId,
       approved: me.approved, leaveReq: !!me.leaveReq, paying: me.paying || 0, ghost: me.ghost, ghostUntil: me.ghostUntil, ghostEndsAt: me.ghost ? sessionEnd(t, me.ghostUntil) : 0, stayUntil: me.stayUntil, callAfter: me.callAfter,
       leave: leaveInfo(t, me), callOptions: callOptions(t, me),
+    } : { // someone from the club looking on, with no seat and no cards
+      id: watcher.id, name: watcher.name, watching: true, seat: 0, stack: 0, queued: 0, bought: 0, behind: 0,
+      can: Object.fromEntries(ROLE_NAMES.map((r) => [r, false])), member: true, approved: false, inHand: false,
+      seatsFree: [...t.order].filter((id, i) => i < t.settings.maxSeats && !id).length,
     },
     frozen: !!t.frozen,
-    leaveReqs: can(t, me, 'players') ? [...t.players.values()].filter((q) => q.leaveReq && !q.leaving && !q.ghost).map((q) => ({ id: q.id, name: q.name, at: q.leaveReq })) : [],
+    leaveReqs: me && can(t, me, 'players') ? [...t.players.values()].filter((q) => q.leaveReq && !q.leaving && !q.ghost).map((q) => ({ id: q.id, name: q.name, at: q.leaveReq })) : [],
     fx: (t.fx || []).filter((f) => Date.now() - f.at < 6000),
+    watchers: [...(t.watchers || new Map()).values()].length,
     startBy: autoCancelDue(t) ? t.createdAt + t.settings.waitMinutes * 60000 : 0, joined: joinedCount(t), minPlayers: t.settings.minPlayers,
     session: {
       no: t.sessionNo, endsAt: t.sessionEndsAt, ending: t.sessionEnding, minutes: t.settings.sessionMinutes,
       ended: t.ended, cancelled: !!t.cancelled, cancelWhy: t.cancelWhy || '', endingGame: t.ending, draw: Date.now() < t.drawUntil + 4000 ? t.draw : null,
     },
-    joins: can(t, me, 'players') ? t.joins : [],
+    joins: me && can(t, me, 'players') ? t.joins : [],
     settlement: t.final && {
       at: t.final.at, transfers: isAdmin ? t.final.transfers : t.final.transfers.filter((x) => x.from === pid || x.to === pid),
       people: t.final.people.filter((x) => isAdmin || x.id === pid).map((x) => {
@@ -197,15 +204,15 @@ function viewFor(t, pid) {
       }),
     },
     seats,
-    corrections: can(t, me, 'bank') ? recentChanges(t, pid, isAdmin) : [],
+    corrections: me && can(t, me, 'bank') ? recentChanges(t, pid, isAdmin) : [],
     special: specialInfo(t),
     hand: hv && { variant: hv.variant, variantName: hv.variantName, hole: hv.hole, boards: hv.boards, boardKind: hv.boardKind, runit: hv.runit, runs: hv.runs, street: hv.street, board: hv.board, pot: hv.pot, currentBet: hv.currentBet, turnId: hv.turnId, finished: hv.finished, legal: hv.legal, deadline: t.deadline },
     result: t.lastResult,
     log: t.log.slice(-12),
-    pending: can(t, me, 'bank') ? t.pending : t.pending.filter((r) => r.playerId === pid),
-    notes: can(t, me, 'bank') ? (t.notes || []) : [],
-    ledger: me.ledger.slice(-30),
-    history: me.history, sessions: sessionRows(t.sessLog, me.history, me.ledger, me.stack + me.queued),
+    pending: me && can(t, me, 'bank') ? t.pending : t.pending.filter((r) => r.playerId === pid),
+    notes: me && can(t, me, 'bank') ? (t.notes || []) : [],
+    ledger: me ? me.ledger.slice(-30) : [],
+    history: me ? me.history : [], sessions: me ? sessionRows(t.sessLog, me.history, me.ledger, me.stack + me.queued) : [],
   };
 }
 
@@ -213,8 +220,9 @@ function send(res, obj) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); }
 function broadcast(t) {
   markTables();
   for (const [pid, set] of t.clients) {
-    if (!t.players.has(pid)) continue;
-    const v = viewFor(t, pid);
+    const w = !t.players.has(pid) && (t.watchers || new Map()).get(pid);
+    if (!t.players.has(pid) && !w) continue;
+    const v = w ? viewFor(t, null, w) : viewFor(t, pid);
     for (const res of set) { try { send(res, v); } catch (e) { /* closed */ } }
   }
 }
@@ -293,6 +301,7 @@ function finalize(t) {
   }
   { const last = t.sessLog[t.sessLog.length - 1]; if (last && !last.end) last.end = Date.now(); }
   t.final = buildFinal(t);
+  t.final.startedAt = t.startedAt || t.createdAt;
   say(t, 'The game is over. Thanks for playing.');
   for (const x of t.final.people) statementLinks.set(x.dl, { code: t.code, pid: x.id });
   t.historyId = club.gameEnded(t) || null;
@@ -302,7 +311,7 @@ function finalize(t) {
 
 function resetGame(t) {
   t.ended = false; t.ending = false; t.sessionNo = 0; t.sessionEnding = false; t.draw = null; t.drawUntil = 0;
-  t.final = null; t.departed = []; t.sessLog = []; t.vmark = null; t.special = false; t.rounds = [];
+  t.final = null; t.departed = []; t.sessLog = []; t.vmark = null; t.special = false; t.rounds = []; t.startedAt = 0;
   for (const p of t.players.values()) p.optIn = false;
   for (const p of t.players.values()) { // a new game starts from the chips people hold now
     p.stayUntil = 2; p.callAfter = 0;
@@ -627,10 +636,19 @@ const routes = {
   join(b) {
     const t = getTable(b.code);
     if (t.membersOnly) throw httpErr(403, 'This table is for invited members. Open your personal invite link.');
-    const name = cleanName(b.name);
+    // everyone plays as a member of the club: a personal link, never a room code
+    let mem = null;
+    if (club.state().club) {
+      mem = b.mtoken ? Object.values(club.state().members).find((x) => x.token === String(b.mtoken)) : null;
+      if (!mem) throw httpErr(403, 'Everyone plays as a member. Open the personal link the admin sent you.');
+      const seated = [...t.players.values()].find((p) => p.memberId === mem.id);
+      if (seated) return { code: t.code, token: seated.token, pid: seated.id };
+    }
+    const name = mem ? mem.name : cleanName(b.name);
     if ([...t.players.values()].some((p) => p.name.toLowerCase() === name.toLowerCase()))
       throw httpErr(400, 'That nickname is taken at this table');
     const p = addPlayer(t, name);
+    if (mem) p.memberId = mem.id;
     say(t, `${name} sat down`);
     broadcast(t);
     return { code: t.code, token: p.token, pid: p.id };
@@ -765,6 +783,7 @@ const routes = {
     const { t, p } = auth(b); need(t, p, 'start');
     if (t.ended) resetGame(t);
     t.running = true;
+    if (!t.startedAt) t.startedAt = Date.now(); // the game starts when play starts, not when it was planned
     say(t, 'The admin started the game');
     broadcast(t); maybeStartHand(t);
     return { ok: true };
@@ -1037,14 +1056,37 @@ function autoBuyin(t, p) {
   say(t, `${p.name} bought in for ${amount}`);
   broadcast(t); maybeStartHand(t);
 }
-const club = createClub({ tables, makeTable, addPlayer, broadcast, say, httpErr, cleanName, cleanSettings, autoBuyin, publicBase });
+function addWatcher(t, m) {
+  t.watchers = t.watchers || new Map();
+  for (const w of t.watchers.values()) if (w.memberId === m.id) return w;
+  const w = { id: 'w' + rid(6), token: rid(20), memberId: m.id, name: m.name };
+  t.watchers.set(w.id, w);
+  return w;
+}
+const club = createClub({ tables, makeTable, addPlayer, addWatcher, broadcast, say, httpErr, cleanName, cleanSettings, autoBuyin, publicBase });
 Object.assign(routes, club.routes);
 
+// a member from the club watching a table they have no seat at
+function watchEvents(req, res, t, w) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  res.write('retry: 1500\n\n');
+  if (!t.clients.has(w.id)) t.clients.set(w.id, new Set());
+  t.clients.get(w.id).add(res);
+  send(res, viewFor(t, null, w));
+  const ka = setInterval(() => { try { res.write(': ka\n\n'); } catch (e) { /* closed */ } }, 20000);
+  req.on('close', () => {
+    clearInterval(ka);
+    const set = t.clients.get(w.id);
+    if (set) { set.delete(res); if (!set.size) t.clients.delete(w.id); }
+  });
+}
 function handleEvents(req, res, url) {
   const t = tables.get(String(url.searchParams.get('code') || '').toUpperCase());
   const token = url.searchParams.get('token');
   const p = t && [...t.players.values()].find((x) => x.token === token);
-  if (!p) { res.writeHead(401); return res.end(); }
+  const w = !p && t && [...(t.watchers || new Map()).values()].find((x) => x.token === token);
+  if (!p && !w) { res.writeHead(401); return res.end(); }
+  if (w) return watchEvents(req, res, t, w);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive', 'X-Accel-Buffering': 'no',
@@ -1096,7 +1138,7 @@ const server = http.createServer(async (req, res) => {
       if (!asker) throw httpErr(401, 'You are not at this table');
       const target = url.searchParams.get('pid') || asker.id;
       if (target !== asker.id && !(t.players.has(t.adminId) && t.players.get(t.adminId).token === tok)) throw httpErr(403, 'Only the banker can download someone else\'s statement');
-      const pdf = statementPdf(fin, target);
+      const pdf = statementPdf(fin, target, clubTz());
       if (!pdf) throw httpErr(404, 'No statement for that player');
       const who = fin.people.find((x) => x.id === target).name.replace(/[^A-Za-z0-9]+/g, '-');
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="Statement-${who}-${t.code}.pdf"`, 'Cache-Control': 'no-store' });
@@ -1130,7 +1172,7 @@ const server = http.createServer(async (req, res) => {
     }
     const sm = req.method === 'GET' && url.pathname.match(/^\/s\/([0-9a-f]{36})\.pdf$/);
     if (sm) {
-      const l = statementLinks.get(sm[1]), t = l && tables.get(l.code), pdf = t && t.final && statementPdf(t.final, l.pid);
+      const l = statementLinks.get(sm[1]), t = l && tables.get(l.code), pdf = t && t.final && statementPdf(t.final, l.pid, clubTz());
       if (!pdf) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('This statement is no longer available'); }
       const who = t.final.people.find((x) => x.id === l.pid).name.replace(/[^A-Za-z0-9]+/g, '-');
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="Statement-${who}-${t.code}.pdf"`, 'Cache-Control': 'no-store' });
@@ -1189,7 +1231,7 @@ function dumpTables() {
   for (const t of tables.values()) {
     if (t.closed) continue;
     const o = {};
-    for (const k of Object.keys(t)) if (!['clients', 'timer', 'nextTimer', 'hand', 'players', 'fx', 'fxLast'].includes(k)) o[k] = t[k];
+    for (const k of Object.keys(t)) if (!['clients', 'timer', 'nextTimer', 'hand', 'players', 'fx', 'fxLast', 'watchers'].includes(k)) o[k] = t[k];
     o.players = [...t.players.values()].map((p) => ({ ...p, connected: false }));
     if (t.ended) delete o.rounds; // the best rounds are kept with the game in the club's history
     o.hadHand = !!(t.hand && !t.hand.finished);
