@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const SEATS_MAX = Number(process.env.SEATS_MAX || 7);
 const REPLAY_GAMES = Number(process.env.REPLAY_GAMES || 5); // games that keep their replays
 const webpush = require('./webpush');
 
@@ -437,7 +438,7 @@ function createClub(ctx) {
       let invited = 'all';
       if (Array.isArray(b.invited)) invited = b.invited.filter((id) => state.members[id] && !isOwner(state.members[id]));
       const ev = {
-        id: rid(4), title: String(b.title || '').trim() ? cleanTitle(b.title) : autoTitle(startAt), startAt, seats: Math.min(10, Math.max(2, Math.floor(Number(b.seats)) || 10)),
+        id: rid(4), title: String(b.title || '').trim() ? cleanTitle(b.title) : autoTitle(startAt), startAt, seats: Math.min(SEATS_MAX, Math.max(2, Math.floor(Number(b.seats)) || SEATS_MAX)),
         settings: cleanSettings({ sb: b.sb, bb: b.bb, turnSeconds: b.turnSeconds, minBuyin: b.minBuyin, maxBuyin: b.maxBuyin, sessionMinutes: b.sessionMinutes }),
         invited, auto: b.auto !== false && !(b.proposal !== false && !b.now), proposal: b.proposal !== false && !b.now, adminPlays: b.adminPlays !== false, confirmed: false, people: {}, delegates: {}, status: 'scheduled', reminded: false, tableCode: '', createdBy: m.id, createdAt: Date.now(),
       };

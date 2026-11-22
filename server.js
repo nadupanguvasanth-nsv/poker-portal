@@ -13,6 +13,7 @@ const { buildFinal, statementPdf, sessionRows } = require('./statement');
 const PORT = process.env.PORT || 3000;
 const NEXT_HAND_DELAY_MS = Number(process.env.NEXT_HAND_DELAY_MS || 7000);
 const OWN_UNDO_MS = Number(process.env.OWN_UNDO_MS || 60000); // how long you can take back your own buy-in
+const SEATS_MAX = Number(process.env.SEATS_MAX || 7); // seats at a table
 const ROUNDS_KEPT = Number(process.env.ROUNDS_KEPT || 10); // best rounds kept for each game's replay
 const SHOW_HOLD_MS = Number(process.env.SHOW_HOLD_MS || 8000); // extra time when somebody shows a card
 const DRAW_SHOW_MS = Number(process.env.DRAW_SHOW_MS || 9000);
@@ -46,11 +47,11 @@ function cleanSettings(s = {}, old = {}) {
     minBuyin: clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb * 50), // 100/200 blinds give the 10,000 minimum the club plays with
     maxBuyin: Math.max(clampInt(s.maxBuyin, bb, 1e9, old.maxBuyin || bb * 500), clampInt(s.minBuyin, 1, 1e9, old.minBuyin || bb * 50)),
     bombAnteBB: clampInt(s.bombAnteBB, 1, 100, old.bombAnteBB || 5),   // bomb pot ante, in big blinds
-    bombMax: clampInt(s.bombMax, 2, 10, old.bombMax || 10),            // most players in the 2-card bomb pot
+    bombMax: clampInt(s.bombMax, 2, SEATS_MAX, old.bombMax || SEATS_MAX), // most players in the 2-card bomb pot
     runItMin: clampInt(s.runItMin, 0, 1e9, old.runItMin || 0),         // pots at least this big can be run more than once (0 = off)
-    minPlayers: clampInt(s.minPlayers, 0, 10, old.minPlayers === undefined ? 5 : old.minPlayers), // a club game is cancelled if fewer than this have chips in time (0 = off)
+    minPlayers: clampInt(s.minPlayers, 0, SEATS_MAX, old.minPlayers === undefined ? 5 : old.minPlayers), // a club game is cancelled if fewer than this have chips in time (0 = off)
     waitMinutes: clampInt(s.waitMinutes, 1, 120, old.waitMinutes || 5),
-    maxSeats: 10,
+    maxSeats: SEATS_MAX, // seven: a 5-card bomb pot with three flops still fits in one deck
     sessionMinutes: clampInt(s.sessionMinutes, 1, 600, old.sessionMinutes || 120),
   };
 }
@@ -58,7 +59,7 @@ function cleanSettings(s = {}, old = {}) {
 function makeTable(adminName, settings) {
   const t = {
     code: newCode(), createdAt: Date.now(), settings: cleanSettings(settings),
-    players: new Map(), order: new Array(10).fill(null), adminId: null,
+    players: new Map(), order: new Array(SEATS_MAX).fill(null), adminId: null,
     hand: null, handNo: 0, running: false, buttonSeat: -1,
     pending: [], notes: [], log: [], clients: new Map(), timer: null, nextTimer: null,
     deadline: 0, lastResult: null, closed: false, forceVariant: null, variant: 'none', vmark: null, special: false,
@@ -158,6 +159,8 @@ function viewFor(t, pid) {
     seats.push({
       seat: s, id, name: p.name, optIn: !!p.optIn, isAdmin: id === t.adminId, connected: p.connected, away: p.away, ghost: p.ghost, approved: p.approved, roles: (p.roles || []).filter((r) => ROLE_NAMES.includes(r)),
       stack: hp ? hp.stack : p.stack, inHand: !!hp, bet: hp ? hp.bet : 0,
+      // a mark on the seat for anyone who can deal with it: this player has asked for something
+      wants: can(t, me, 'bank') || can(t, me, 'players') ? (!!p.leaveReq || (t.notes || []).some((x) => x.playerId === p.id)) : false,
       // what they are down on their buy-ins, counting chips in front of them right now
       behind: p.bought - ((hp ? hp.stack : p.stack) + p.queued),
       folded: hp ? hp.folded : false, allIn: hp ? hp.allIn : false,
