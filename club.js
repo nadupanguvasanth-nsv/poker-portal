@@ -90,7 +90,7 @@ function createClub(ctx) {
   const store = ctx.store || pickStore(env);
   let state = { club: null, members: {}, events: {} };
   const clients = new Map(); // memberId -> Set(res)
-  let saving = Promise.resolve(), dirty = false, timer = null, lastError = '';
+  let saving = Promise.resolve(), dirty = false, timer = null, lastError = '', lastSaved = '', lastSaveAt = 0;
 
   async function load() {
     let s = null, err = null;
@@ -110,6 +110,14 @@ function createClub(ctx) {
       if (!dirty) return;
       dirty = false;
       const snap = JSON.parse(JSON.stringify(state));
+      // Google Drive is reached through an Apps Script with a daily time budget, so an
+      // unchanged club is never written twice and writes are spaced out.
+      const text = JSON.stringify(snap);
+      if (text === lastSaved) return;
+      const gap = ctx.saveMinMs !== undefined ? ctx.saveMinMs : (ctx.saveDelayMs !== undefined ? 0 : Number(process.env.CLUB_SAVE_MIN_MS || 15000));
+      const wait = Math.max(0, lastSaveAt + gap - Date.now());
+      if (wait > 0) { dirty = true; timer = setTimeout(() => { timer = null; if (dirty) { dirty = false; persist(); } }, wait); if (timer.unref) timer.unref(); return; }
+      lastSaved = text; lastSaveAt = Date.now();
       saving = saving.then(() => store.save(snap)).then(() => { lastError = ''; }).catch((e) => { lastError = e.message; console.error('Club save failed:', e.message); dirty = true; const r = setTimeout(persist, 5000); if (r.unref) r.unref(); });
     }, ctx.saveDelayMs === undefined ? 200 : ctx.saveDelayMs);
     if (timer.unref) timer.unref();
@@ -117,7 +125,7 @@ function createClub(ctx) {
   // live tables are kept in the same saved copy, so a restart does not lose the game
   const setTables = (obj) => { state.tables = obj; persist(); };
   const getTables = () => state.tables || {};
-  const flush = async () => { if (timer) { clearTimeout(timer); timer = null; } dirty = false; await saving; await store.save(JSON.parse(JSON.stringify(state))); };
+  const flush = async () => { if (timer) { clearTimeout(timer); timer = null; } dirty = false; await saving; const text = JSON.stringify(state); lastSaved = text; lastSaveAt = Date.now(); await store.save(JSON.parse(text)); };
 
   // ----- helpers -----
   const owner = () => state.club && state.members[state.club.ownerId];
