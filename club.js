@@ -147,6 +147,29 @@ function createClub(ctx) {
   const cleanRoles = (r) => [...new Set((Array.isArray(r) ? r : []).filter((x) => ROLES.includes(x)))];
   const cleanTitle = (t) => String(t || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40) || 'Game night';
 
+  // A game with no name of its own gets one from the day and hour it is set for,
+  // so "Saturday Night Shootout" rather than "Game night" every time.
+  const NAME_POOLS = {
+    dawn: ['Graveyard Shift', 'Midnight Run', 'Last Call', 'Small Hours', 'Insomniacs'],
+    morning: ['Morning Shuffle', 'Sunrise Session', 'Early Shuffle', 'Morning Warm-up', 'Breakfast Bluffs'],
+    afternoon: ['Matinee', 'Afternoon Session', 'Afternoon Grind', 'Daylight Shuffle', 'Long Afternoon'],
+    evening: ['Evening Showdown', 'Shootout', 'Standoff', 'Evening Session', 'Table Talk'],
+    night: ['Night Showdown', 'Night Shootout', 'Late Shuffle', 'Night Owls', 'All-in Night'],
+  };
+  function autoTitle(startAt) {
+    const tz = env.STATEMENT_TZ || env.TZ_LABEL || 'Asia/Kolkata';
+    let day, hour;
+    try {
+      const f = new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'long', hour: 'numeric', hour12: false });
+      const parts = f.formatToParts(new Date(startAt));
+      day = (parts.find((p) => p.type === 'weekday') || {}).value;
+      hour = Number((parts.find((p) => p.type === 'hour') || {}).value);
+    } catch (e) { const d = new Date(startAt); day = d.toLocaleDateString('en-GB', { weekday: 'long' }); hour = d.getHours(); }
+    const part = hour < 5 ? 'dawn' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
+    const pool = NAME_POOLS[part];
+    return cleanTitle(`${day} ${pool[Math.floor(Math.random() * pool.length)]}`);
+  }
+
   function canSee(ev, m) {
     const mgr = isOwner(m) || evRoles(ev, m).length > 0;
     if (ev.status === 'cancelled') return mgr ? Date.now() < ev.startAt + 6 * 3600e3 : false;
@@ -410,7 +433,7 @@ function createClub(ctx) {
       let invited = 'all';
       if (Array.isArray(b.invited)) invited = b.invited.filter((id) => state.members[id] && !isOwner(state.members[id]));
       const ev = {
-        id: rid(4), title: cleanTitle(b.title), startAt, seats: Math.min(10, Math.max(2, Math.floor(Number(b.seats)) || 10)),
+        id: rid(4), title: String(b.title || '').trim() ? cleanTitle(b.title) : autoTitle(startAt), startAt, seats: Math.min(10, Math.max(2, Math.floor(Number(b.seats)) || 10)),
         settings: cleanSettings({ sb: b.sb, bb: b.bb, turnSeconds: b.turnSeconds, minBuyin: b.minBuyin, maxBuyin: b.maxBuyin, sessionMinutes: b.sessionMinutes }),
         invited, auto: b.auto !== false && !(b.proposal !== false && !b.now), proposal: b.proposal !== false && !b.now, adminPlays: b.adminPlays !== false, confirmed: false, people: {}, delegates: {}, status: 'scheduled', reminded: false, tableCode: '', createdBy: m.id, createdAt: Date.now(),
       };

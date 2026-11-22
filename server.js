@@ -12,6 +12,7 @@ const { buildFinal, statementPdf, sessionRows } = require('./statement');
 
 const PORT = process.env.PORT || 3000;
 const NEXT_HAND_DELAY_MS = Number(process.env.NEXT_HAND_DELAY_MS || 7000);
+const OWN_UNDO_MS = Number(process.env.OWN_UNDO_MS || 60000); // how long you can take back your own buy-in
 const ROUNDS_KEPT = Number(process.env.ROUNDS_KEPT || 10); // best rounds kept for each game's replay
 const SHOW_HOLD_MS = Number(process.env.SHOW_HOLD_MS || 8000); // extra time when somebody shows a card
 const DRAW_SHOW_MS = Number(process.env.DRAW_SHOW_MS || 9000);
@@ -127,6 +128,16 @@ function specialInfo(t) {
 const FX_THROWS = ['bomb', 'flower', 'tomato', 'heart'];
 const FX_EMOJI = ['laugh', 'cry', 'cool', 'angry', 'shock', 'shh', 'pray', 'clap', 'smirk', 'clown'];
 // cards a player chose to show after a hand: only the chosen positions, the rest stay face down
+// the buy-in a player may still take back themselves, with the seconds left on it
+function ownUndo(p) {
+  for (let i = p.ledger.length - 1; i >= 0; i--) {
+    const e = p.ledger[i];
+    if (e.kind !== 'buyin' || e.reversed || !e.amount) continue;
+    const left = OWN_UNDO_MS - (Date.now() - e.t);
+    return left > 0 ? { index: i, amount: e.amount, left } : null;
+  }
+  return null;
+}
 function shownFor(t, id) {
   if (!t.shown || t.shown.handNo !== t.handNo || !t.hand || !t.hand.finished) return null;
   const idx = t.shown.ids[id];
@@ -159,7 +170,7 @@ function viewFor(t, pid) {
     now: Date.now(), code: t.code, settings: t.settings, running: t.running, handNo: t.handNo,
     you: {
       id: pid, name: me.name, isAdmin, seat: me.seat, stack: seats[me.seat].stack,
-      optIn: !!me.optIn, queued: me.queued, bought: me.bought, behind: seats[me.seat].behind, inHand: seats[me.seat].inHand, away: me.away,
+      optIn: !!me.optIn, queued: me.queued, bought: me.bought, behind: seats[me.seat].behind, myUndo: ownUndo(me), inHand: seats[me.seat].inHand, away: me.away,
       can: Object.fromEntries(ROLE_NAMES.map((r) => [r, can(t, me, r)])), member: !!me.memberId,
       approved: me.approved, leaveReq: !!me.leaveReq, paying: me.paying || 0, ghost: me.ghost, ghostUntil: me.ghostUntil, ghostEndsAt: me.ghost ? sessionEnd(t, me.ghostUntil) : 0, stayUntil: me.stayUntil, callAfter: me.callAfter,
       leave: leaveInfo(t, me), callOptions: callOptions(t, me),
@@ -517,6 +528,13 @@ function doExit(t, target, emergency, by) {
 // ---------- the ten best rounds of a game, kept for the replay ----------
 // A round earns its place by the chips that moved and by the hand that won it.
 const BIG_HANDS = { 'Royal flush': 6, 'Straight flush': 5, 'Four of a kind': 4, 'Full house': 2, 'Flush': 1.5, 'Straight': 1.3 };
+// a replay shows only the cards that were actually turned over: at a showdown, or because
+// the player chose to show them. Everything else stays face down, as it was on the night.
+function roundCards(t, hp, r) {
+  const shown = (t.shown && t.shown.handNo === t.handNo && t.shown.ids[hp.id]) || [];
+  const open = r.reveal && r.reveal[hp.id];
+  return hp.cards.map((c, i) => (open || shown.includes(i) ? c : '??'));
+}
 function roundScore(rec) {
   let best = 1;
   for (const w of rec.won) { const m = BIG_HANDS[w.handName]; if (m && m > best) best = m; }
@@ -530,7 +548,7 @@ function keepIfGood(t, h, r) {
     const rec = {
       no: t.handNo, at: Date.now(), session: t.sessionNo, sb: t.settings.sb, bb: t.settings.bb,
       variant: h.variant, variantName: h.v.name, boards: h.boards.map((b) => b.slice()), boardKind: h.boardKind, runs: h.runs,
-      players: h.players.map((p) => ({ id: p.id, name: nameOf(t, p.id), seat: p.seat, start: p.start, cards: p.cards.slice(), folded: p.folded, ghost: !!p.ghost })),
+      players: h.players.map((p) => ({ id: p.id, name: nameOf(t, p.id), seat: p.seat, start: p.start, cards: roundCards(t, p, r), folded: p.folded, ghost: !!p.ghost })),
       acts: h.acts.map((a) => ({ ...a })), pot, uncontested: !!r.uncontested,
       shown: (t.shown && t.shown.handNo === t.handNo) ? { ...t.shown.ids } : {},
       won: Object.entries(r.won).map(([id, amount]) => ({ id, name: nameOf(t, id), amount, handName: r.reveal[id] ? r.reveal[id].handName : null })),
@@ -681,21 +699,26 @@ const routes = {
   },
   // correct a mistake: reverse a buy-in or an adjustment. The original stays on the statement and a correcting entry is added.
   undo(b) {
-    const { t, p } = auth(b); need(t, p, 'bank');
-    const target = t.players.get(b.playerId);
-    if (!target) throw httpErr(404, 'Player not found');
-    if (target.id === p.id && p.id !== t.adminId) throw httpErr(403, 'Another banker must correct your own chips');
+    const { t, p } = auth(b);
+    const target = t.players.get(b.playerId) || p;
     const e = target.ledger[Math.floor(Number(b.index))];
+    // anyone may take back their own buy-in for a minute, in case they typed the wrong amount
+    const mine = target.id === p.id && e && e.kind === 'buyin' && Date.now() - e.t < OWN_UNDO_MS;
+    if (!mine) {
+      need(t, p, 'bank');
+      if (target.id === p.id && p.id !== t.adminId) throw httpErr(403, 'Another banker must correct your own chips');
+    }
+    if (!target) throw httpErr(404, 'Player not found');
     if (!e || !['buyin', 'adjust'].includes(e.kind) || e.undo || e.reversed || !e.amount) throw httpErr(400, 'That entry cannot be undone');
     const delta = -e.amount;
     if (target.stack + target.queued + delta < 0) throw httpErr(400, `${target.name} no longer has those chips. Adjust by hand instead.`);
     const label = e.kind === 'buyin' ? 'buy-in' : (e.reason || 'adjustment');
-    credit(t, target, delta, 'adjust', 'banker');
+    credit(t, target, delta, 'adjust', mine ? 'self' : 'banker');
     const c = target.ledger[target.ledger.length - 1];
     c.reason = ('Undo: ' + label).slice(0, 60); c.undo = true;
     e.reversed = true;
     if (e.kind === 'buyin') target.bought -= e.amount;
-    say(t, `Banker undid ${target.name}'s ${label} (${e.amount > 0 ? '+' : ''}${e.amount})`);
+    say(t, mine ? `${target.name} took back a ${label} of ${e.amount}` : `Banker undid ${target.name}'s ${label} (${e.amount > 0 ? '+' : ''}${e.amount})`);
     broadcast(t); maybeStartHand(t);
     return { ok: true };
   },
@@ -812,6 +835,9 @@ const routes = {
     const idx = [...new Set((Array.isArray(b.idx) ? b.idx : []).map(Number))].filter((i) => Number.isInteger(i) && i >= 0 && i < hp.cards.length).sort();
     t.shown = t.shown && t.shown.handNo === t.handNo ? t.shown : { handNo: t.handNo, ids: {} };
     if (idx.length) t.shown.ids[p.id] = idx; else delete t.shown.ids[p.id];
+    // keep the replay of this hand in step with what has been shown
+    const rec = (t.rounds || []).find((x) => x.no === t.handNo);
+    if (rec) { const q = rec.players.find((x) => x.id === p.id); if (q) q.cards = q.cards.map((c, i) => (idx.includes(i) ? hp.cards[i] : (rec.reveal[p.id] ? hp.cards[i] : '??'))); }
     if (idx.length && t.nextAt) { // give the table time to look, up to 20 seconds past the usual gap
       const want = Math.min(Date.now() + SHOW_HOLD_MS, (t.nextBase || t.nextAt) + 20000);
       if (want > t.nextAt) { t.nextAt = want; clearTimeout(t.nextTimer); t.nextTimer = setTimeout(() => maybeStartHand(t), want - Date.now()); }

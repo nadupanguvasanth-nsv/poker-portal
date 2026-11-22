@@ -616,7 +616,8 @@ function sheet(){
   // buy-in
   if(!(me.ghost||me.approved===false)){
   h+='<div class="h2">MY ACCOUNT</div>'+myAccount(v);
-  h+='<div style="display:flex;gap:8px"><input id="bamt" inputmode="numeric" placeholder="Buy in ('+fmt(v.settings.minBuyin)+' to '+fmt(v.settings.maxBuyin)+')" style="flex:1;height:48px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;padding:0 14px"><button class="btn" style="width:110px" onclick="doBuyin()">Buy in</button></div><div class="muted small" style="margin-top:6px">Buy in whenever you like. Every buy-in is recorded and settled at the end.</div>';
+  h+='<div style="display:flex;gap:8px"><input id="bamt" inputmode="numeric" placeholder="Buy in ('+fmt(v.settings.minBuyin)+' to '+fmt(v.settings.maxBuyin)+')" style="flex:1;height:48px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;padding:0 14px"><button class="btn" style="width:110px" onclick="doBuyin()">Buy in</button></div><div class="muted small" style="margin-top:6px">Buy in whenever you like. Every buy-in is recorded and settled at the end.</div>'+
+    (me.myUndo?'<button class="btn ghost" style="margin-top:8px;height:42px;font-size:13px" onclick="undoMine('+me.myUndo.index+','+me.myUndo.amount+')">Take back my '+fmt(me.myUndo.amount)+' buy-in ('+Math.ceil(me.myUndo.left/1000)+'s)</button>':'');
   }
   if(me.can.bank&&v.pending.length){
     h+='<div class="h2">OLD CHIP REQUESTS</div>';
@@ -732,6 +733,7 @@ function share(){
   if(navigator.share){navigator.share({title:'Join my poker table',text:'Room code '+S.view.code,url:url}).catch(function(){});}
   else if(navigator.clipboard){navigator.clipboard.writeText(url).then(function(){toast('Link copied');});}
 }
+function undoMine(i,amt){if(!confirm('Take back your buy-in of '+fmt(amt)+'? It only works for a minute after you buy in.'))return;api('undo',{index:i}).then(function(){toast('Buy-in taken back');}).catch(fail);}
 function doBuyin(){var a=val('bamt');api('buyin',{amount:a}).then(function(r){toast('Bought in for '+fmt(r.bought?a:a)+'. Total buy-ins '+fmt(r.bought||0));var i=document.getElementById('bamt');if(i)i.value='';}).catch(fail);}
 // where one player stands: what they put in, what they hold, how far behind or ahead
 function accountLine(bought,chips){
@@ -909,7 +911,7 @@ function evCard(ev,cv){
 }
 function newEvForm(cv){
   var h='<div class="evc" style="border-color:#d8b45c"><div class="disp" style="font-size:26px">New game</div><div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">'+
-    dfield('c_title','NAME','Friday night','maxlength="40"')+dfield('c_when','DATE AND TIME (EMPTY = START NOW)','','type="datetime-local"')+
+    dfield('c_title','NAME (LEAVE EMPTY AND THE PORTAL NAMES IT)','Saturday Night Showdown','maxlength="40"')+dfield('c_when','DATE AND TIME (EMPTY = START NOW)','','type="datetime-local"')+
     '<div style="display:flex;gap:8px">'+dfield('c_sb','SMALL','100','inputmode="numeric"')+dfield('c_bb','BIG','200','inputmode="numeric"')+dfield('c_seats','SEATS','10','inputmode="numeric"')+'</div>'+
     '<div style="display:flex;gap:8px">'+dfield('c_ts','TIMER (S)','40','inputmode="numeric"')+dfield('c_sm','SESSION (MIN)','120','inputmode="numeric"')+'</div><div style="display:flex;gap:8px">'+dfield('c_mn','MIN BUY-IN','10000','inputmode="numeric"')+dfield('c_mb','MAX BUY-IN','100000','inputmode="numeric"')+'</div>'+
     '<div class="h2" style="margin:4px 0 0">WHO IS INVITED</div><div style="display:flex;gap:8px"><button class="rolechip'+(S.inv==='all'?' on':'')+'" onclick="S.inv=\'all\';render()">All members</button><button class="rolechip'+(S.inv==='pick'?' on':'')+'" onclick="S.inv=\'pick\';render()">Pick members</button></div>';
