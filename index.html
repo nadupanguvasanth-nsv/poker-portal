@@ -15,7 +15,15 @@
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;background:#0a0c0b;overflow:hidden;font-family:'Inter',system-ui,sans-serif;color:#f2efe6;-webkit-text-size-adjust:100%;overscroll-behavior:none}
-#wrap{position:absolute;left:50%;top:0;transform-origin:top left}
+#wrap{position:absolute;left:0;top:0;transform-origin:top left}
+/* Reads the phone's safe area - the notch, the Dynamic Island, the home bar - so fit() can keep
+   the portal clear of them. Measured off this rather than guessed. */
+#safe{position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;
+padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+/* A phone held sideways leaves so little height that everything shrinks past reading size. Better
+   to ask for it the right way up than to show a table nobody can read. */
+#turn{display:none;position:fixed;inset:0;z-index:999;background:#0a0c0b;color:#f2efe6;
+align-items:center;justify-content:center;text-align:center;padding:24px}
 #stage{position:relative;width:390px;height:844px;overflow:hidden;background:#0a0c0b}
 button{font-family:inherit;cursor:pointer}
 button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offset:2px}
@@ -109,7 +117,10 @@ input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 
 </head>
 <body>
+<div id="safe"></div>
 <div id="wrap"><div id="stage"></div></div>
+<div id="turn"><div><div class="disp" style="font-size:30px;line-height:1.1">Turn your phone<br>upright</div>
+<div class="muted small" style="margin-top:10px;white-space:normal">The table is dealt tall, so it needs the long way up.</div></div></div>
 <script>
 // all in one SVG so it stays sharp and correctly spaced at every size.
 var SUIT_SHAPE={
@@ -773,16 +784,39 @@ function render() {
   fit();
 }
 
-// the whole portal is drawn at 390x844 and scaled to the phone, so it looks the same everywhere
+// The whole portal is drawn at 390x844 and scaled to the phone, so it looks the same everywhere.
+//
+// The position is worked out in pixels rather than with a percentage translate. A CSS percentage
+// in translateX resolves against the element's own unscaled width, so on any phone that is not
+// exactly 390 wide the page slid sideways - about 80px on a phone in Safari, enough to cut the
+// title off. Everything is placed against the safe area too, so nothing hides under the notch,
+// the Dynamic Island or the home bar.
+function inset() {
+  var el = document.getElementById('safe');
+  if (!el) return { t: 0, r: 0, b: 0, l: 0 };
+  var cs = getComputedStyle(el);
+  var n = function (v) { var x = parseFloat(v); return x > 0 ? x : 0; };
+  return { t: n(cs.paddingTop), r: n(cs.paddingRight), b: n(cs.paddingBottom), l: n(cs.paddingLeft) };
+}
+
 function fit() {
-  var w = window.innerWidth, h = window.innerHeight;
+  var pad = inset();
+  var w = Math.max(1, window.innerWidth - pad.l - pad.r);
+  var h = Math.max(1, window.innerHeight - pad.t - pad.b);
+
+  // Sideways on a phone there is so little height left that the type comes out at about 4px.
+  // Ask for the phone upright instead. A tablet on its side has room, so it carries on.
+  var turn = document.getElementById('turn');
+  if (turn) turn.style.display = (w > h && h < 500) ? 'flex' : 'none';
+
   var scale = Math.min(w / 390, h / 844);
   var wrap = document.getElementById('wrap');
-  wrap.style.transform = 'translateX(-50%) scale(' + scale + ')';
-  wrap.style.left = '50%';
-  wrap.style.top = Math.max(0, (h - 844 * scale) / 2) + 'px';
+  wrap.style.transform = 'scale(' + scale + ')';
+  wrap.style.left = Math.round(pad.l + (w - 390 * scale) / 2) + 'px';
+  wrap.style.top = Math.round(pad.t + Math.max(0, (h - 844 * scale) / 2)) + 'px';
 }
 window.addEventListener('resize', fit);
+window.addEventListener('orientationchange', function () { setTimeout(fit, 120); });
 
 // ---------------------------------------------------------------- go
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function () {});
