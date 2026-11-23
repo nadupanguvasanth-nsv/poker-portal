@@ -20,6 +20,44 @@ const PORT = Number(process.env.PORT || 3000);
 const NEXT_HAND_MS = Number(process.env.NEXT_HAND_MS || 4000);
 const SHOW_MS = Number(process.env.SHOW_MS || 8000);
 const RUNIT_SECONDS = Number(process.env.RUNIT_SECONDS || 20);   // how long the run-it vote waits
+const FX_GAP_MS = 900;                                           // one reaction at a time, per player
+const FX_LIFE_MS = 6000;                                         // how long one stays on the table
+
+// Things you can lob at somebody, and what it turns into when it lands.
+const FX_THROW = {
+  bomb: ['\uD83D\uDCA3', '\uD83D\uDCA5'], tomato: ['\uD83C\uDF45', '\uD83D\uDCA6'],
+  flower: ['\uD83C\uDF39', '\uD83C\uDF38'], heart: ['\u2764\uFE0F', '\uD83D\uDC95'],
+  beer: ['\uD83C\uDF7A', '\uD83C\uDF7B'], ice: ['\uD83E\uDDCA', '\u2744\uFE0F'],
+  fire: ['\uD83D\uDD25', '\uD83D\uDD25'], cash: ['\uD83D\uDCB8', '\uD83E\uDD11'],
+  crown: ['\uD83D\uDC51', '\u2728'], shoe: ['\uD83D\uDC5E', '\uD83D\uDCAB'],
+};
+// Things you put up over your own seat.
+const FX_FACE = {
+  laugh: '\uD83D\uDE02', cry: '\uD83D\uDE2D', cool: '\uD83D\uDE0E', angry: '\uD83D\uDE21',
+  shock: '\uD83D\uDE31', shh: '\uD83E\uDD2B', pray: '\uD83D\uDE4F', clap: '\uD83D\uDC4F',
+  smirk: '\uD83D\uDE0F', clown: '\uD83E\uDD21', think: '\uD83E\uDD14', salute: '\uD83E\uDEE1',
+  yawn: '\uD83E\uDD71', strong: '\uD83D\uDCAA', eyes: '\uD83D\uDC40', sweat: '\uD83D\uDE05',
+};
+// The table's own reactions, nobody sends these.
+const FX_AUTO = { win: '\uD83C\uDF89', bust: '\uD83D\uDC80', scoop: '\uD83D\uDD25' };
+
+function pushFx(t, k, from, to, icon, hit) {
+  const now = Date.now();
+  t.fxSeq = (t.fxSeq || 0) + 1;
+  t.fx = (t.fx || []).filter((f) => now - f.at < FX_LIFE_MS).slice(-20);
+  t.fx.push({ id: t.fxSeq, k, from: from || null, to: to || null, at: now, icon, hit: hit || '' });
+}
+
+// A hand worth a noise: somebody took a big one, or somebody ran out of chips.
+function celebrate(t, h) {
+  const won = (h.result && h.result.won) || {};
+  const big = t.blinds().bb * 20;
+  for (const id of Object.keys(won)) {
+    if (won[id] >= big * 2) pushFx(t, 'scoop', null, id, FX_AUTO.scoop);
+    else if (won[id] >= big) pushFx(t, 'win', null, id, FX_AUTO.win);
+  }
+  for (const p of t.seated()) if (p.stack <= 0) pushFx(t, 'bust', null, p.id, FX_AUTO.bust);
+}
 const KEEP_ENDED_H = Number(process.env.KEEP_ENDED_H || 48);
 const ROUNDS_KEPT = Number(process.env.ROUNDS_KEPT || 10);
 
@@ -50,7 +88,7 @@ function keepTable(t) {
 }
 // Everything about a table except the things that cannot be written down: the hand in progress,
 // the live timers, and the players, which are a Map.
-const NOT_SAVED = ['hand', 'players', 'fx', 'clients', 'timer', 'nextTimer', 'deadline'];
+const NOT_SAVED = ['hand', 'players', 'fx', 'fxLast', 'clients', 'timer', 'nextTimer', 'deadline'];
 function saveTable(t) {
   const o = {};
   for (const k of Object.keys(t)) if (!NOT_SAVED.includes(k)) o[k] = t[k];
@@ -159,7 +197,11 @@ function tableView(t, member) {
     leaveAsks: iRun ? t.seated().filter((p) => p.leaveAsk && !p.leaveOk).map((p) => ({ id: p.id, name: p.name })) : [],
     notes: iRun ? t.notes.slice(-10) : [],
     log: t.log.slice(-40),
-    fx: t.fx.slice(-6),
+    fx: (t.fx || []).filter((f) => Date.now() - f.at < FX_LIFE_MS).slice(-10),
+    reactions: {
+      throws: Object.keys(FX_THROW).map((k) => ({ k, icon: FX_THROW[k][0] })),
+      faces: Object.keys(FX_FACE).map((k) => ({ k, icon: FX_FACE[k] })),
+    },
   };
 }
 
@@ -204,6 +246,7 @@ function afterAction(t) {
   if (h.finished) {
     t.settle();
     keepRound(t, h);
+    celebrate(t, h);
     broadcast(t);
     const winner = t.tourneyWinner();
     if (winner) return endGame(t, `${winner.name} won the tournament`);
@@ -415,6 +458,28 @@ const routes = {
     t.notes.push({ id: Math.random().toString(36).slice(2, 8), name: m.name, text, at: Date.now() });
     if (t.notes.length > 30) t.notes.shift();
     changed(); broadcast(t);
+    return { ok: true };
+  },
+  // fun: lob something at another player, or put a face up over your own seat
+  react(b) {
+    const m = people.auth(b);
+    const t = lobby.need(b.code);
+    const p = t.byMember(m.id);
+    if (!p || p.out) throw httpErr(400, 'You are not at this table');
+    const k = String(b.kind || '');
+    const now = Date.now();
+    t.fxLast = t.fxLast || {};
+    if (now - (t.fxLast[p.id] || 0) < FX_GAP_MS) throw httpErr(429, 'One at a time');
+    if (FX_THROW[k]) {
+      const q = t.players.get(String(b.to));
+      if (!q || q.id === p.id || q.out) throw httpErr(400, 'Pick somebody else at the table');
+      t.fxLast[p.id] = now;
+      pushFx(t, k, p.id, q.id, FX_THROW[k][0], FX_THROW[k][1]);
+    } else if (FX_FACE[k]) {
+      t.fxLast[p.id] = now;
+      pushFx(t, k, p.id, null, FX_FACE[k]);
+    } else throw httpErr(400, 'No such reaction');
+    broadcast(t);
     return { ok: true };
   },
   runit(b) {

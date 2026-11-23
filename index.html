@@ -69,7 +69,14 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .betchip{display:inline-flex;align-items:center;gap:4px;margin-top:2px;padding:1px 7px 1px 4px;border-radius:9px;background:rgba(10,14,12,.72);border:1px solid #4a4a3a;font-size:11px;font-weight:700;color:#f3e9cf;white-space:nowrap}
 
 .betchip i{width:11px;height:11px;border-radius:7px;background:radial-gradient(circle at 35% 30%,#f0d089,#c69b3c);border:1px solid #8c6a22;display:block;flex:none}
-.seat{position:absolute;width:76px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.seat{position:absolute;width:64px;display:flex;flex-direction:column;align-items:center;text-align:center}
+/* Out of the flow on purpose: in the flow they pushed the whole seat down, so a player holding
+   cards sat lower than the empty seat beside them and names drifted onto the board. */
+.seat .hole{position:absolute;left:50%;bottom:100%;margin-bottom:-7px;display:flex;
+transform:translateX(-50%) scale(.72);transform-origin:bottom center}
+/* fanned rather than side by side: narrower, so a neighbour's name stays clear, and it reads
+   more like cards held in a hand - which matters most in Omaha, where there are four or five */
+.seat .hole .card+.card{margin-left:-8px}
 .bull{position:absolute;left:0;top:0;width:100%;height:100%;border-radius:50%;cursor:pointer}
 .fx{position:absolute;pointer-events:none;z-index:40;font-size:28px;line-height:1;margin:-14px 0 0 -14px}
 @keyframes fxfly{0%{transform:translate(0,0) scale(.6) rotate(0);opacity:1}85%{opacity:1}100%{transform:translate(var(--dx),var(--dy)) scale(1.15) rotate(540deg);opacity:0}}
@@ -82,7 +89,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .seat.out{opacity:.45}
 .seat.allin .av{border-color:#d2454d}
 .badge{position:absolute;left:-12px;top:-4px;width:22px;height:22px;border-radius:11px;background:#d8b45c;color:#14110a;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
-.sname{margin-top:3px;font-size:11px;color:#bfe0cf;max-width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sname{margin-top:3px;font-size:11px;color:#bfe0cf;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sbh{font-size:9.5px;font-weight:700;line-height:1.2;margin-top:1px}
 .sstack{font-size:12px;font-weight:600}
 .seat .tring{position:absolute;left:-2px;bottom:-4px;height:3px;background:#d8b45c;border-radius:2px;max-width:52px}
@@ -509,162 +516,304 @@ function memberLink(id) {
 }
 function removeMember(id, name) { if (!confirm('Remove ' + name + '?')) return; api('member-remove', { memberId: id }).then(refresh).catch(fail); }
 function resetMember(id, name) { if (!confirm('Forget ' + name + "'s passcode? They set a new one next time they sign in.")) return; api('member-reset', { memberId: id }).then(function () { toast('Done'); refresh(); }).catch(fail); }
-
 // ---------------------------------------------------------------- the table
-// The felt sits in the top half, your own cards and the buttons in the bottom half, so your
-// thumb never covers the game.
-var CX = 195, CY = 212, RX = 132, RY = 98, MINE = 400;
+// The felt in the top half, your own cards and the buttons below it, so your thumb never covers
+// the game. Seat 0 is you, at the bottom of the oval, and the rest go round from there - whoever
+// is on your left sits on your left on screen.
+var CX = 195, CY = 224, RX = 152, RY = 114, MINE = 404, PANEL = 586;
+var FELT = { left: 30, top: 106, w: 330, h: 240 };
 
-// Seat 0 is you, at the bottom of the oval. The others go round from there, so whoever is on
-// your left is on your left on the screen too.
 function seatXY(rel, n) {
-  var th = (rel / n) * Math.PI * 2;
-  return { x: CX + RX * Math.sin(th), y: CY + RY * Math.cos(th) };
+  var a = Math.PI / 2 + (rel / n) * Math.PI * 2;
+  return { x: CX + RX * Math.cos(a), y: CY + RY * Math.sin(a) };
+}
+
+// The rings round every face. They are what you aim at when you throw something.
+function bullSvg() {
+  return '<svg viewBox="0 0 52 52" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none">'
+    + '<circle cx="26" cy="26" r="24" fill="none" stroke="#d2454d" stroke-opacity=".55" stroke-width="3"/>'
+    + '<circle cx="26" cy="26" r="16" fill="none" stroke="#e8ece9" stroke-opacity=".4" stroke-width="3"/>'
+    + '<circle cx="26" cy="26" r="8" fill="none" stroke="#d2454d" stroke-opacity=".55" stroke-width="3"/></svg>';
+}
+
+function inHand(v, id) {
+  if (!v.hand || !id) return null;
+  return (v.hand.players || []).filter(function (p) { return p.id === id; })[0] || null;
 }
 
 function tableScreen() {
   var v = S.v;
   if (!v) return '<div class="sheet"><div class="muted" style="margin-top:40px">Opening the table…</div></div>';
+  var hand = v.hand, n = v.seatsMax, me = v.me;
+  // face your cards down again each new hand
+  var hno = hand ? hand.no : 0;
+  if (S.peekHand !== hno) { S.peekHand = hno; S.lock = false; }
+
   var h = '<div class="abs" style="inset:0;background:#0a0c0b">';
 
   // ---- the strip across the top ----
-  h += '<div class="abs" style="left:0;right:0;top:0;height:54px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid #1b211d">'
-    + '<button class="rolechip" style="height:30px" onclick="leaveTable()">&#8592; Tables</button>'
-    + '<div style="flex:1;min-width:0;text-align:center"><div style="font-size:12px;font-weight:700;letter-spacing:.06em">' + esc(v.formatName) + '</div>'
-    + '<div class="muted" style="font-size:10px">' + (v.format === 'tournament' ? 'Level ' + v.level + ' &middot; ' : '') + fmt(v.blinds.sb) + '/' + fmt(v.blinds.bb)
-    + (v.hand ? ' &middot; hand ' + v.hand.no : '') + '</div></div>'
-    + '<button class="rolechip" style="height:30px" onclick="S.menu=!S.menu;render()">&#9776;</button></div>';
+  h += '<div class="abs" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 16px;display:flex;align-items:center;gap:10px">'
+    + '<button class="rolechip" style="height:28px" onclick="leaveTable()">&#8592;</button>'
+    + '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM ' + esc(v.code) + '</div>'
+    + '<div class="muted" style="margin-top:2px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+    + (hno ? 'Hand ' + hno : 'Not started') + ' &middot; ' + esc(v.formatName) + '</div></div>'
+    + '<div style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #2a312d;background:#141917;font-size:13px;font-weight:600;display:flex;align-items:center;flex:none">'
+    + fmt(v.blinds.sb) + ' / ' + fmt(v.blinds.bb) + '</div>'
+    + '<button class="rolechip" style="height:30px;flex:none" onclick="S.menu=!S.menu;render()">&#9776;</button></div>';
 
-  // ---- the felt ----
-  h += '<div class="abs felt" style="left:30px;top:96px;width:330px;height:236px"></div>';
+  // ---- the felt and your own half ----
+  h += '<div class="abs felt" style="left:' + FELT.left + 'px;top:' + FELT.top + 'px;width:' + FELT.w + 'px;height:' + FELT.h + 'px"></div>';
+  h += '<div class="abs" style="left:0;top:' + MINE + 'px;width:390px;height:' + (844 - MINE) + 'px;background:linear-gradient(#18231d,#0c110f 62%);border-top:2px solid #d8b45c"></div>';
 
-  // the board
-  if (v.hand && v.hand.boards) {
-    var by = CY - 18;
-    v.hand.boards.forEach(function (board, bi) {
-      var cards = board.map(function (c) { return cardHtml(c, v.hand.boards.length > 1 ? 'sm' : 'md'); }).join('');
-      h += '<div class="abs" style="left:' + CX + 'px;top:' + (by + bi * 40) + 'px;transform:translate(-50%,-50%);display:flex;gap:4px">' + cards + '</div>';
-    });
-    h += '<div class="abs" style="left:' + CX + 'px;top:' + (CY + 44) + 'px;transform:translate(-50%,-50%);font-size:13px;font-weight:700;color:#f3e9cf;background:rgba(10,14,12,.6);padding:3px 10px;border-radius:12px">' + fmt(v.hand.pot) + '</div>';
+  // ---- the pot ----
+  h += '<div class="abs" style="left:0;top:152px;width:390px;display:flex;flex-direction:column;align-items:center">'
+    + '<div style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#bfe0cf">POT</div>'
+    + '<div class="disp gold" style="font-size:38px;line-height:1">' + fmt(hand ? hand.pot : 0) + '</div></div>';
+
+  // ---- the board: five places, filled as the cards come ----
+  var boards = (hand && hand.boards && hand.boards.length) ? hand.boards : [[]];
+  var multi = boards.length > 1, bc = '';
+  if (!multi) {
+    for (var i = 0; i < 5; i++) bc += boards[0][i] ? cardHtml(boards[0][i], '') : '<div class="card empty"></div>';
+    h += '<div class="abs board" style="left:0;top:206px;width:390px;display:flex;justify-content:center;gap:5px">' + bc + '</div>';
   } else {
-    h += '<div class="abs" style="left:' + CX + 'px;top:' + CY + 'px;transform:translate(-50%,-50%);text-align:center;width:240px">'
-      + '<div class="disp gold" style="font-size:20px">' + (v.status === 'ended' ? 'The game has ended' : 'Waiting to start') + '</div>'
-      + (v.waiting ? '<div class="muted small" style="margin-top:4px">' + esc(v.waiting) + '</div>' : '') + '</div>';
+    boards.forEach(function (b) {
+      bc += '<div class="board" style="display:flex;gap:3px;justify-content:center">';
+      for (var j = 0; j < 5; j++) bc += b[j] ? cardHtml(b[j], 'sm') : '<div class="card sm empty"></div>';
+      bc += '</div>';
+    });
+    h += '<div class="abs" style="left:0;top:198px;width:390px;display:flex;flex-direction:column;gap:4px">' + bc + '</div>';
   }
 
-  // ---- the seats ----
-  var n = v.seatsMax, mySeat = v.me ? v.me.seat : 0;
-  v.seats.forEach(function (st, seat) {
-    var rel = (seat - mySeat + n) % n;
-    if (rel === 0 && v.me) return;                 // your own seat is drawn below, big
-    var p = seatXY(rel, n);
-    h += seatHtml(v, st, p.x, p.y, seat);
-  });
+  // ---- what is going on, under the board ----
+  var stTop = multi ? 198 + boards.length * 38 + 2 : 272;
+  var status = '';
+  if (hand && hand.finished && hand.result) {
+    var won = hand.result.won || {};
+    var names = Object.keys(won).map(function (id) {
+      var s = (v.seats || []).filter(function (x) { return x && x.id === id; })[0];
+      return (s ? esc(s.name) : 'Somebody') + ' wins ' + fmt(won[id]);
+    });
+    status = names.join('<br>');
+  } else if (hand && hand.runit) {
+    status = 'RUN IT? VOTE';
+  } else if (hand) {
+    status = (STREETS[hand.street] || hand.street || '').toUpperCase()
+      + (hand.variant && hand.variant !== 'holdem' ? '<br><span style="color:#d8b45c">' + esc(hand.variantName || '').toUpperCase() + '</span>' : '');
+  } else {
+    status = v.status === 'ended' ? 'THE GAME HAS ENDED' : (v.waiting ? esc(v.waiting) : 'WAITING TO START');
+  }
+  h += '<div class="abs" style="left:50px;top:' + stTop + 'px;width:290px;text-align:center;font-size:12px;font-weight:600;'
+    + 'letter-spacing:.08em;color:' + (hand && hand.finished ? '#d8b45c' : '#bfe0cf') + ';line-height:1.5">' + status + '</div>';
 
-  // ---- your own half ----
+  // ---- the others, round the table ----
+  var mySeat = me ? me.seat : 0;
+  for (var s = 0; s < n; s++) {
+    var st = (v.seats || [])[s];
+    var rel = (s - mySeat + n) % n;
+    if (rel === 0 && me) continue;                       // you are drawn below
+    var pos = seatXY(rel, n);
+    var px = Math.max(-2, Math.min(390 - 74, pos.x - 37)), py = pos.y - 30;
+    if (!st) { h += '<div class="abs seat" style="left:' + px + 'px;top:' + py + 'px;width:74px;opacity:.22"><div class="av" style="border-style:dashed"></div></div>'; continue; }
+    h += plaque(v, st, px, py, 74);
+  }
+
+  // ---- your own corner ----
   h += myHalf(v);
-
+  h += actionPanel(v);
+  h += fxLayer(v);
+  h += fxTray(v);
   if (S.menu) h += tableMenu(v);
-  if (S.toast) h += '<div class="toast">' + esc(S.toast) + '</div>';
   return h + '</div>';
 }
 
-function seatHtml(v, st, x, y, seat) {
-  if (!st) {   // an open seat: a quiet outline, not a label shouting for attention
-    return '<div class="abs seat" style="left:' + (x - 38) + 'px;top:' + (y - 26) + 'px">'
-      + '<div class="av" style="border-style:dashed;opacity:.28"></div></div>';
-  }
-  var hp = v.hand ? (v.hand.players || []).find(function (p) { return p.id === st.id; }) : null;
-  var turn = v.hand && v.hand.turnId === st.id;
-  var cls = 'abs seat' + (turn ? ' turn' : '') + (hp && hp.allIn ? ' allin' : '') + ((st.away || st.busted || (hp && hp.folded)) ? ' out' : '');
-  var h = '<div class="' + cls + '" style="left:' + (x - 38) + 'px;top:' + (y - 30) + 'px">';
-  // their cards, face down, tucked behind
-  if (hp && !hp.folded && hp.cards && hp.cards.length) {
-    var small = hp.cards.map(function (c) { return cardHtml(c, 'sm'); }).join('');
-    h += '<div style="display:flex;gap:2px;margin-bottom:-8px;transform:scale(.72)">' + small + '</div>';
-  }
-  h += '<div class="av">' + initials(st.name) + (st.isAdmin ? '<div class="badge">&#9733;</div>' : '') + '</div>'
-    + '<div class="sname">' + esc(st.name) + '</div>'
-    + '<div class="sstack">' + kfmt(st.stack) + '</div>';
-  if (st.away) h += '<div class="sbh muted">sitting out</div>';
-  if (st.busted) h += '<div class="sbh" style="color:#f08a8f">out</div>';
-  if (st.leaveAsk && !st.leaveOk) h += '<div class="want">!</div>';
-  h += '</div>';
-  if (hp && hp.bet > 0) {
-    var bx = CX + (x - CX) * 0.62, by2 = CY + (y - CY) * 0.62;
-    h += '<div class="bet" style="left:' + bx + 'px;top:' + by2 + 'px">' + kfmt(hp.bet) + '</div>';
-  }
-  return h;
+// One player: their face in its rings, what they are doing, their chips and their bet.
+function plaque(v, st, x, y, w) {
+  var hp = inHand(v, st.id);
+  var turn = v.hand && v.hand.turnId === st.id && !v.hand.finished;
+  var isBtn = v.hand && v.hand.button === st.seat;
+  var mine = v.me && st.id === v.me.id;
+  var cls = 'abs seat' + (turn ? ' turn' : '') + (hp && hp.allIn ? ' allin' : '')
+    + ((st.away || st.busted || (hp && hp.folded)) ? ' out' : '')
+    + (st.leaveAsk && !st.leaveOk ? ' wants' : '');
+  var line = st.busted ? '<div class="sname">Out</div>'
+    : (hp && hp.allIn) ? '<div class="pill" style="margin-top:3px;background:#d2454d;color:#fff">ALL IN</div>'
+    : st.away ? '<div class="sname">Away</div>'
+    : (hp && hp.folded) ? '<div class="sname">Folded</div>'
+    : '<div class="sname">' + esc(st.name) + '</div>';
+  var aim = canReact(v) && !mine && !st.busted;
+  return '<div class="' + cls + '" style="left:' + x + 'px;top:' + y + 'px;width:' + w + 'px">'
+    + '<div class="av">' + initials(st.name)
+      + (aim ? '<span class="bull" onclick="fxOpen(\'' + st.id + '\')">' + bullSvg() + '</span>' : bullSvg())
+      + (isBtn ? '<span class="badge">D</span>' : '')
+      + (st.leaveAsk && !st.leaveOk ? '<span class="want">!</span>' : '') + '</div>'
+    + line
+    + '<div class="sstack">' + fmt(st.stack) + '</div>'
+    + (hp && hp.bet > 0 ? '<div class="betchip"><i></i>' + fmt(hp.bet) + '</div>' : '')
+    + '</div>';
 }
 
 function myHalf(v) {
   var me = v.me;
   if (!me) {
-    return '<div class="abs" style="left:16px;right:16px;top:' + MINE + 'px">'
-      + '<div class="evc"><div class="muted small">You are watching. ' + (v.status === 'playing' ? 'Ask ' + esc(v.admin) + ' for a seat from the Tables screen.' : 'Take a seat from the Tables screen.') + '</div></div></div>';
+    return '<div class="abs" style="left:16px;right:16px;top:' + (MINE + 30) + 'px">'
+      + '<div class="evc"><div class="muted small">You are watching. '
+      + (v.status === 'playing' ? 'Ask ' + esc(v.admin) + ' for a seat from the Tables screen.' : 'Take a seat from the Tables screen.')
+      + '</div></div></div>';
   }
-  var hp = v.hand ? (v.hand.players || []).find(function (p) { return p.id === me.id; }) : null;
+  var hp = inHand(v, me.id);
   var h = '';
-  // your cards
-  h += '<div class="abs" style="left:0;right:0;top:' + (MINE - 40) + 'px;display:flex;justify-content:center;gap:6px;height:104px">';
+
+  // your cards, face down until you look
   if (hp && hp.cards && hp.cards.length) {
-    var big = hp.cards.length > 4 ? 'md' : 'xl';
-    h += hp.cards.map(function (c) { return cardHtml(c, big, hp.folded ? 'dim' : ''); }).join('');
+    var cn = hp.cards.length;
+    var stp = cn > 4 ? 40 : (cn > 2 ? 44 : 48), rot = cn > 4 ? 6 : (cn > 2 ? 7 : 11);
+    var cw = (cn - 1) * stp + 70, sc = cn > 4 ? 0.78 : (cn > 2 ? 0.86 : 1);
+    var shown = !!S.lock || !!(v.hand && v.hand.finished);
+    h += '<div id="hero" class="abs' + (shown ? ' up' : '') + '" onclick="S.lock=!S.lock;render()"'
+      + ' style="left:18px;top:422px;height:104px;width:' + cw + 'px;transform:scale(' + sc + ');transform-origin:0 0;'
+      + (hp.folded ? 'opacity:.35' : '') + '">'
+      + hp.cards.map(function (c, i) {
+        return '<div class="abs" style="left:' + (i * stp) + 'px;top:6px;transform:rotate(' + ((i - (cn - 1) / 2) * rot) + 'deg)">'
+          + '<div class="hc"><div class="hb">' + cardHtml('??', 'xl') + '</div><div class="hf">' + cardHtml(c, 'xl') + '</div></div></div>';
+      }).join('') + '</div>';
   }
-  h += '</div>';
 
-  // your line: name, chips, bought in
-  h += '<div class="abs" style="left:16px;right:16px;top:' + (MINE + 70) + 'px;display:flex;align-items:center;gap:10px">'
-    + '<div class="av" style="width:42px;height:42px;font-size:17px">' + initials(me.name || (S.me && S.me.name) || '') + '</div>'
-    + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">' + esc(S.me.name) + (v.iRunIt ? ' <span class="gold" style="font-size:10px">YOU RUN THIS</span>' : '') + '</div>'
-    + '<div class="muted small">' + fmt(me.stack) + ' chips &middot; bought in ' + fmt(me.bought) + '</div></div>'
-    + (me.away ? '<button class="rolechip on" onclick="setAway(false)">Sit back in</button>' : '') + '</div>';
+  // you, on the right of your cards
+  var seat = (v.seats || [])[me.seat];
+  if (seat) h += plaque(v, seat, 208, 436, 145);
 
-  // the buttons
-  h += '<div class="abs" style="left:12px;right:12px;top:' + (MINE + 124) + 'px">' + controls(v) + '</div>';
+  // and the button that opens your own reactions
+  if (canReact(v)) {
+    h += '<div class="abs" style="left:306px;top:452px;width:40px;height:40px">'
+      + '<div class="pmini" style="position:relative;width:40px;height:40px;border-radius:20px;background:#1b2a22;cursor:pointer" onclick="fxOpen(\'me\')">'
+      + bullSvg() + '<span style="position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:16px">🙂</span></div></div>';
+  }
   return h;
+}
+
+// The band at the bottom: whose turn, the slider, and the buttons.
+function actionPanel(v) {
+  var h = '<div class="abs" style="left:0;top:' + PANEL + 'px;width:390px;height:' + (844 - PANEL) + 'px;border-top:2px solid #d8b45c;background:#0a0c0b;padding:0 14px">';
+  h += controls(v);
+  return h + '</div>';
 }
 
 function controls(v) {
-  if (v.status === 'ended') return '<button class="btn" onclick="leaveTable()">Back to the tables</button>';
-  // the game admin, before play starts
+  if (v.status === 'ended') return '<div style="padding-top:18px"><button class="btn" onclick="leaveTable()">Back to the tables</button></div>';
   if (v.status !== 'playing' || !v.hand) {
-    var h = '';
-    if (v.iRunIt) {
-      h += '<button class="btn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">' + (v.waiting ? esc(v.waiting) : 'Start the game') + '</button>';
-    } else {
-      h += '<div class="evc" style="margin:0"><div class="muted small">' + (v.waiting ? esc(v.waiting) : 'Waiting for ' + esc(v.admin) + ' to start') + '</div></div>';
-    }
-    return h;
+    var w = '<div style="padding-top:18px">';
+    if (v.iRunIt) w += '<button class="btn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">' + (v.waiting ? esc(v.waiting) : 'Start the game') + '</button>';
+    else w += '<div class="evc" style="margin:0"><div class="muted small">' + (v.waiting ? esc(v.waiting) : 'Waiting for ' + esc(v.admin) + ' to start') + '</div></div>';
+    return w + '</div>';
   }
-  // Everybody is all-in with cards still to come, so the table says how many times to deal the
-  // rest of the board. Twenty seconds; whoever says nothing is counted as once.
-  if (v.hand.runit) return runItVote(v);
+  // everybody all in, the table is voting on how many times to run the board
+  if (v.hand.runit) return '<div style="padding-top:14px">' + runItVote(v) + '</div>';
 
   var L = v.legal;
   if (!L) {
-    return '<div class="evc" style="margin:0"><div class="muted small">' + (v.hand.finished ? 'Hand over' : 'Waiting for the others') + '</div></div>';
+    return '<div style="padding-top:22px"><div class="evc" style="margin:0"><div class="muted small">'
+      + (v.hand.finished ? 'Hand over' : 'Waiting for the others') + '</div></div></div>';
   }
-  var toCall = L.toCall || 0;
-  var h = '<div style="display:flex;gap:8px">';
-  h += '<button class="act" style="flex:1;background:#3a2326" onclick="act(\'fold\')">Fold</button>';
-  h += L.canCheck
-    ? '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'check\')">Check</button>'
-    : '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'call\')">Call ' + kfmt(toCall) + '</button>';
-  if (L.canRaise) h += '<button class="act" style="flex:1;background:#3a3016;color:#f3e9cf" onclick="S.raise=!S.raise;render()">Raise</button>';
-  h += '</div>';
-  if (S.raise && L.canRaise) {
-    var min = L.minRaiseTo, max = L.maxRaiseTo, cur = S.raiseTo && S.raiseTo >= min && S.raiseTo <= max ? S.raiseTo : min;
-    h += '<div style="margin-top:8px"><input type="range" min="' + min + '" max="' + max + '" step="1" value="' + cur + '" oninput="S.raiseTo=Number(this.value);document.getElementById(\'rv\').textContent=fmt(S.raiseTo)">'
-      + '<div style="display:flex;gap:6px;margin-top:6px">'
-      + quick(L, 'Min', min) + quick(L, '½ pot', Math.min(max, Math.max(min, Math.round(L.pot / 2)))) + quick(L, 'Pot', Math.min(max, Math.max(min, L.pot))) + quick(L, 'All in', max)
-      + '</div>'
-      + '<button class="btn" style="margin-top:8px" onclick="act(\'raise\',S.raiseTo||' + min + ')">Raise to <span id="rv">' + fmt(cur) + '</span></button></div>';
+
+  var min = L.minRaiseTo, max = L.maxRaiseTo;
+  var cur = (S.raiseTo && S.raiseTo >= min && S.raiseTo <= max) ? S.raiseTo : min;
+  var h = '<div style="padding-top:14px;display:flex;align-items:baseline;justify-content:space-between">'
+    + '<div class="gold" style="font-size:12px;font-weight:700;letter-spacing:.14em">YOUR TURN</div>'
+    + (L.canRaise ? '<div style="display:flex;align-items:baseline;gap:8px"><span class="muted" style="font-size:13px">Raise to</span>'
+      + '<span class="disp" id="rv" style="font-size:26px">' + fmt(cur) + '</span></div>' : '') + '</div>';
+
+  if (L.canRaise) {
+    h += '<input type="range" style="margin-top:8px" min="' + min + '" max="' + max + '" step="1" value="' + cur
+      + '" oninput="S.raiseTo=Number(this.value);var e=document.getElementById(\'rv\');if(e)e.textContent=fmt(S.raiseTo);var b=document.getElementById(\'rb\');if(b)b.textContent=\'Raise \'+fmt(S.raiseTo)">';
+    h += '<div style="display:flex;gap:6px;margin-top:8px">'
+      + quick(L, '½ pot', Math.min(max, Math.max(min, Math.round(L.pot / 2))))
+      + quick(L, '¾ pot', Math.min(max, Math.max(min, Math.round(L.pot * 0.75))))
+      + quick(L, 'Pot', Math.min(max, Math.max(min, L.pot)))
+      + quick(L, 'All in', max) + '</div>';
   }
+
+  h += '<div style="display:flex;gap:8px;margin-top:10px">'
+    + '<button class="act" style="flex:1;background:#2a1e20" onclick="act(\'fold\')">Fold</button>'
+    + (L.canCheck
+      ? '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'check\')">Check</button>'
+      : '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'call\')">Call ' + fmt(L.toCall || 0) + '</button>')
+    + (L.canRaise ? '<button class="act" id="rb" style="flex:1;background:#d8b45c;color:#14110a" onclick="act(\'raise\',S.raiseTo||' + min + ')">Raise ' + fmt(cur) + '</button>' : '')
+    + '</div>';
+  h += '<div class="muted" style="margin-top:6px;text-align:center;font-size:11px">No-limit &middot; minimum raise to ' + fmt(min) + '</div>';
   return h;
 }
+
 function quick(L, label, amount) {
-  return '<button class="chip" onclick="S.raiseTo=' + amount + ';render()">' + label + '</button>';
+  return '<button class="chip" style="flex:1" onclick="S.raiseTo=' + amount
+    + ';var e=document.getElementById(\'rv\');if(e)e.textContent=fmt(S.raiseTo);var b=document.getElementById(\'rb\');if(b)b.textContent=\'Raise \'+fmt(S.raiseTo);render()">' + label + '</button>';
+}
+
+// ---------------------------------------------------------------- bombs and flowers
+function canReact(v) { return !!(v.me && !v.me.out && v.reactions); }
+function fxOpen(id) { S.fxMenu = (S.fxMenu === id) ? null : id; render(); }
+function fxSend(kind, to) {
+  S.fxMenu = null; render();
+  api('react', { code: S.code, kind: kind, to: to || '' }).catch(function (e) {
+    if (e && e.message && /one at a time/i.test(e.message)) return;    // they tapped twice, no matter
+    fail(e);
+  });
+}
+
+// the little tray of things to send
+function fxTray(v) {
+  if (!S.fxMenu || !canReact(v)) return '';
+  var own = S.fxMenu === 'me';
+  var who = own ? null : (v.seats || []).filter(function (x) { return x && x.id === S.fxMenu; })[0];
+  if (!own && !who) return '';
+  var list = own ? v.reactions.faces : v.reactions.throws;
+  var h = '<div class="abs" style="inset:0;z-index:60;background:rgba(5,7,6,.55)" onclick="S.fxMenu=null;render()"></div>'
+    + '<div class="abs" style="left:14px;right:14px;bottom:18px;z-index:61;background:#141917;border:1px solid #2a312d;border-radius:16px;padding:14px">'
+    + '<div style="font-size:13px;font-weight:600;margin-bottom:10px">' + (own ? 'Put something up' : 'Throw something at ' + esc(who.name)) + '</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+  list.forEach(function (r) {
+    h += '<button class="fxbtn" onclick="fxSend(\'' + r.k + '\'' + (own ? '' : ',\'' + S.fxMenu + '\'') + ')">' + r.icon + '</button>';
+  });
+  return h + '</div><button class="btn ghost" style="margin-top:12px" onclick="S.fxMenu=null;render()">Close</button></div>';
+}
+
+// what is in the air right now
+function fxLayer(v) {
+  var list = v.fx || [];
+  if (!list.length) return '';
+  var now = Date.now(), h = '';
+  list.forEach(function (f) {
+    var age = now - f.at;
+    if (age > 6000) return;
+    var to = f.to ? fxSpot(v, f.to) : null;
+    var from = f.from ? fxSpot(v, f.from) : null;
+    if (f.from && f.to && from && to) {
+      h += '<div class="fx" style="left:' + from.x + 'px;top:' + from.y + 'px;--dx:' + (to.x - from.x) + 'px;--dy:' + (to.y - from.y)
+        + 'px;animation:fxfly .7s ease-in both;animation-delay:-' + age + 'ms">' + f.icon + '</div>';
+      if (f.hit) h += '<div class="fx" style="left:' + to.x + 'px;top:' + to.y + 'px;font-size:40px;animation:fxpop 1.3s ease-out both;animation-delay:' + (700 - age) + 'ms">' + f.hit + '</div>';
+    } else {
+      var at = to || from;
+      if (!at) return;
+      h += '<div class="fx fxbub" style="left:' + at.x + 'px;top:' + (at.y - 44) + 'px;animation:fxbub 3s ease-out both;animation-delay:-' + age + 'ms">' + f.icon + '</div>';
+    }
+  });
+  if (h) { clearTimeout(S.fxTimer); S.fxTimer = setTimeout(render, 1200); }   // clear them when they age out
+  return h;
+}
+
+// where on screen a given player is sitting
+function fxSpot(v, id) {
+  var n = v.seatsMax, mySeat = v.me ? v.me.seat : 0;
+  var seats = v.seats || [];
+  for (var s = 0; s < n; s++) {
+    var st = seats[s];
+    if (!st || st.id !== id) continue;
+    var rel = (s - mySeat + n) % n;
+    if (rel === 0 && v.me) return { x: 234, y: 462 };        // you, in your own half
+    var p = seatXY(rel, n);
+    return { x: Math.max(-2, Math.min(390 - 74, p.x - 37)) + 26, y: p.y - 30 + 26 };
+  }
+  return null;
 }
 
 function act(type, amount) {
