@@ -585,10 +585,28 @@ const ready = (async () => {
     console.log('FRESH_START is set: ignoring what was stored and beginning with an empty portal.');
     console.log('Take FRESH_START off once you have set yourself up, or the next restart wipes it again.');
   } else if (saved) {
-    state.members = saved.members || {};
-    state.history = saved.history || [];
+    // Take each part only if it is the shape we expect. A file written by an older build, or one
+    // that got garbled, must never stop the portal starting: the service would crash-loop on boot
+    // and the whole thing would be dead with nothing obviously wrong. Keep what makes sense, say
+    // out loud what was dropped, carry on.
+    const dropped = [];
+    const ok = (v, kind) => (kind === 'array' ? Array.isArray(v) : !!v && typeof v === 'object' && !Array.isArray(v));
+
+    if (ok(saved.members, 'object')) state.members = saved.members;
+    else if (saved.members !== undefined) dropped.push('members');
+
+    if (ok(saved.history, 'array')) state.history = saved.history;
+    else if (saved.history !== undefined) dropped.push('history');
+
     state.vapid = saved.vapid || null;
-    for (const raw of saved.tables || []) restoreTable(raw);
+
+    if (ok(saved.tables, 'array')) for (const raw of saved.tables) restoreTable(raw);
+    else if (saved.tables !== undefined) dropped.push('tables');
+
+    if (dropped.length) {
+      console.error(`The stored data had ${dropped.join(' and ')} in a shape this portal does not use, so ${dropped.length > 1 ? 'they were' : 'it was'} left out.`);
+      console.error('If this is the old portal\'s data, start once with FRESH_START=1 to begin cleanly.');
+    }
   }
   if (!state.vapid) { state.vapid = webpush.makeVapid(); changed(); }
   if (process.env.FRESH_START === '1') changed();        // overwrite the old file straight away

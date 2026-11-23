@@ -30,11 +30,28 @@ function driveStore(url, secret) {
   };
   return {
     name: 'Google Drive',
+    // The read at startup gets the same patience as the writes. The service sleeps and wakes all
+    // day on a free plan, and one slow answer from Apps Script on the way up would otherwise leave
+    // the portal refusing to start with nothing obviously wrong.
     async load() {
-      const r = await fetch(`${url}?key=${encodeURIComponent(secret)}`, { redirect: 'follow' });
-      const j = await r.json();
-      if (!j || !j.ok) throw new Error((j && j.error) || 'could not read the portal data');
-      return j.value || null;
+      let last;
+      for (let i = 1; i <= RETRIES; i++) {
+        try {
+          const r = await fetch(`${url}?key=${encodeURIComponent(secret)}`, { redirect: 'follow' });
+          const j = await r.json();
+          if (j && j.ok) return j.value || null;
+          last = new Error((j && j.error) || 'could not read the portal data');
+          if (/denied/i.test(last.message)) throw last;      // a wrong secret will not come right
+        } catch (err) {
+          last = err;
+          if (/denied/i.test(err.message)) throw err;
+        }
+        if (i < RETRIES) {
+          console.error(`Could not read the portal data (try ${i} of ${RETRIES}): ${last.message}`);
+          await new Promise((r) => setTimeout(r, 800 * i));
+        }
+      }
+      throw last;
     },
     async save(value) { await call({ key: secret, action: 'set', value }); },
   };
