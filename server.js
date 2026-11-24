@@ -41,6 +41,26 @@ const FX_FACE = {
 // The table's own reactions, nobody sends these.
 const FX_AUTO = { win: '\uD83C\uDF89', bust: '\uD83D\uDC80', scoop: '\uD83D\uDD25' };
 
+// Tell people's phones something happened. Never waits: a phone that cannot be reached must not
+// hold up the person who tapped the button, and a subscription the service has thrown away is
+// dropped quietly rather than retried for ever.
+function notify(ids, payload) {
+  if (!state.vapid) return;
+  const subject = process.env.PUSH_CONTACT || 'mailto:poker@smart-buddies.invalid';
+  (async () => {
+    for (const id of ids) {
+      const m = state.members[id];
+      if (!m || m.pushOff || !m.subs || !m.subs.length) continue;
+      for (const sub of m.subs.slice()) {
+        try {
+          const r = await webpush.send(sub, payload, state.vapid, subject);
+          if (r.gone) { m.subs = m.subs.filter((s) => s.endpoint !== sub.endpoint); changed(); }
+        } catch (err) { /* an unreachable phone is not the portal's problem */ }
+      }
+    }
+  })().catch(() => {});
+}
+
 function pushFx(t, k, from, to, icon, hit) {
   const now = Date.now();
   t.fxSeq = (t.fxSeq || 0) + 1;
@@ -366,8 +386,37 @@ const routes = {
       history: myHistory(m),
       storage: m.isAdmin ? store.name : '',
       saveError: m.isAdmin ? store.error() : '',
+      push: { key: state.vapid ? state.vapid.publicKey : '', on: !!(m.subs && m.subs.length) && !m.pushOff },
     };
   },
+  // A phone asking to be told when something happens. One member may have a few: a phone, an
+  // iPad, the same phone after a reinstall. Keep the last four and let the dead ones fall away.
+  'push-on'(b) {
+    const m = people.auth(b);
+    const sub = b.sub;
+    if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+      throw httpErr(400, 'That is not something the portal can send to');
+    }
+    m.subs = (m.subs || []).filter((s2) => s2.endpoint !== sub.endpoint);
+    m.subs.push({ endpoint: String(sub.endpoint).slice(0, 600), keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) }, at: Date.now() });
+    if (m.subs.length > 4) m.subs = m.subs.slice(-4);
+    m.pushOff = false;
+    changed();
+    return { on: true };
+  },
+  'push-off'(b) {
+    const m = people.auth(b);
+    m.subs = [];
+    m.pushOff = true;
+    changed();
+    return { on: false };
+  },
+  'push-test'(b) {
+    const m = people.auth(b);
+    notify([m.id], { title: 'Smart Buddies', body: 'That is working. You will hear from the table.', url: '/', tag: 'test', badge: 0 });
+    return { sent: true };
+  },
+
   'set-pin'(b) { const m = people.auth(b); return people.changePin(m, b); },
   rename(b) { const m = people.auth(b); return people.rename(m, b); },
 
@@ -381,10 +430,42 @@ const routes = {
     const m = people.auth(b);
     const t = lobby.open(m, b);
     broadcastLobby();
+    // everybody else's phone, so a game can be got up without chasing people in the group chat
+    notify(people.members().map((x) => x.id).filter((id) => id !== m.id), {
+      title: 'A table is up',
+      body: `${m.name} has started ${FORMATS[t.format].name}. ${t.freeSeats()} of ${SEATS} seats free.`,
+      url: '/', tag: 'table-' + t.code, badge: 1,
+    });
     return { code: t.code, invite: lobby.invite(t, publicUrl()) };
   },
-  'table-join'(b) { const m = people.auth(b); const r = lobby.join(m, b); broadcastLobby(); return r; },
-  'table-decide'(b) { const m = people.auth(b); const r = lobby.decide(m, b); broadcastLobby(); return r; },
+  'table-join'(b) {
+    const m = people.auth(b);
+    const t = lobby.need(b.code);
+    const r = lobby.join(m, b);
+    broadcastLobby();
+    // if they had to ask, the person running it needs to know, wherever their phone is
+    if (r && r.asked) {
+      notify([t.adminId], {
+        title: 'Someone wants in',
+        body: `${m.name} is asking to join your table.`,
+        url: '/', tag: 'ask-' + t.code, badge: 1,
+      });
+    }
+    return r;
+  },
+  'table-decide'(b) {
+    const m = people.auth(b);
+    const t = lobby.need(b.code);
+    const r = lobby.decide(m, b);
+    broadcastLobby();
+    if (b.ok && b.memberId) {
+      notify([String(b.memberId)], {
+        title: 'You are in', body: `${t.adminName} let you in. Tap to take your seat.`,
+        url: '/', tag: 'in-' + t.code, badge: 1,
+      });
+    }
+    return r;
+  },
   'table-invite'(b) { const m = people.auth(b); const t = lobby.need(b.code); return { text: lobby.invite(t, publicUrl()) }; },
 
   'table-start'(b) {

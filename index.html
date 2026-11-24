@@ -172,11 +172,65 @@ function refresh() {
   return api('me').then(function (j) {
     S.me = j.me; S.tables = j.tables; S.history = j.history; S.members = j.members;
     S.formats = j.formats; S.variants = j.variants; S.storage = j.storage; S.saveError = j.saveError;
+    S.push = j.push; clearBadge();
     if (S.screen === 'signin') S.screen = 'home';
     resumeTable();
     render();
   });
 }
+
+// ---------------------------------------------------------------- being told things
+// A push needs the key as bytes, and it arrives as text.
+function keyBytes(b64) {
+  var pad = '='.repeat((4 - b64.length % 4) % 4);
+  var raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  var out = new Uint8Array(raw.length);
+  for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function pushState() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'cannot';
+  if (!window.isSecureContext) return 'cannot';
+  // on an iPhone this only works once the portal is on the home screen
+  var standalone = window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  var iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  if (iOS && !standalone) return 'homescreen';
+  if (Notification.permission === 'denied') return 'blocked';
+  return (S.push && S.push.on) ? 'on' : 'off';
+}
+
+function pushOn() {
+  if (!S.push || !S.push.key) return toast('The portal has no notification key yet', true);
+  Notification.requestPermission().then(function (perm) {
+    if (perm !== 'granted') return toast('Notifications were not allowed', true);
+    return navigator.serviceWorker.ready.then(function (reg) {
+      return reg.pushManager.getSubscription().then(function (old) {
+        if (old) return old;
+        return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(S.push.key) });
+      });
+    }).then(function (sub) {
+      var j = sub.toJSON();
+      return api('push-on', { sub: { endpoint: j.endpoint, keys: j.keys } });
+    }).then(function () {
+      toast('Notifications are on');
+      return refresh();
+    });
+  }).catch(function (e) { toast(String(e && e.message || e), true); });
+}
+
+function pushOff() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.ready.then(function (reg) { return reg.pushManager.getSubscription(); })
+      .then(function (sub) { if (sub) sub.unsubscribe(); }).catch(function () {});
+  }
+  api('push-off', {}).then(function () { toast('Notifications are off'); return refresh(); }).catch(fail);
+}
+
+function pushTest() { api('push-test', {}).then(function () { toast('Sent - lock your phone to see it'); }).catch(fail); }
+
+// coming back into the portal clears the number on the icon
+function clearBadge() { if (navigator.clearAppBadge) { try { navigator.clearAppBadge(); } catch (e) {} } }
 
 // ---------------------------------------------------------------- getting in
 function askNumber() {
@@ -449,6 +503,30 @@ function meTab() {
       + '<button class="btn" style="margin-top:10px" onclick="doChangePin()">Save</button>';
   }
   h += '<button class="btn ghost" style="margin-top:8px" onclick="signOut()">Sign out of this phone</button></div>';
+
+  // being told when a table goes up
+  var ps = pushState();
+  h += '<div class="h2">TELL ME WHEN A TABLE IS UP</div><div class="evc">';
+  if (ps === 'on') {
+    h += '<div class="muted small" style="white-space:normal">This phone will be told when somebody starts a table, '
+      + 'when anyone asks to join a table you are running, and when you are let into one.</div>'
+      + '<div style="display:flex;gap:8px;margin-top:10px">'
+      + '<button class="btn ghost" style="flex:1" onclick="pushTest()">Send me a test</button>'
+      + '<button class="btn ghost" style="flex:1" onclick="pushOff()">Turn off</button></div>';
+  } else if (ps === 'off') {
+    h += '<div class="muted small" style="white-space:normal">Rather than watching the group chat, let your phone tell you.</div>'
+      + '<button class="btn" style="margin-top:10px" onclick="pushOn()">Turn on notifications</button>';
+  } else if (ps === 'homescreen') {
+    h += '<div class="muted small" style="white-space:normal">On an iPhone this works once the portal is on your home screen. '
+      + 'Tap the share button in Safari, then <b>Add to Home Screen</b>, and open the portal from there.</div>';
+  } else if (ps === 'blocked') {
+    h += '<div class="muted small" style="white-space:normal">Your phone is refusing notifications from the portal. '
+      + 'Turn them back on in your phone\'s settings, under notifications, then come back here.</div>';
+  } else {
+    h += '<div class="muted small" style="white-space:normal">This phone cannot take notifications from a web app.</div>';
+  }
+  h += '</div>';
+
   if (!S.me.isAdmin) return h;
 
   h += '<div class="h2">MEMBERS (' + S.members.length + ')</div>'
