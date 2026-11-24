@@ -46,7 +46,11 @@ const FX_AUTO = { win: '\uD83C\uDF89', bust: '\uD83D\uDC80', scoop: '\uD83D\uDD2
 // dropped quietly rather than retried for ever.
 function notify(ids, payload) {
   if (!state.vapid) { console.log('push: no key yet, nothing sent'); return 0; }
-  const subject = process.env.PUSH_CONTACT || 'mailto:poker@smart-buddies.invalid';
+  // Who is sending. Apple checks this and refuses the whole push with 403 if it is not a real
+  // mailto: or https: address - a made-up domain is not good enough. The portal's own address
+  // always is, so use that unless something better is set.
+  const here = publicUrl();
+  const subject = process.env.PUSH_CONTACT || (/^https:/i.test(here) ? here.replace(/\/$/, '') : 'mailto:smartbuddies@gmail.com');
   let tried = 0;
   const asleep = [];
   for (const id of ids) {
@@ -72,7 +76,7 @@ function notify(ids, payload) {
             m.subs = m.subs.filter((s) => s.endpoint !== sub.endpoint);
             changed();
           } else if (!r.ok) {
-            console.log(`push: ${m.name} refused with ${r.status} from ${where}`);
+            console.log(`push: ${m.name} refused with ${r.status}${r.why ? ' - ' + r.why : ''} (sent as ${subject})`);
           }
         } catch (err) {
           console.log(`push: could not reach ${m.name}'s phone (${err.message}) at ${where}`);

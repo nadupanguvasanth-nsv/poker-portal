@@ -67,7 +67,10 @@ async function send(sub, payload, vapid, subject, opts = {}) {
     },
     body,
   });
-  return { ok: r.ok, gone: r.status === 404 || r.status === 410, status: r.status };
+  // Apple and Google say why they refused, in the body. Worth having: a bare 403 says nothing.
+  let why = '';
+  if (!r.ok) { try { why = (await r.text()).slice(0, 200).replace(/\s+/g, ' ').trim(); } catch (err) { why = ''; } }
+  return { ok: r.ok, gone: r.status === 404 || r.status === 410, status: r.status, why };
 }
 
 module.exports = { makeVapid, vapidHeader, encrypt, decrypt, send, b64u, unb64u };
