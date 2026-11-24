@@ -356,12 +356,12 @@ function tablesTab() {
 }
 
 function newTableForm() {
-  var fmt = S.newFormat || 'holdem';
-  var needsVariant = fmt === 'mixed' || fmt === 'roe';
+  var chosen = S.newFormat || 'holdem';
+  var needsVariant = chosen === 'mixed' || chosen === 'roe';
   var h = '<div class="evc" style="border-color:#d8b45c"><div class="disp" style="font-size:24px">Start a table</div>';
   h += '<div class="h2" style="margin-top:12px">THE GAME</div><div style="display:flex;flex-direction:column;gap:6px">';
   S.formats.forEach(function (f) {
-    h += '<button class="rolechip' + (fmt === f.id ? ' on' : '') + '" style="height:42px;text-align:left;padding:0 12px" onclick="S.newFormat=\'' + f.id + '\';render()">' + esc(f.name) + '</button>';
+    h += '<button class="rolechip' + (chosen === f.id ? ' on' : '') + '" style="height:42px;text-align:left;padding:0 12px" onclick="S.newFormat=\'' + f.id + '\';render()">' + esc(f.name) + '</button>';
   });
   h += '</div>';
   if (needsVariant) {
@@ -371,8 +371,12 @@ function newTableForm() {
     });
     h += '</div>';
   }
-  if (fmt === 'tournament') {
-    h += '<div class="muted small" style="margin-top:12px;white-space:normal">Everybody starts with 10,000 chips at 50/100. The blinds double every five minutes. No late entries, nobody buys more chips, and the last player holding everything wins.</div>';
+  if (chosen === 'tournament') {
+    h += '<div class="h2">THE TOURNAMENT</div><div style="display:flex;gap:8px">'
+      + miniField('n_stack', 'CHIPS EACH', S.lastStack || 10000, 'oninput="tourneyEcho()" onblur="tourneySnap()"')
+      + miniField('n_level', 'MINUTES A LEVEL', S.lastLevel || 5, 'oninput="tourneyEcho()" onblur="tourneySnap()"')
+      + '</div><div class="muted small" id="t_echo" style="margin-top:8px;white-space:normal">' + tourneyLine(S.lastStack || 10000, S.lastLevel || 5) + '</div>'
+      + '<div class="muted small" style="margin-top:8px;white-space:normal">Chips go in tens of thousands &mdash; 10,000, 20,000, 50,000 and so on. Anything in between is taken to the nearest. No late entries, nobody buys more chips, and the last player holding everything wins.</div>';
   } else {
     h += '<div class="h2">THE TABLE</div><div style="display:flex;gap:8px">'
       + miniField('n_sb', 'SMALL', S.lastSb || 100) + miniField('n_bb', 'BIG', S.lastBb || 200) + miniField('n_min', 'MIN BUY-IN', S.lastMin || 10000)
@@ -383,16 +387,55 @@ function newTableForm() {
     + '<button class="btn ghost" style="margin-top:8px" onclick="S.newTable=false;render()">Cancel</button></div>';
   return h;
 }
-function miniField(id, label, v) {
+function miniField(id, label, v, attrs) {
   return '<div class="field" style="flex:1;min-width:0"><label for="' + id + '" style="font-size:10px">' + label + '</label>'
-    + '<input id="' + id + '" inputmode="numeric" value="' + v + '" style="height:44px;font-size:15px"></div>';
+    + '<input id="' + id + '" inputmode="numeric" value="' + v + '" ' + (attrs || '')
+    + ' style="height:44px;font-size:15px"></div>';
+}
+
+// The chips everyone starts with go in tens of thousands, and the blinds follow from them: two
+// hundred big blinds each, which comes out whole and round every time. The admin is shown what a
+// figure works out to as he types it, so he is never surprised by the first hand.
+function tStack(v) {
+  var t = S.tourney || {}, step = t.step || 10000;
+  var n = Number(v);
+  if (!isFinite(n) || n <= 0) return t.stack || 10000;
+  var snapped = Math.round(n / step) * step;
+  return Math.min(t.maxStack || 10000000, Math.max(t.minStack || 10000, snapped));
+}
+function tLevel(v) {
+  var t = S.tourney || {}, n = Math.floor(Number(v));
+  if (!isFinite(n)) return 5;
+  return Math.min(t.maxLevelMin || 60, Math.max(t.minLevelMin || 2, n));
+}
+function tourneyLine(stack, level) {
+  var sb = stack / 400, bb = stack / 200;
+  return 'Everybody starts with ' + fmt(stack) + ' chips at ' + fmt(sb) + '/' + fmt(bb)
+    + ' &mdash; 200 big blinds each. The blinds double every '
+    + (level === 1 ? 'minute' : level + ' minutes') + '.';
+}
+// As he types. The figures are snapped here too, so what he reads is what he will get.
+function tourneyEcho() {
+  var el = document.getElementById('t_echo');
+  if (el) el.innerHTML = tourneyLine(tStack(val('n_stack')), tLevel(val('n_level')));
+}
+// Leaving the box puts the snapped figure into it, so nothing says 17,000 while the table is 20,000.
+function tourneySnap() {
+  var a = document.getElementById('n_stack'), b = document.getElementById('n_level');
+  if (a) a.value = tStack(a.value);
+  if (b) b.value = tLevel(b.value);
+  tourneyEcho();
 }
 function doOpen() {
   blurField();
-  var fmt = S.newFormat || 'holdem';
-  if ((fmt === 'mixed' || fmt === 'roe') && !S.newVariant) { toast('Pick the variant to go with it'); return; }
-  var body = { format: fmt, variant: S.newVariant };
-  if (fmt !== 'tournament') {
+  var chosen = S.newFormat || 'holdem';
+  if ((chosen === 'mixed' || chosen === 'roe') && !S.newVariant) { toast('Pick the variant to go with it'); return; }
+  var body = { format: chosen, variant: S.newVariant };
+  if (chosen === 'tournament') {
+    S.lastStack = tStack(val('n_stack'));
+    S.lastLevel = tLevel(val('n_level'));
+    body.settings = { stack: S.lastStack, levelMin: S.lastLevel };
+  } else {
     S.lastSb = Number(val('n_sb')); S.lastBb = Number(val('n_bb')); S.lastMin = Number(val('n_min'));
     body.settings = { sb: S.lastSb, bb: S.lastBb, minBuyin: S.lastMin, minPlayers: Number(val('n_players')), turnSeconds: Number(val('n_turn')) };
   }

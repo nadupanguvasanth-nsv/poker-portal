@@ -52,7 +52,10 @@ function makeLobby(ctx) {
   function invite(t, base) {
     const when = new Date(t.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: process.env.TZ_LABEL || 'Asia/Kolkata' });
     const what = FORMATS[t.format].name + (t.variant ? ' with ' + require('./engine').VARIANTS[t.variant].name : '');
-    return `A game is planned by ${t.adminName} on ${when}.\n\n${what}, blinds ${t.blinds().sb}/${t.blinds().bb}.\n\n`
+    const terms = t.format === 'tournament'
+      ? `${t.settings.minBuyin.toLocaleString('en-IN')} chips each, blinds ${t.blinds().sb}/${t.blinds().bb} doubling every ${Math.round((t.settings.levelMs || TOURNEY.levelMs) / 60000)} minutes`
+      : `blinds ${t.blinds().sb}/${t.blinds().bb}`;
+    return `A game is planned by ${t.adminName} on ${when}.\n\n${what}, ${terms}.\n\n`
       + `It is a ${SEATS}-player table and seats go first come, first served, so come in early if you want one.\n\n`
       + `Join here: ${base}`;
   }
