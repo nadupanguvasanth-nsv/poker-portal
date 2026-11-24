@@ -78,7 +78,7 @@ class Table {
     this.handNo = 0;
     this.button = -1;                        // seat of the Texas button
     this.varButton = -1;                     // seat of the variant button, walking the other way
-    this.orbitFrom = -1;                     // where this orbit of the button began
+    this.orbitSeen = [];                     // seats that have dealt this orbit
     this.roeVariant = false;                 // roe: this orbit is the variant orbit
     this.level = 1;                          // tournament blind level
     this.levelAt = 0;
@@ -159,15 +159,27 @@ class Table {
   advance() {
     const seats = this.occupied();
     if (seats.length < 2) return;
-    // the hand just played was the variant one, so the variant button steps back the other way
-    if (this.format === 'mixed' && this.button === this.varButton) {
-      this.varButton = this.nextSeat(this.varButton, true);
+    if (this.format === 'mixed') {
+      // The seat holding the variant button can empty - that player busts or walks off - and then
+      // the travelling button can never land on it, so the variant would stop coming round for the
+      // rest of the night. Put it on a seat somebody is actually sitting in.
+      if (this.varButton < 0 || !this.seats[this.varButton]) this.varButton = this.nextSeat(this.varButton, true);
+      // the hand just played was the variant one, so the variant button steps back the other way
+      if (this.button === this.varButton) this.varButton = this.nextSeat(this.varButton, true);
+    }
+    // An orbit is everybody at the table dealing once. Keep the seats that have dealt rather than
+    // waiting for the button to come back to one particular seat: that seat can bust or walk off
+    // mid-orbit, the button never lands there again, and the game quietly stays on one variant for
+    // the rest of the night.
+    if (this.format === 'roe' && this.button >= 0) {
+      this.orbitSeen = (this.orbitSeen || []).filter((s) => this.seats[s]);
+      if (!this.orbitSeen.includes(this.button)) this.orbitSeen.push(this.button);
     }
     this.button = this.nextSeat(this.button);
     if (this.format !== 'roe') return;
-    if (this.button !== this.orbitFrom) return;  // the orbit is still running
+    if (!this.occupied().every((s) => this.orbitSeen.includes(s))) return;   // still going round
     this.roeVariant = !this.roeVariant;          // round of each: turn and turn about
-    this.orbitFrom = this.button;
+    this.orbitSeen = [];
   }
 
   // ---- blinds, which climb in a tournament ----
@@ -206,7 +218,7 @@ class Table {
 
     if (this.button < 0) {                      // the very first hand sets both buttons going
       this.button = dealt[0].seat;
-      this.orbitFrom = this.button;
+      this.orbitSeen = [];
       this.varButton = this.nextSeat(this.button, true);   // the variant button starts one behind
     }
     const variant = this.variantForHand();
