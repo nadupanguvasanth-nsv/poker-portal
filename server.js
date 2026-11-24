@@ -159,6 +159,8 @@ function handView(t, me) {
       id: p.id, seat: p.seat, bet: p.bet, stack: p.stack, folded: p.folded, allIn: p.allIn,
       // your own cards always; everyone else's only once they are shown
       cards: (me && p.id === me.id) ? p.cards : (show[p.id] ? show[p.id].cards || p.cards : p.cards.map(() => '??')),
+      // the ones they chose to turn over, which everybody sees
+      shown: (p.shown && p.shown.length) ? p.cards.map((c, i) => (p.shown.indexOf(i) >= 0 ? c : '??')) : null,
     })),
   };
 }
@@ -168,6 +170,7 @@ function tableView(t, member) {
   const iRun = lobby.runs(t, member);
   const b = t.blinds();
   return {
+    now: Date.now(),
     code: t.code, title: t.title, format: t.format, formatName: FORMATS[t.format].name,
     variant: t.variant, variantName: t.variant ? VARIANTS[t.variant].name : '',
     admin: t.adminName, adminId: t.adminId, iRunIt: iRun,
@@ -460,6 +463,26 @@ const routes = {
     changed(); broadcast(t);
     return { ok: true };
   },
+  // Showing your cards when you did not have to. At a real showdown the cards come up on their
+  // own; this is for the hand everybody folded, where showing is a choice - one card, or both.
+  showcards(b) {
+    const m = people.auth(b);
+    const t = lobby.need(b.code);
+    const p = t.byMember(m.id);
+    if (!p) throw httpErr(400, 'You are not at this table');
+    const h = t.hand;
+    if (!h) throw httpErr(400, 'There is no hand to show');
+    const hp = (h.players || []).filter((x) => x.id === p.id)[0];
+    if (!hp || !hp.cards || !hp.cards.length) throw httpErr(400, 'You have no cards to show');
+    const want = Array.isArray(b.idx) ? b.idx : [];
+    hp.shown = want
+      .map((i) => Math.floor(Number(i)))
+      .filter((i) => i >= 0 && i < hp.cards.length)
+      .filter((i, k, a) => a.indexOf(i) === k);
+    broadcast(t);
+    return { ok: true };
+  },
+
   // fun: lob something at another player, or put a face up over your own seat
   react(b) {
     const m = people.auth(b);

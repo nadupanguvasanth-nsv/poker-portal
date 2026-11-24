@@ -69,15 +69,21 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .betchip{display:inline-flex;align-items:center;gap:4px;margin-top:2px;padding:1px 7px 1px 4px;border-radius:9px;background:rgba(10,14,12,.72);border:1px solid #4a4a3a;font-size:11px;font-weight:700;color:#f3e9cf;white-space:nowrap}
 
 .betchip i{width:11px;height:11px;border-radius:7px;background:radial-gradient(circle at 35% 30%,#f0d089,#c69b3c);border:1px solid #8c6a22;display:block;flex:none}
-.seat{position:absolute;width:64px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.seat{position:absolute;width:64px;display:flex;flex-direction:column;align-items:center;text-align:center;pointer-events:none}
 /* Out of the flow on purpose: in the flow they pushed the whole seat down, so a player holding
    cards sat lower than the empty seat beside them and names drifted onto the board. */
 .seat .hole{position:absolute;left:50%;bottom:100%;margin-bottom:-7px;display:flex;
 transform:translateX(-50%) scale(.72);transform-origin:bottom center}
+/* The cards a player turns over sit outside the ring, away from the board, and out of the
+   layout so they cannot push the seat off the felt. */
+.seat .showc{position:absolute;left:50%;display:flex;transform:translateX(-50%) scale(.84)}
+.seat.up .showc{bottom:100%;margin-bottom:-2px;transform-origin:bottom center}
+.seat.low .showc{top:100%;margin-top:-2px;transform-origin:top center}
+.seat .showc .card+.card{margin-left:-7px}
 /* fanned rather than side by side: narrower, so a neighbour's name stays clear, and it reads
    more like cards held in a hand - which matters most in Omaha, where there are four or five */
 .seat .hole .card+.card{margin-left:-8px}
-.bull{position:absolute;left:0;top:0;width:100%;height:100%;border-radius:50%;cursor:pointer}
+.bull{position:absolute;left:0;top:0;width:100%;height:100%;border-radius:50%;cursor:pointer;pointer-events:auto}
 .fx{position:absolute;pointer-events:none;z-index:40;font-size:28px;line-height:1;margin:-14px 0 0 -14px}
 @keyframes fxfly{0%{transform:translate(0,0) scale(.6) rotate(0);opacity:1}85%{opacity:1}100%{transform:translate(var(--dx),var(--dy)) scale(1.15) rotate(540deg);opacity:0}}
 @keyframes fxpop{0%{transform:scale(.2);opacity:0}15%{opacity:1}35%{transform:scale(1.9);opacity:1}100%{transform:scale(1.2) translateY(-16px);opacity:0}}
@@ -208,7 +214,11 @@ function connect() {
   var url = '/api/feed?token=' + encodeURIComponent(S.token) + (S.code ? '&code=' + S.code : '');
   feed = new EventSource(url);
   feed.addEventListener('lobby', function (e) { S.tables = JSON.parse(e.data).tables; if (S.screen !== 'table') render(); });
-  feed.addEventListener('table', function (e) { S.v = JSON.parse(e.data); if (S.screen === 'table') render(); });
+  feed.addEventListener('table', function (e) {
+    S.v = JSON.parse(e.data);
+    fxIngest(S.v);          // take in anything newly thrown, once, and let it fly
+    if (S.screen === 'table') render();
+  });
   feed.addEventListener('ended', function () { refresh(); });
   feed.onerror = function () { /* the browser reconnects by itself */ };
 }
@@ -517,256 +527,188 @@ function memberLink(id) {
 function removeMember(id, name) { if (!confirm('Remove ' + name + '?')) return; api('member-remove', { memberId: id }).then(refresh).catch(fail); }
 function resetMember(id, name) { if (!confirm('Forget ' + name + "'s passcode? They set a new one next time they sign in.")) return; api('member-reset', { memberId: id }).then(function () { toast('Done'); refresh(); }).catch(fail); }
 // ---------------------------------------------------------------- the table
-// The felt in the top half, your own cards and the buttons below it, so your thumb never covers
-// the game. Seat 0 is you, at the bottom of the oval, and the rest go round from there - whoever
-// is on your left sits on your left on screen.
-var CX = 195, CY = 224, RX = 152, RY = 114, MINE = 404, PANEL = 586;
-var FELT = { left: 30, top: 106, w: 330, h: 240 };
+// The presentation here is the one settled on in the first build, carried across whole rather
+// than rewritten: the felt in the top half, your own cards and the buttons below it, bullseyes
+// to aim at, and cards drawn as cards. What feeds it is the rebuilt portal, through adapt().
+var CX = 195, CY = 224, RX = 152, RY = 114, MINE = 404;
 
-function seatXY(rel, n) {
-  var a = Math.PI / 2 + (rel / n) * Math.PI * 2;
-  return { x: CX + RX * Math.cos(a), y: CY + RY * Math.sin(a) };
+// ---- holding your cards up to look at them ----
+function applyUp() { var h = document.getElementById('hero'); if (h) h.classList.toggle('up', !!(S.peek || S.lock)); }
+document.addEventListener('pointerdown', function (e) {
+  if (e.target.closest && e.target.closest('#hero')) { S.peek = true; S.pt = Date.now(); applyUp(); }
+});
+function endPeek() { if (!S.peek) return; S.peek = false; if (Date.now() - S.pt < 250) S.lock = !S.lock; applyUp(); }
+document.addEventListener('pointerup', endPeek);
+document.addEventListener('pointercancel', endPeek);
+document.addEventListener('contextmenu', function (e) { if (e.target.closest && e.target.closest('#hero')) e.preventDefault(); });
+
+// ---- a card is drawn, not typed ----
+function card(c, cls) {
+  cls = cls || '';
+  if (!c || c === '??') return '<div class="card back ' + cls + '"></div>';
+  var r = c[0] === 'T' ? '10' : c[0], su = c[c.length - 1], red = (su === 'h' || su === 'd');
+  if (S.win && S.win[c]) cls += ' win';
+  return '<div class="card ' + (red ? 'red ' : '') + cls + '">' + cardFace(r, su, /(^| )sm( |$)/.test(cls)) + '</div>';
+}
+function cardHtml(c, size, extra) { return card(c, (size || '') + (extra ? ' ' + extra : '')); }
+
+var SUIT_SHAPE = {
+  h: '<path d="M5 9.15 L1.68 5.83 A2.35 2.35 0 1 1 5 2.5 A2.35 2.35 0 1 1 8.32 5.83 Z"/>',
+  s: '<g transform="rotate(180 5 5)"><path d="M5 9.15 L1.68 5.83 A2.35 2.35 0 1 1 5 2.5 A2.35 2.35 0 1 1 8.32 5.83 Z"/></g><path d="M3.9 9.6 Q5 6.9 6.1 9.6 Z"/>',
+  d: '<path d="M5 0.6 L8.95 5 L5 9.4 L1.05 5 Z"/>',
+  c: '<circle cx="5" cy="3.15" r="2.1"/><circle cx="2.75" cy="6.4" r="2.1"/><circle cx="7.25" cy="6.4" r="2.1"/><path d="M3.9 9.7 Q5 7 6.1 9.7 Z"/>'
+};
+function suitAt(su, x, y, sz) { return '<g transform="translate(' + (x - sz / 2) + ' ' + (y - sz / 2) + ') scale(' + (sz / 10) + ')">' + SUIT_SHAPE[su] + '</g>'; }
+var PIP_ROWS = {
+  '2': [[1, 0], [1, 4]], '3': [[1, 0], [1, 2], [1, 4]], '4': [[0, 0], [2, 0], [0, 4], [2, 4]],
+  '5': [[0, 0], [2, 0], [1, 2], [0, 4], [2, 4]], '6': [[0, 0], [2, 0], [0, 2], [2, 2], [0, 4], [2, 4]],
+  '7': [[0, 0], [2, 0], [1, 1], [0, 2], [2, 2], [0, 4], [2, 4]],
+  '8': [[0, 0], [2, 0], [1, 1], [0, 2], [2, 2], [1, 3], [0, 4], [2, 4]],
+  '9': [[0, 0], [2, 0], [0, 1.34], [2, 1.34], [1, 2], [0, 2.66], [2, 2.66], [0, 4], [2, 4]],
+  '10': [[0, 0], [2, 0], [1, 0.67], [0, 1.34], [2, 1.34], [0, 2.66], [2, 2.66], [1, 3.33], [0, 4], [2, 4]]
+};
+
+// A jack, queen or king: a figure in the panel rather than a bare letter, mirrored top and
+// bottom the way a real court card is, so it reads the same whichever way up you hold it.
+function courtHalf(r, su) {
+  // a crowned bust: crown or cap, a face, a collar and a robe carrying the suit. Small, but it
+  // reads as a figure rather than a letter, the way a real court card does.
+  var crown = r === 'K'
+    ? '<path d="M24.8 23.4 L26.3 18.2 L28.7 21.4 L31 16.6 L33.3 21.4 L35.7 18.2 L37.2 23.4 Z"/>'
+      + '<rect x="24.6" y="23.3" width="12.8" height="1.9" rx="0.6"/>'
+    : r === 'Q'
+    ? '<path d="M25.2 23.4 L26.6 19 L28.9 21.1 L31 17.4 L33.1 21.1 L35.4 19 L36.8 23.4 Z"/>'
+      + '<circle cx="31" cy="15.9" r="1.3"/><rect x="25" y="23.3" width="12" height="1.7" rx="0.6"/>'
+    : '<path d="M24.6 23.6 Q26.6 18.4 31 18 Q35.4 18.4 37.4 23.6 Z"/>'
+      + '<path d="M36.8 19.6 Q40.4 16.6 41.2 20.8 Q38.6 21.3 37.6 23 Z"/>';
+  return crown
+    // the face
+    + '<path d="M27.4 25.6 h7.2 v3.9 a3.6 3.6 0 0 1 -7.2 0 z" fill="currentColor" fill-opacity=".1"'
+    + ' stroke="currentColor" stroke-width="0.9"/>'
+    + '<circle cx="29.5" cy="27.6" r="0.62"/><circle cx="32.5" cy="27.6" r="0.62"/>'
+    + '<path d="M29.7 30.4 Q31 31.3 32.3 30.4" fill="none" stroke="currentColor" stroke-width="0.6"/>'
+    // the collar
+    + '<path d="M25.6 34.4 L28 32.2 L31 34.2 L34 32.2 L36.4 34.4 L34.4 35.8 L31 34.9 L27.6 35.8 Z"/>'
+    // the robe, with the suit on it
+    + '<path d="M26.6 36.6 Q31 35.4 35.4 36.6 L37 42.4 L25 42.4 Z" fill="currentColor" fill-opacity=".14"'
+    + ' stroke="currentColor" stroke-width="0.8"/>'
+    + suitAt(su, 31, 39.6, 5.2);
 }
 
-// The rings round every face. They are what you aim at when you throw something.
+function cardFace(r, su, small) {
+  var W = 62, H = 86, g = '';
+  if (small) {           // a seat-sized card: one rank, one suit, nothing to squint at
+    return '<svg class="cf" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" aria-hidden="true">'
+      + '<text x="31" y="40" text-anchor="middle" font-size="' + (r === '10' ? 30 : 34) + '" font-weight="700" font-family="Georgia,\'Times New Roman\',serif">' + r + '</text>'
+      + suitAt(su, 31, 60, 24) + '</svg>';
+  }
+  var ix = function () {
+    var fs = r === '10' ? 11 : 13.5;
+    return '<text x="8.6" y="15.4" text-anchor="middle" font-size="' + fs + '" font-weight="700" font-family="Georgia,\'Times New Roman\',serif">' + r + '</text>' + suitAt(su, 8.6, 21.6, 7.4);
+  };
+  g += ix() + '<g transform="rotate(180 31 43)">' + ix() + '</g>';
+  if (PIP_ROWS[r]) {
+    g += PIP_ROWS[r].map(function (p) {
+      var x = [21.5, 31, 40.5][p[0]], y = 18.5 + p[1] * 12.4;
+      return suitAt(su, x, y, 11.4);
+    }).join('');
+  } else if (r === 'A') {
+    g += suitAt(su, 31, 43, 30);
+  } else {
+    g += '<rect x="17.5" y="14.5" width="27" height="57" rx="2.5" fill="currentColor" fill-opacity=".05" stroke="currentColor" stroke-opacity=".5" stroke-width="0.9"/>'
+      + '<line x1="17.5" y1="43" x2="44.5" y2="43" stroke="currentColor" stroke-opacity=".28" stroke-width="0.7"/>';
+    var half = courtHalf(r, su);
+    g += half + '<g transform="rotate(180 31 43)">' + half + '</g>';
+  }
+  return '<svg class="cf" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" aria-hidden="true">' + g + '</svg>';
+}
+function initials(n) { return esc(String(n || '').replace(/[^A-Za-z0-9 ]/g, '').trim().slice(0, 2).toUpperCase() || '?'); }
+
+// ---- where everybody sits ----
+function seatXY(rel, n) { var a = Math.PI / 2 + rel / n * 2 * Math.PI; return { x: CX + RX * Math.cos(a), y: CY + RY * Math.sin(a) }; }
 function bullSvg() {
   return '<svg viewBox="0 0 52 52" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none">'
     + '<circle cx="26" cy="26" r="24" fill="none" stroke="#d2454d" stroke-opacity=".55" stroke-width="3"/>'
     + '<circle cx="26" cy="26" r="16" fill="none" stroke="#e8ece9" stroke-opacity=".4" stroke-width="3"/>'
     + '<circle cx="26" cy="26" r="8" fill="none" stroke="#d2454d" stroke-opacity=".55" stroke-width="3"/></svg>';
 }
-
-function inHand(v, id) {
-  if (!v.hand || !id) return null;
-  return (v.hand.players || []).filter(function (p) { return p.id === id; })[0] || null;
+function kfmt(n) { n = Math.round(Number(n) || 0); return n >= 10000 ? Math.round(n / 1000) + 'k' : fmt(n); }
+function behindTag(st) {
+  if (!st || !st.bought) return '';
+  var d = st.bought - st.stack;
+  if (!d) return '';
+  return '<div class="sbh" style="color:' + (d > 0 ? '#f08a8f' : '#7ddba0') + '">' + (d > 0 ? '-' : '+') + kfmt(Math.abs(d)) + '</div>';
 }
 
-function tableScreen() {
-  var v = S.v;
-  if (!v) return '<div class="sheet"><div class="muted" style="margin-top:40px">Opening the table…</div></div>';
-  var hand = v.hand, n = v.seatsMax, me = v.me;
-  // face your cards down again each new hand
-  var hno = hand ? hand.no : 0;
-  if (S.peekHand !== hno) { S.peekHand = hno; S.lock = false; }
-
-  var h = '<div class="abs" style="inset:0;background:#0a0c0b">';
-
-  // ---- the strip across the top ----
-  h += '<div class="abs" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 16px;display:flex;align-items:center;gap:10px">'
-    + '<button class="rolechip" style="height:28px" onclick="leaveTable()">&#8592;</button>'
-    + '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM ' + esc(v.code) + '</div>'
-    + '<div class="muted" style="margin-top:2px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-    + (hno ? 'Hand ' + hno : 'Not started') + ' &middot; ' + esc(v.formatName) + '</div></div>'
-    + '<div style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #2a312d;background:#141917;font-size:13px;font-weight:600;display:flex;align-items:center;flex:none">'
-    + fmt(v.blinds.sb) + ' / ' + fmt(v.blinds.bb) + '</div>'
-    + '<button class="rolechip" style="height:30px;flex:none" onclick="S.menu=!S.menu;render()">&#9776;</button></div>';
-
-  // ---- the felt and your own half ----
-  h += '<div class="abs felt" style="left:' + FELT.left + 'px;top:' + FELT.top + 'px;width:' + FELT.w + 'px;height:' + FELT.h + 'px"></div>';
-  h += '<div class="abs" style="left:0;top:' + MINE + 'px;width:390px;height:' + (844 - MINE) + 'px;background:linear-gradient(#18231d,#0c110f 62%);border-top:2px solid #d8b45c"></div>';
-
-  // ---- the pot ----
-  h += '<div class="abs" style="left:0;top:152px;width:390px;display:flex;flex-direction:column;align-items:center">'
-    + '<div style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#bfe0cf">POT</div>'
-    + '<div class="disp gold" style="font-size:38px;line-height:1">' + fmt(hand ? hand.pot : 0) + '</div></div>';
-
-  // ---- the board: five places, filled as the cards come ----
-  var boards = (hand && hand.boards && hand.boards.length) ? hand.boards : [[]];
-  var multi = boards.length > 1, bc = '';
-  if (!multi) {
-    for (var i = 0; i < 5; i++) bc += boards[0][i] ? cardHtml(boards[0][i], '') : '<div class="card empty"></div>';
-    h += '<div class="abs board" style="left:0;top:206px;width:390px;display:flex;justify-content:center;gap:5px">' + bc + '</div>';
-  } else {
-    boards.forEach(function (b) {
-      bc += '<div class="board" style="display:flex;gap:3px;justify-content:center">';
-      for (var j = 0; j < 5; j++) bc += b[j] ? cardHtml(b[j], 'sm') : '<div class="card sm empty"></div>';
-      bc += '</div>';
-    });
-    h += '<div class="abs" style="left:0;top:198px;width:390px;display:flex;flex-direction:column;gap:4px">' + bc + '</div>';
-  }
-
-  // ---- what is going on, under the board ----
-  var stTop = multi ? 198 + boards.length * 38 + 2 : 272;
-  var status = '';
-  if (hand && hand.finished && hand.result) {
-    var won = hand.result.won || {};
-    var names = Object.keys(won).map(function (id) {
-      var s = (v.seats || []).filter(function (x) { return x && x.id === id; })[0];
-      return (s ? esc(s.name) : 'Somebody') + ' wins ' + fmt(won[id]);
-    });
-    status = names.join('<br>');
-  } else if (hand && hand.runit) {
-    status = 'RUN IT? VOTE';
-  } else if (hand) {
-    status = (STREETS[hand.street] || hand.street || '').toUpperCase()
-      + (hand.variant && hand.variant !== 'holdem' ? '<br><span style="color:#d8b45c">' + esc(hand.variantName || '').toUpperCase() + '</span>' : '');
-  } else {
-    status = v.status === 'ended' ? 'THE GAME HAS ENDED' : (v.waiting ? esc(v.waiting) : 'WAITING TO START');
-  }
-  h += '<div class="abs" style="left:50px;top:' + stTop + 'px;width:290px;text-align:center;font-size:12px;font-weight:600;'
-    + 'letter-spacing:.08em;color:' + (hand && hand.finished ? '#d8b45c' : '#bfe0cf') + ';line-height:1.5">' + status + '</div>';
-
-  // ---- the others, round the table ----
-  var mySeat = me ? me.seat : 0;
+// ---- bombs and flowers ----
+function fxPos(A, id) {
+  var n = A.seats.length, ms = A.you.seat;
   for (var s = 0; s < n; s++) {
-    var st = (v.seats || [])[s];
-    var rel = (s - mySeat + n) % n;
-    if (rel === 0 && me) continue;                       // you are drawn below
-    var pos = seatXY(rel, n);
-    var px = Math.max(-2, Math.min(390 - 74, pos.x - 37)), py = pos.y - 30;
-    if (!st) { h += '<div class="abs seat" style="left:' + px + 'px;top:' + py + 'px;width:74px;opacity:.22"><div class="av" style="border-style:dashed"></div></div>'; continue; }
-    h += plaque(v, st, px, py, 74);
+    var st = A.seats[s];
+    if (st && st.id === id) {
+      var rel = (s - ms + n) % n;
+      if (rel === 0) return { x: 245, y: 462 };
+      var p = seatXY(rel, n);
+      return { x: p.x, y: p.y };
+    }
   }
-
-  // ---- your own corner ----
-  h += myHalf(v);
-  h += actionPanel(v);
-  h += fxLayer(v);
-  h += fxTray(v);
-  if (S.menu) h += tableMenu(v);
-  return h + '</div>';
+  return null;
 }
-
-// One player: their face in its rings, what they are doing, their chips and their bet.
-function plaque(v, st, x, y, w) {
-  var hp = inHand(v, st.id);
-  var turn = v.hand && v.hand.turnId === st.id && !v.hand.finished;
-  var isBtn = v.hand && v.hand.button === st.seat;
-  var mine = v.me && st.id === v.me.id;
-  var cls = 'abs seat' + (turn ? ' turn' : '') + (hp && hp.allIn ? ' allin' : '')
-    + ((st.away || st.busted || (hp && hp.folded)) ? ' out' : '')
-    + (st.leaveAsk && !st.leaveOk ? ' wants' : '');
-  var line = st.busted ? '<div class="sname">Out</div>'
-    : (hp && hp.allIn) ? '<div class="pill" style="margin-top:3px;background:#d2454d;color:#fff">ALL IN</div>'
-    : st.away ? '<div class="sname">Away</div>'
-    : (hp && hp.folded) ? '<div class="sname">Folded</div>'
-    : '<div class="sname">' + esc(st.name) + '</div>';
-  var aim = canReact(v) && !mine && !st.busted;
-  return '<div class="' + cls + '" style="left:' + x + 'px;top:' + y + 'px;width:' + w + 'px">'
-    + '<div class="av">' + initials(st.name)
-      + (aim ? '<span class="bull" onclick="fxOpen(\'' + st.id + '\')">' + bullSvg() + '</span>' : bullSvg())
-      + (isBtn ? '<span class="badge">D</span>' : '')
-      + (st.leaveAsk && !st.leaveOk ? '<span class="want">!</span>' : '') + '</div>'
-    + line
-    + '<div class="sstack">' + fmt(st.stack) + '</div>'
-    + (hp && hp.bet > 0 ? '<div class="betchip"><i></i>' + fmt(hp.bet) + '</div>' : '')
-    + '</div>';
-}
-
-function myHalf(v) {
-  var me = v.me;
-  if (!me) {
-    return '<div class="abs" style="left:16px;right:16px;top:' + (MINE + 30) + 'px">'
-      + '<div class="evc"><div class="muted small">You are watching. '
-      + (v.status === 'playing' ? 'Ask ' + esc(v.admin) + ' for a seat from the Tables screen.' : 'Take a seat from the Tables screen.')
-      + '</div></div></div>';
-  }
-  var hp = inHand(v, me.id);
-  var h = '';
-
-  // your cards, face down until you look
-  if (hp && hp.cards && hp.cards.length) {
-    var cn = hp.cards.length;
-    var stp = cn > 4 ? 40 : (cn > 2 ? 44 : 48), rot = cn > 4 ? 6 : (cn > 2 ? 7 : 11);
-    var cw = (cn - 1) * stp + 70, sc = cn > 4 ? 0.78 : (cn > 2 ? 0.86 : 1);
-    var shown = !!S.lock || !!(v.hand && v.hand.finished);
-    h += '<div id="hero" class="abs' + (shown ? ' up' : '') + '" onclick="S.lock=!S.lock;render()"'
-      + ' style="left:18px;top:422px;height:104px;width:' + cw + 'px;transform:scale(' + sc + ');transform-origin:0 0;'
-      + (hp.folded ? 'opacity:.35' : '') + '">'
-      + hp.cards.map(function (c, i) {
-        return '<div class="abs" style="left:' + (i * stp) + 'px;top:6px;transform:rotate(' + ((i - (cn - 1) / 2) * rot) + 'deg)">'
-          + '<div class="hc"><div class="hb">' + cardHtml('??', 'xl') + '</div><div class="hf">' + cardHtml(c, 'xl') + '</div></div></div>';
-      }).join('') + '</div>';
-  }
-
-  // you, on the right of your cards
-  var seat = (v.seats || [])[me.seat];
-  if (seat) h += plaque(v, seat, 208, 436, 145);
-
-  // and the button that opens your own reactions
-  if (canReact(v)) {
-    h += '<div class="abs" style="left:306px;top:452px;width:40px;height:40px">'
-      + '<div class="pmini" style="position:relative;width:40px;height:40px;border-radius:20px;background:#1b2a22;cursor:pointer" onclick="fxOpen(\'me\')">'
-      + bullSvg() + '<span style="position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:16px">🙂</span></div></div>';
-  }
-  return h;
-}
-
-// The band at the bottom: whose turn, the slider, and the buttons.
-function actionPanel(v) {
-  var h = '<div class="abs" style="left:0;top:' + PANEL + 'px;width:390px;height:' + (844 - PANEL) + 'px;border-top:2px solid #d8b45c;background:#0a0c0b;padding:0 14px">';
-  h += controls(v);
-  return h + '</div>';
-}
-
-function controls(v) {
-  if (v.status === 'ended') return '<div style="padding-top:18px"><button class="btn" onclick="leaveTable()">Back to the tables</button></div>';
-  if (v.status !== 'playing' || !v.hand) {
-    var w = '<div style="padding-top:18px">';
-    if (v.iRunIt) w += '<button class="btn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">' + (v.waiting ? esc(v.waiting) : 'Start the game') + '</button>';
-    else w += '<div class="evc" style="margin:0"><div class="muted small">' + (v.waiting ? esc(v.waiting) : 'Waiting for ' + esc(v.admin) + ' to start') + '</div></div>';
-    return w + '</div>';
-  }
-  // everybody all in, the table is voting on how many times to run the board
-  if (v.hand.runit) return '<div style="padding-top:14px">' + runItVote(v) + '</div>';
-
-  var L = v.legal;
-  if (!L) {
-    return '<div style="padding-top:22px"><div class="evc" style="margin:0"><div class="muted small">'
-      + (v.hand.finished ? 'Hand over' : 'Waiting for the others') + '</div></div></div>';
-  }
-
-  var min = L.minRaiseTo, max = L.maxRaiseTo;
-  var cur = (S.raiseTo && S.raiseTo >= min && S.raiseTo <= max) ? S.raiseTo : min;
-  var h = '<div style="padding-top:14px;display:flex;align-items:baseline;justify-content:space-between">'
-    + '<div class="gold" style="font-size:12px;font-weight:700;letter-spacing:.14em">YOUR TURN</div>'
-    + (L.canRaise ? '<div style="display:flex;align-items:baseline;gap:8px"><span class="muted" style="font-size:13px">Raise to</span>'
-      + '<span class="disp" id="rv" style="font-size:26px">' + fmt(cur) + '</span></div>' : '') + '</div>';
-
-  if (L.canRaise) {
-    h += '<input type="range" style="margin-top:8px" min="' + min + '" max="' + max + '" step="1" value="' + cur
-      + '" oninput="S.raiseTo=Number(this.value);var e=document.getElementById(\'rv\');if(e)e.textContent=fmt(S.raiseTo);var b=document.getElementById(\'rb\');if(b)b.textContent=\'Raise \'+fmt(S.raiseTo)">';
-    h += '<div style="display:flex;gap:6px;margin-top:8px">'
-      + quick(L, '½ pot', Math.min(max, Math.max(min, Math.round(L.pot / 2))))
-      + quick(L, '¾ pot', Math.min(max, Math.max(min, Math.round(L.pot * 0.75))))
-      + quick(L, 'Pot', Math.min(max, Math.max(min, L.pot)))
-      + quick(L, 'All in', max) + '</div>';
-  }
-
-  h += '<div style="display:flex;gap:8px;margin-top:10px">'
-    + '<button class="act" style="flex:1;background:#2a1e20" onclick="act(\'fold\')">Fold</button>'
-    + (L.canCheck
-      ? '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'check\')">Check</button>'
-      : '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'call\')">Call ' + fmt(L.toCall || 0) + '</button>')
-    + (L.canRaise ? '<button class="act" id="rb" style="flex:1;background:#d8b45c;color:#14110a" onclick="act(\'raise\',S.raiseTo||' + min + ')">Raise ' + fmt(cur) + '</button>' : '')
-    + '</div>';
-  h += '<div class="muted" style="margin-top:6px;text-align:center;font-size:11px">No-limit &middot; minimum raise to ' + fmt(min) + '</div>';
-  return h;
-}
-
-function quick(L, label, amount) {
-  return '<button class="chip" style="flex:1" onclick="S.raiseTo=' + amount
-    + ';var e=document.getElementById(\'rv\');if(e)e.textContent=fmt(S.raiseTo);var b=document.getElementById(\'rb\');if(b)b.textContent=\'Raise \'+fmt(S.raiseTo);render()">' + label + '</button>';
-}
-
-// ---------------------------------------------------------------- bombs and flowers
-function canReact(v) { return !!(v.me && !v.me.out && v.reactions); }
+function fxCanPlay(A) { return !!(A.you && A.you.seat >= 0 && !A.you.watching); }
 function fxOpen(id) { S.fxMenu = (S.fxMenu === id) ? null : id; render(); }
 function fxSend(kind, to) {
   S.fxMenu = null; render();
   api('react', { code: S.code, kind: kind, to: to || '' }).catch(function (e) {
-    if (e && e.message && /one at a time/i.test(e.message)) return;    // they tapped twice, no matter
+    if (e && e.message && /one at a time/i.test(e.message)) return;
     fail(e);
   });
 }
-
-// the little tray of things to send
-function fxTray(v) {
-  if (!S.fxMenu || !canReact(v)) return '';
+// Taken in once, by id, and then left to play out. Re-deriving them from the server on every
+// redraw restarted the animation each time, so nothing ever got across the table.
+function fxIngest(v) {
+  var fx = v.fx || [];
+  if (S.fxMax === undefined) { S.fxMax = fx.length ? fx[fx.length - 1].id : 0; return; }
+  S.fxLive = S.fxLive || [];
+  fx.forEach(function (f) {
+    if (f.id <= S.fxMax) return;
+    S.fxMax = f.id;
+    var age = (v.now || Date.now()) - f.at;
+    if (age > 4000) return;
+    S.fxLive.push({ id: f.id, k: f.k, icon: f.icon, hit: f.hit, from: f.from, to: f.to, t0: Date.now() - Math.max(0, age) });
+    if (f.to && S.v && S.v.me && f.to === S.v.me.id && navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+  });
+  if (S.fxLive.length) { clearTimeout(S.fxTimer); S.fxTimer = setTimeout(function () { if (S.screen === 'table') render(); }, 3400); }
+}
+function fxHtml(A) {
+  var live = S.fxLive || [];
+  if (!live.length) return '';
+  var now = Date.now(), keep = [], h = '';
+  live.forEach(function (f) {
+    var age = now - f.t0;
+    if (age > 3400) return;
+    keep.push(f);
+    var a = f.from ? fxPos(A, f.from) : null;
+    var b = f.to ? fxPos(A, f.to) : null;
+    if (f.from && f.to) {
+      if (!a || !b) return;
+      h += '<div class="fx" style="left:' + a.x + 'px;top:' + a.y + 'px;--dx:' + (b.x - a.x) + 'px;--dy:' + (b.y - a.y)
+        + 'px;animation:fxfly .7s ease-in both;animation-delay:-' + age + 'ms">' + f.icon + '</div>';
+      if (f.hit) h += '<div class="fx" style="left:' + b.x + 'px;top:' + b.y + 'px;font-size:40px;animation:fxpop 1.3s ease-out both;animation-delay:' + (700 - age) + 'ms">' + f.hit + '</div>';
+    } else {
+      var at = b || a;
+      if (!at) return;
+      h += '<div class="fx fxbub" style="left:' + at.x + 'px;top:' + (at.y - 42) + 'px;animation:fxbub 3s ease-out both;animation-delay:-' + age + 'ms">' + f.icon + '</div>';
+    }
+  });
+  S.fxLive = keep;
+  return h;
+}
+function fxTray(A) {
+  if (!S.fxMenu || !fxCanPlay(A) || !S.v.reactions) return '';
   var own = S.fxMenu === 'me';
-  var who = own ? null : (v.seats || []).filter(function (x) { return x && x.id === S.fxMenu; })[0];
+  var who = own ? null : A.seats.filter(function (x) { return x && x.id === S.fxMenu; })[0];
   if (!own && !who) return '';
-  var list = own ? v.reactions.faces : v.reactions.throws;
+  var list = own ? S.v.reactions.faces : S.v.reactions.throws;
   var h = '<div class="abs" style="inset:0;z-index:60;background:rgba(5,7,6,.55)" onclick="S.fxMenu=null;render()"></div>'
     + '<div class="abs" style="left:14px;right:14px;bottom:18px;z-index:61;background:#141917;border:1px solid #2a312d;border-radius:16px;padding:14px">'
     + '<div style="font-size:13px;font-weight:600;margin-bottom:10px">' + (own ? 'Put something up' : 'Throw something at ' + esc(who.name)) + '</div>'
@@ -777,43 +719,249 @@ function fxTray(v) {
   return h + '</div><button class="btn ghost" style="margin-top:12px" onclick="S.fxMenu=null;render()">Close</button></div>';
 }
 
-// what is in the air right now
-function fxLayer(v) {
-  var list = v.fx || [];
-  if (!list.length) return '';
-  var now = Date.now(), h = '';
-  list.forEach(function (f) {
-    var age = now - f.at;
-    if (age > 6000) return;
-    var to = f.to ? fxSpot(v, f.to) : null;
-    var from = f.from ? fxSpot(v, f.from) : null;
-    if (f.from && f.to && from && to) {
-      h += '<div class="fx" style="left:' + from.x + 'px;top:' + from.y + 'px;--dx:' + (to.x - from.x) + 'px;--dy:' + (to.y - from.y)
-        + 'px;animation:fxfly .7s ease-in both;animation-delay:-' + age + 'ms">' + f.icon + '</div>';
-      if (f.hit) h += '<div class="fx" style="left:' + to.x + 'px;top:' + to.y + 'px;font-size:40px;animation:fxpop 1.3s ease-out both;animation-delay:' + (700 - age) + 'ms">' + f.hit + '</div>';
-    } else {
-      var at = to || from;
-      if (!at) return;
-      h += '<div class="fx fxbub" style="left:' + at.x + 'px;top:' + (at.y - 44) + 'px;animation:fxbub 3s ease-out both;animation-delay:-' + age + 'ms">' + f.icon + '</div>';
-    }
-  });
-  if (h) { clearTimeout(S.fxTimer); S.fxTimer = setTimeout(render, 1200); }   // clear them when they age out
+// ---- one seat ----
+function plaque(A, st, x, y, w, rel, hand, RES, n, up) {
+  var out = (st.away || st.busted || st.folded || (!st.inHand && hand && !hand.finished));
+  var cls = 'seat ' + (up ? 'up' : 'low') + (st.isTurn ? ' turn' : '') + (out ? ' out' : '') + (st.allIn ? ' allin' : '') + (st.wants ? ' wants' : '');
+  var line2 = st.allIn ? '<div class="pill" style="margin-top:3px;background:#d2454d;color:#fff">ALL IN</div>'
+    : st.busted ? '<div class="sname">Out</div>'
+    : st.away ? '<div class="sname">Away</div>'
+    : st.folded ? '<div class="sname">Folded</div>'
+    : '<div class="sname">' + esc(st.name) + '</div>';
+  var bull = (fxCanPlay(A) && rel !== 0) ? '<span class="bull" onclick="fxOpen(\'' + st.id + '\')">' + bullSvg() + '</span>' : bullSvg();
+  // at a showdown the cards come up on their own; otherwise only what they chose to show
+  var atShowdown = RES && st.cards && st.cards.length && st.cards[0] !== '??';
+  var cards = atShowdown ? st.cards : (st.shown || null);
+  var bar = st.isTurn && hand && hand.deadline ? '<span class="tring" id="tb' + st.id + '"></span>' : '';
+  return '<div class="abs ' + cls + '" style="left:' + x + 'px;top:' + y + 'px;width:' + w + 'px">'
+    + '<div class="av">' + initials(st.name) + bull + bar
+      + (st.isButton ? '<span class="badge">D</span>' : '')
+      + (st.wants ? '<span class="want">!</span>' : '') + '</div>'
+    + line2 + '<div class="sstack">' + fmt(st.stack) + '</div>'
+    + (n >= 7 && (rel === 1 || rel === n - 1) ? '' : behindTag(st))
+    + (st.bet > 0 ? '<div class="betchip"><i></i>' + fmt(st.bet) + '</div>' : '')
+    + (cards ? '<div class="showc">' + cards.map(function (c) { return card(c, 'sm'); }).join('') + '</div>' : '')
+    + '</div>';
+}
+
+// ---- the one seam: the rebuilt portal's view, in the shape the screen above expects ----
+function adapt(v) {
+  var n = v.seatsMax, hand = v.hand;
+  var hp = {};
+  if (hand) (hand.players || []).forEach(function (p) { hp[p.id] = p; });
+  var seats = [];
+  for (var s = 0; s < n; s++) {
+    var st = v.seats[s];
+    if (!st) { seats.push(null); continue; }
+    var p = hp[st.id] || null;
+    seats.push({
+      id: st.id, seat: s, name: st.name, stack: st.stack, bought: st.bought,
+      away: st.away, busted: st.busted, wants: !!(st.leaveAsk && !st.leaveOk),
+      bet: p ? p.bet : 0, folded: p ? p.folded : false, allIn: p ? p.allIn : false,
+      inHand: !!p, cards: p ? p.cards : null, shown: p ? p.shown : null,
+      isTurn: !!(hand && hand.turnId === st.id && !hand.finished),
+      isButton: !!(hand && hand.button === s),
+    });
+  }
+  return {
+    code: v.code, handNo: v.handNo, seats: seats, hand: hand,
+    you: { id: v.me ? v.me.id : '', seat: v.me ? v.me.seat : -1, watching: !v.me },
+  };
+}
+
+function tableScreen() {
+  var v = S.v;
+  if (!v) return '<div class="sheet"><div class="muted" style="margin-top:40px">Opening the table…</div></div>';
+  var A = adapt(v), hand = v.hand, n = A.seats.length, me = A.you;
+  if (S.peekHand !== v.handNo) { S.peekHand = v.handNo; S.lock = false; S.peek = false; }
+
+  var h = '<div class="abs" style="inset:0;background:#0a0c0b">';
+  // the strip across the top
+  h += '<div class="abs" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 12px;display:flex;align-items:center;gap:10px">'
+    + '<button class="rolechip" style="height:28px;flex:none" onclick="leaveTable()">&#8592;</button>'
+    + '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM ' + esc(v.code) + '</div>'
+    + '<div class="muted" style="margin-top:2px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+    + (v.handNo ? 'Hand ' + v.handNo : 'Not started') + ' &middot; ' + esc(v.formatName) + '</div></div>'
+    + '<div style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #2a312d;background:#141917;font-size:13px;font-weight:600;display:flex;align-items:center;flex:none">'
+    + fmt(v.blinds.sb) + ' / ' + fmt(v.blinds.bb) + '</div>'
+    + '<button class="rolechip" style="height:30px;flex:none" onclick="S.menu=!S.menu;render()">&#9776;</button></div>';
+
+  // the felt, and your own half below it
+  h += '<div class="abs felt" style="left:30px;top:106px;width:330px;height:240px"></div>';
+  h += '<div class="abs" style="left:0;top:' + MINE + 'px;width:390px;height:' + (844 - MINE) + 'px;background:linear-gradient(#18231d,#0c110f 62%);border-top:2px solid #d8b45c"></div>';
+
+  // the pot
+  h += '<div class="abs" style="left:0;top:152px;width:390px;display:flex;flex-direction:column;align-items:center">'
+    + '<div style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#bfe0cf">POT</div>'
+    + '<div class="disp gold" style="font-size:38px;line-height:1">' + fmt(hand ? hand.pot : 0) + '</div></div>';
+
+  // which cards made the winning hand, so the rest can be dimmed
+  var RES = (hand && hand.finished && hand.result) ? hand.result : null;
+  S.win = null;
+  if (RES && !RES.uncontested && RES.reveal) {
+    S.win = {};
+    Object.keys(RES.won || {}).forEach(function (id) {
+      var r = RES.reveal[id];
+      if (r && r.best) r.best.forEach(function (c) { S.win[c] = 1; });
+    });
+  }
+
+  // the board: five places, filled as the cards come
+  var boards = (hand && hand.boards && hand.boards.length) ? hand.boards : [[]];
+  var multi = boards.length > 1, bc = '', i;
+  if (!multi) {
+    for (i = 0; i < 5; i++) bc += boards[0][i] ? card(boards[0][i], (S.win && !S.win[boards[0][i]]) ? 'dim' : '') : '<div class="card empty"></div>';
+    h += '<div class="abs board" style="left:0;top:206px;width:390px;display:flex;justify-content:center;gap:5px">' + bc + '</div>';
+  } else {
+    boards.forEach(function (b) {
+      bc += '<div class="board" style="display:flex;gap:3px;justify-content:center">';
+      for (var j = 0; j < 5; j++) bc += b[j] ? card(b[j], 'sm' + ((S.win && !S.win[b[j]]) ? ' dim' : '')) : '<div class="card sm empty"></div>';
+      bc += '</div>';
+    });
+    h += '<div class="abs" style="left:0;top:198px;width:390px;display:flex;flex-direction:column;gap:4px">' + bc + '</div>';
+  }
+
+  // what just happened, under the board
+  var stTop = multi ? 198 + boards.length * 38 + 2 : 272;
+  var status = '';
+  if (RES) {
+    status = Object.keys(RES.won || {}).map(function (id) {
+      var st = A.seats.filter(function (x) { return x && x.id === id; })[0];
+      var r = RES.reveal && RES.reveal[id];
+      return (st ? esc(st.name) : 'Somebody') + ' wins ' + fmt(RES.won[id]) + (r && r.handName ? ' &middot; ' + esc(r.handName) : '');
+    }).join('<br>');
+  } else if (hand && !hand.finished) {
+    status = (hand.runit ? 'RUN IT? VOTE' : (hand.street || '').toUpperCase())
+      + (hand.variant && hand.variant !== 'holdem' ? '<br><span style="color:#d8b45c">' + esc(hand.variantName || '').toUpperCase() + '</span>' : '');
+  } else {
+    status = v.status === 'ended' ? 'THE GAME HAS ENDED' : (v.waiting ? esc(v.waiting) : 'WAITING TO START');
+  }
+  h += '<div class="abs" style="left:50px;top:' + stTop + 'px;width:290px;text-align:center;font-size:12px;font-weight:600;'
+    + 'letter-spacing:.08em;color:' + (RES ? '#d8b45c' : '#bfe0cf') + ';line-height:1.5">' + status + '</div>';
+
+  // everybody else, round the table
+  for (var s = 0; s < n; s++) {
+    var st = A.seats[s];
+    var rel = (s - (me.seat < 0 ? 0 : me.seat) + n) % n;
+    if (rel === 0 && !me.watching) continue;
+    var pos = seatXY(rel, n);
+    var px = Math.max(-2, Math.min(390 - 74, pos.x - 38)), py = pos.y - 30;
+    if (!st) { h += '<div class="abs seat" style="left:' + px + 'px;top:' + py + 'px;width:74px;opacity:.22"><div class="av" style="border-style:dashed"></div></div>'; continue; }
+    h += plaque(A, st, px, py, 74, rel, hand, RES, n, pos.y < CY);
+  }
+
+  // your own corner
+  var my = me.seat >= 0 ? A.seats[me.seat] : null;
+  if (my && my.cards && my.cards.length) {
+    var cn = my.cards.length, stp = cn > 4 ? 40 : (cn > 2 ? 44 : 48), rot = cn > 4 ? 6 : (cn > 2 ? 7 : 11);
+    var cw = (cn - 1) * stp + 70, sc = cn > 4 ? 0.78 : (cn > 2 ? 0.86 : 1);
+    var shown = !!(S.peek || S.lock) || !!(RES && RES.reveal && RES.reveal[me.id]);
+    h += '<div id="hero" class="abs' + (shown ? ' up' : '') + '" style="left:18px;top:422px;height:104px;width:' + cw
+      + 'px;transform:scale(' + sc + ');transform-origin:0 0;' + (my.folded ? 'opacity:.35' : '') + '">'
+      + my.cards.map(function (c, k) {
+        return '<div class="abs" style="left:' + (k * stp) + 'px;top:6px;transform:rotate(' + ((k - (cn - 1) / 2) * rot) + 'deg)">'
+          + '<div class="hc"><div class="hb">' + card('??', 'xl') + '</div><div class="hf">' + card(c, 'xl') + '</div></div></div>';
+      }).join('') + '</div>';
+  }
+  if (my) h += plaque(A, my, 208, 436, 145, 0, hand, RES, n, false);
+  if (fxCanPlay(A)) {
+    h += '<div class="abs" style="left:306px;top:452px;width:40px;height:40px">'
+      + '<div class="pmini" style="position:relative;width:40px;height:40px;border-radius:20px;background:#1b2a22;cursor:pointer" onclick="fxOpen(\'me\')">'
+      + bullSvg() + '<span style="position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:16px">🙂</span></div></div>';
+  }
+
+  h += actionPanel(v, A, RES);
+  h += fxTray(A);
+  h += fxHtml(A);
+  if (S.menu) h += tableMenu(v);
+  return h + '</div>';
+}
+
+// ---- the band at the bottom ----
+function actionPanel(v, A, RES) {
+  var h = '<div class="abs" style="left:0;top:586px;width:390px;height:258px;border-top:2px solid #d8b45c;background:#0a0c0b;padding:0 14px;overflow:auto">';
+  h += controls(v, A, RES);
+  return h + '</div>';
+}
+
+function controls(v, A, RES) {
+  if (v.status === 'ended') return '<div style="padding-top:18px"><button class="btn" onclick="leaveTable()">Back to the tables</button></div>';
+  if (v.status !== 'playing' || !v.hand) {
+    var w = '<div style="padding-top:18px">';
+    if (v.iRunIt) w += '<button class="btn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">' + (v.waiting ? esc(v.waiting) : 'Start the game') + '</button>';
+    else w += '<div class="evc" style="margin:0"><div class="muted small">' + (v.waiting ? esc(v.waiting) : 'Waiting for ' + esc(v.admin) + ' to start') + '</div></div>';
+    return w + '</div>';
+  }
+  if (v.hand.runit) return '<div style="padding-top:14px">' + runItVote(v) + '</div>';
+
+  // the hand is over: offer to show what you had
+  if (v.hand.finished) {
+    return '<div style="padding-top:14px"><div class="evc" style="margin:0"><div class="muted small">Hand over</div></div>' + showRow(v, A) + '</div>';
+  }
+
+  var L = v.legal;
+  if (!L) return '<div style="padding-top:22px"><div class="evc" style="margin:0"><div class="muted small">Waiting for the others</div></div>' + showRow(v, A) + '</div>';
+
+  var min = L.minRaiseTo, max = L.maxRaiseTo;
+  var cur = (S.raiseTo && S.raiseTo >= min && S.raiseTo <= max) ? S.raiseTo : min;
+  var h = '<div style="padding-top:14px;display:flex;align-items:baseline;justify-content:space-between">'
+    + '<div class="gold" style="font-size:12px;font-weight:700;letter-spacing:.14em">YOUR TURN</div>'
+    + (L.canRaise ? '<div style="display:flex;align-items:baseline;gap:8px"><span class="muted" style="font-size:13px">Raise to</span>'
+      + '<span class="disp" id="rv" style="font-size:26px">' + fmt(cur) + '</span></div>' : '') + '</div>';
+  if (L.canRaise) {
+    h += '<input type="range" style="margin-top:8px" min="' + min + '" max="' + max + '" step="1" value="' + cur + '" oninput="onRange(this.value)">';
+    h += '<div style="display:flex;gap:6px;margin-top:8px">'
+      + quick('½ pot', Math.min(max, Math.max(min, Math.round(L.pot / 2))))
+      + quick('¾ pot', Math.min(max, Math.max(min, Math.round(L.pot * 0.75))))
+      + quick('Pot', Math.min(max, Math.max(min, L.pot)))
+      + quick('All in', max) + '</div>';
+  }
+  h += '<div style="display:flex;gap:8px;margin-top:10px">'
+    + '<button class="act" style="flex:1;background:#2a1e20" onclick="act(\'fold\')">Fold</button>'
+    + (L.canCheck ? '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'check\')">Check</button>'
+      : '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'call\')">Call ' + fmt(L.toCall || 0) + '</button>')
+    + (L.canRaise ? '<button class="act" id="rb" style="flex:1;background:#d8b45c;color:#14110a" onclick="act(\'raise\',S.raiseTo||' + min + ')">Raise ' + fmt(cur) + '</button>' : '')
+    + '</div>';
+  h += '<div class="muted" style="margin-top:6px;text-align:center;font-size:11px">No-limit &middot; minimum raise to ' + fmt(min) + '</div>';
   return h;
 }
 
-// where on screen a given player is sitting
-function fxSpot(v, id) {
-  var n = v.seatsMax, mySeat = v.me ? v.me.seat : 0;
-  var seats = v.seats || [];
-  for (var s = 0; s < n; s++) {
-    var st = seats[s];
-    if (!st || st.id !== id) continue;
-    var rel = (s - mySeat + n) % n;
-    if (rel === 0 && v.me) return { x: 234, y: 462 };        // you, in your own half
-    var p = seatXY(rel, n);
-    return { x: Math.max(-2, Math.min(390 - 74, p.x - 37)) + 26, y: p.y - 30 + 26 };
-  }
-  return null;
+function onRange(x) {
+  S.raiseTo = Number(x);
+  var e = document.getElementById('rv'); if (e) e.textContent = fmt(S.raiseTo);
+  var b = document.getElementById('rb'); if (b) b.textContent = 'Raise ' + fmt(S.raiseTo);
+}
+function quick(label, amount) {
+  return '<button class="chip" style="flex:1" onclick="S.raiseTo=' + amount + ';render()">' + label + '</button>';
+}
+
+// ---- showing your cards when nobody made you ----
+function showRow(v, A) {
+  var my = A.you.seat >= 0 ? A.seats[A.you.seat] : null;
+  if (!my || !my.inHand || !my.cards || !my.cards.length || my.cards[0] === '??') return '';
+  var sh = my.shown || [], cn = my.cards.length;
+  var cs = my.cards.map(function (c, i) {
+    var on = sh[i] && sh[i] !== '??';
+    return '<button onclick="showCard(' + i + ')" style="padding:3px;border-radius:8px;background:' + (on ? 'rgba(216,180,92,.25)' : 'transparent')
+      + ';border:1px solid ' + (on ? '#d8b45c' : '#2a312d') + '">' + card(c, 'sm') + '</button>';
+  }).join('');
+  var nOn = sh.filter(function (x) { return x && x !== '??'; }).length;
+  return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;border:1px dashed #2a312d;margin-top:10px">'
+    + '<div style="flex:1;min-width:100px"><div class="gold" style="font-weight:700;letter-spacing:.08em;font-size:11px;white-space:nowrap">SHOW YOUR CARDS</div>'
+    + '<div class="muted" style="font-size:11px">Tap a card to show it</div></div>'
+    + '<div style="display:flex;gap:4px;flex:none">' + cs + '</div>'
+    + (cn > 1 ? '<button class="btn ghost" style="flex:none;width:auto;height:34px;padding:0 10px;font-size:12px" onclick="showCard(\'all\')">' + (nOn === cn ? 'Hide' : 'All') + '</button>' : '')
+    + '</div>';
+}
+function showCard(i) {
+  var A = adapt(S.v), my = A.seats[A.you.seat];
+  if (!my || !my.cards) return;
+  var cn = my.cards.length;
+  var cur = (my.shown || []).map(function (x, k) { return x && x !== '??' ? k : -1; }).filter(function (k) { return k >= 0; });
+  var idx;
+  if (i === 'all') idx = cur.length === cn ? [] : my.cards.map(function (c, k) { return k; });
+  else idx = cur.indexOf(i) >= 0 ? cur.filter(function (k) { return k !== i; }) : cur.concat([i]);
+  api('showcards', { code: S.code, idx: idx }).catch(fail);
 }
 
 function act(type, amount) {
@@ -885,12 +1033,6 @@ function decideLeave(pid, ok) { api('leave-decide', { code: S.code, playerId: pi
 function sendNote() { blurField(); api('note', { code: S.code, text: val('nt_text') }).then(function () { var el = document.getElementById('nt_text'); if (el) el.value = ''; toast('Sent'); }).catch(fail); }
 function endGame() { if (!confirm('End the game and work out the accounts?')) return; api('table-end', { code: S.code }).then(function () { S.menu = false; toast('Game ended'); refresh(); }).catch(fail); }
 
-function cardHtml(c, size, extra) {
-  if (!c || c === '??') return '<div class="card back ' + (size || '') + '"></div>';
-  var r = c.slice(0, -1), su = c.slice(-1);
-  var red = su === 'h' || su === 'd';
-  return '<div class="card ' + (size || '') + (red ? ' red' : '') + (extra ? ' ' + extra : '') + '">' + cardFace(r, su, size === 'sm') + '</div>';
-}
 
 // ---------------------------------------------------------------- draw
 // Which screen is on show. Used to decide whether a redraw is the same screen again - in which
