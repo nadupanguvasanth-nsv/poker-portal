@@ -613,7 +613,6 @@ const routes = {
   },
 
   // --- records ---
-  history(b) { const m = people.auth(b); return { history: myHistory(m) }; },
   replay(b) {
     const m = people.auth(b);
     const g = state.history.find((x) => x.id === b.id);
