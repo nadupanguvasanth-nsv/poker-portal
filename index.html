@@ -47,6 +47,11 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .card.back{background:repeating-linear-gradient(45deg,rgba(216,180,92,.16) 0 2px,transparent 2px 7px),repeating-linear-gradient(-45deg,rgba(216,180,92,.16) 0 2px,transparent 2px 7px),#16201b;border:1px solid #d8b45c;box-shadow:inset 0 0 0 3px #16201b,inset 0 0 0 4px rgba(216,180,92,.5)}
 .card.empty{background:transparent;border:1px dashed rgba(191,224,207,.3)}
 .card.sm{width:24px;height:34px;font-size:13px;border-radius:3px}
+/* The sizes below are never written as a literal class anywhere - card(c, 'xl') builds them at
+   run time - so searching the page for class="xl" finds nothing and they look unused. They are
+   not. cardsizetest.js checks every size the code asks for has a rule here. */
+.card.md{width:36px;height:50px;font-size:17px;border-radius:5px}
+.card.xl{width:86px;height:120px;font-size:32px;border-radius:9px;box-shadow:0 8px 18px rgba(0,0,0,.55)}
 .hc{position:relative;width:70px;height:98px;transition:transform .14s ease,filter .14s}
 .hc .hf{position:absolute;left:0;top:0;display:none}
 #hero{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;cursor:pointer}
@@ -87,7 +92,22 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .sname{margin-top:3px;font-size:11px;color:#bfe0cf;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sbh{font-size:9.5px;font-weight:700;line-height:1.2;margin-top:1px}
 .sstack{font-size:12px;font-weight:600}
-.seat .tring{position:absolute;left:-2px;bottom:-4px;height:3px;background:#d8b45c;border-radius:2px;max-width:52px}
+/* the player to act has his circle run down, so the whole table can see the time going */
+.seat .tring{position:absolute;left:-6px;top:-6px;width:64px;height:64px;border-radius:32px;pointer-events:none;
+  background:conic-gradient(#d8b45c calc(var(--left,1) * 360deg),rgba(216,180,92,.13) 0);
+  -webkit-mask:radial-gradient(circle at center,transparent 27px,#000 28px);
+          mask:radial-gradient(circle at center,transparent 27px,#000 28px)}
+.seat .tring.hot{background:conic-gradient(#d2454d calc(var(--left,1) * 360deg),rgba(210,69,77,.16) 0)}
+/* the move just made, sitting above the player's circle for a moment */
+.actflash{position:absolute;left:50%;bottom:100%;margin-bottom:2px;transform:translateX(-50%);
+  padding:2px 8px;border-radius:9px;background:#d8b45c;color:#14110a;font-family:'Inter',sans-serif;
+  font-size:11px;font-weight:800;letter-spacing:.06em;white-space:nowrap;z-index:6;
+  animation:actpop .22s ease-out}
+.av.acted{border-color:#d8b45c!important;box-shadow:0 0 0 5px rgba(216,180,92,.35)!important}
+@keyframes actpop{from{opacity:0;transform:translateX(-50%) translateY(4px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+.seat .tsec{position:absolute;right:-8px;top:-6px;min-width:20px;height:20px;padding:0 4px;border-radius:10px;
+  background:#d2454d;color:#fff;font-family:'Inter',sans-serif;font-size:11px;font-weight:700;
+  display:flex;align-items:center;justify-content:center}
 .seat.wants .av{border-color:#8fb7ff;box-shadow:0 0 0 4px rgba(143,183,255,.22)}
 .want{position:absolute;right:-6px;top:-4px;width:18px;height:18px;border-radius:9px;background:#8fb7ff;color:#0b1220;font:700 12px 'Inter',sans-serif;display:flex;align-items:center;justify-content:center}
 .pill{height:16px;padding:0 6px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:.06em;display:flex;align-items:center;justify-content:center}
@@ -157,6 +177,10 @@ function connect() {
   feed.addEventListener('lobby', function (e) { S.tables = JSON.parse(e.data).tables; if (S.screen !== 'table') render(); });
   feed.addEventListener('table', function (e) {
     S.v = JSON.parse(e.data);
+    // the phone's clock may be minutes out; keep the difference so the turn ring runs true
+    if (S.v.now) S.skew = Date.now() - S.v.now;
+    watchActs();            // did somebody just call or raise? flash it on their seat
+    watchTurn();            // and has the turn moved? ring for yours, tick for theirs
     fxIngest(S.v);          // take in anything newly thrown, once, and let it fly
     if (S.screen === 'table') render();
   });
@@ -470,6 +494,11 @@ function tableCard(t) {
   else if (t.asked) h += '<button class="btn ghost" style="flex:1;height:46px" disabled>Waiting for ' + esc(t.admin) + '</button>';
   else if (!t.free) h += '<button class="btn ghost" style="flex:1;height:46px" disabled>Full</button>';
   else h += '<button class="btn" style="flex:1;height:46px" onclick="joinTable(\'' + t.code + '\')">' + (t.status === 'playing' ? 'Ask to join' : 'Take a seat') + '</button>';
+  // You do not have to commit to a seat to come in and look. Walk into the room, watch a hand,
+  // and sit down when you feel like it - the table screen offers the seat once you are there.
+  if (!t.iAmIn && t.status !== 'ended') {
+    h += '<button class="btn ghost" style="width:86px;height:46px;font-size:13px" onclick="openTable(\'' + t.code + '\')">Watch</button>';
+  }
   if (t.iRunIt) h += '<button class="btn ghost" style="width:52px;height:46px;font-size:18px" title="Invite" onclick="getInvite(\'' + t.code + '\')">&#9993;</button>';
   h += '</div></div>';
   return h;
@@ -846,12 +875,17 @@ function plaque(A, st, x, y, w, rel, hand, RES, n, up) {
     : st.folded ? '<div class="sname">Folded</div>'
     : '<div class="sname">' + esc(st.name) + '</div>';
   var bull = (fxCanPlay(A) && rel !== 0) ? '<span class="bull" onclick="fxOpen(\'' + st.id + '\')">' + bullSvg() + '</span>' : bullSvg();
+  // what he just did, for a moment, so you can follow the betting without watching every chip
+  var flash = (S.flash && S.flash.id === st.id && Date.now() < S.flash.until)
+    ? '<div class="actflash">' + esc(S.flash.word) + '</div>' : '';
   // at a showdown the cards come up on their own; otherwise only what they chose to show
   var atShowdown = RES && st.cards && st.cards.length && st.cards[0] !== '??';
   var cards = atShowdown ? st.cards : (st.shown || null);
-  var bar = st.isTurn && hand && hand.deadline ? '<span class="tring" id="tb' + st.id + '"></span>' : '';
+  var bar = st.isTurn && hand && hand.deadline
+    ? '<span class="tring" id="tb' + st.id + '"></span><span class="tsec" id="ts' + st.id + '" style="display:none"></span>' : '';
   return '<div class="abs ' + cls + '" style="left:' + x + 'px;top:' + y + 'px;width:' + w + 'px">'
-    + '<div class="av">' + initials(st.name) + bull + bar
+    + flash
+    + '<div class="av' + (flash ? ' acted' : '') + '">' + initials(st.name) + bull + bar
       + (st.isButton ? '<span class="badge">D</span>' : '')
       + (st.wants ? '<span class="want">!</span>' : '') + '</div>'
     + line2 + '<div class="sstack">' + fmt(st.stack) + '</div>'
@@ -875,7 +909,7 @@ function adapt(v) {
       id: st.id, seat: s, name: st.name, stack: st.stack, bought: st.bought,
       away: st.away, busted: st.busted, wants: !!(st.leaveAsk && !st.leaveOk),
       bet: p ? p.bet : 0, folded: p ? p.folded : false, allIn: p ? p.allIn : false,
-      inHand: !!p, cards: p ? p.cards : null, shown: p ? p.shown : null,
+      inHand: !!p, cards: p ? p.cards : null, shown: p ? p.shown : null, willShow: p ? (p.willShow || []) : [],
       isTurn: !!(hand && hand.turnId === st.id && !hand.finished),
       isButton: !!(hand && hand.button === s),
     });
@@ -977,10 +1011,13 @@ function tableScreen() {
   // your own corner
   var my = me.seat >= 0 ? A.seats[me.seat] : null;
   if (my && my.cards && my.cards.length) {
-    var cn = my.cards.length, stp = cn > 4 ? 40 : (cn > 2 ? 44 : 48), rot = cn > 4 ? 6 : (cn > 2 ? 7 : 11);
-    var cw = (cn - 1) * stp + 70, sc = cn > 4 ? 0.78 : (cn > 2 ? 0.86 : 1);
+    // Big enough to read at a glance - these are the only cards that matter to you, and squinting
+    // at them is the one thing you do every single hand. Four and five card games fan tighter and
+    // scale down so the whole hand still clears the plaque beside it.
+    var cn = my.cards.length, stp = cn > 4 ? 46 : (cn > 2 ? 52 : 62), rot = cn > 4 ? 6 : (cn > 2 ? 7 : 11);
+    var cw = (cn - 1) * stp + 86, sc = cn > 4 ? 0.66 : (cn > 2 ? 0.76 : 1);
     var shown = !!(S.peek || S.lock) || !!(RES && RES.reveal && RES.reveal[me.id]);
-    h += '<div id="hero" class="abs' + (shown ? ' up' : '') + '" style="left:18px;top:422px;height:104px;width:' + cw
+    h += '<div id="hero" class="abs' + (shown ? ' up' : '') + '" style="left:16px;top:414px;height:132px;width:' + cw
       + 'px;transform:scale(' + sc + ');transform-origin:0 0;' + (my.folded ? 'opacity:.35' : '') + '">'
       + my.cards.map(function (c, k) {
         return '<div class="abs" style="left:' + (k * stp) + 'px;top:6px;transform:rotate(' + ((k - (cn - 1) / 2) * rot) + 'deg)">'
@@ -1010,6 +1047,23 @@ function actionPanel(v, A, RES) {
 
 function controls(v, A, RES) {
   if (v.status === 'ended') return '<div style="padding-top:18px"><button class="btn" onclick="leaveTable()">Back to the tables</button></div>';
+  // Somebody who walked in to look rather than to play. Without this he falls through to the
+  // betting controls and is told to wait for the others, which he is not doing at all - he has no
+  // seat and no chips in this game.
+  if (!v.me) {
+    var free = 0;
+    for (var i = 0; i < v.seatsMax; i++) if (!v.seats[i]) free++;
+    var h = '<div style="padding-top:14px"><div class="evc" style="margin:0">'
+      + '<div style="font-weight:600;font-size:14px">You are watching</div>'
+      + '<div class="muted small" style="white-space:normal;margin-top:3px">No seat and no chips here yet. '
+      + (free ? 'There ' + (free === 1 ? 'is one seat' : 'are ' + free + ' seats') + ' free.' : 'Every seat is taken.')
+      + '</div></div>';
+    if (free) {
+      h += '<button class="btn" style="margin-top:10px" onclick="sitHere()">'
+        + (v.status === 'playing' ? 'Ask for a seat' : 'Take a seat') + '</button>';
+    }
+    return h + '<button class="btn ghost" style="margin-top:8px" onclick="leaveTable()">Back to the tables</button></div>';
+  }
   if (v.status !== 'playing' || !v.hand) {
     var w = '<div style="padding-top:18px">';
     if (v.iRunIt) w += '<button class="btn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">' + (v.waiting ? esc(v.waiting) : 'Start the game') + '</button>';
@@ -1072,16 +1126,16 @@ function quick(label, amount) {
 function showRow(v, A) {
   var my = A.you.seat >= 0 ? A.seats[A.you.seat] : null;
   if (!my || !my.inHand || !my.cards || !my.cards.length || my.cards[0] === '??') return '';
-  var sh = my.shown || [], cn = my.cards.length;
+  var sh = my.willShow || [], cn = my.cards.length;
   var cs = my.cards.map(function (c, i) {
-    var on = sh[i] && sh[i] !== '??';
+    var on = sh.indexOf(i) >= 0;
     return '<button onclick="showCard(' + i + ')" style="padding:3px;border-radius:8px;background:' + (on ? 'rgba(216,180,92,.25)' : 'transparent')
       + ';border:1px solid ' + (on ? '#d8b45c' : '#2a312d') + '">' + card(c, 'sm') + '</button>';
   }).join('');
-  var nOn = sh.filter(function (x) { return x && x !== '??'; }).length;
+  var nOn = sh.length;
   return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;border:1px dashed #2a312d;margin-top:10px">'
     + '<div style="flex:1;min-width:100px"><div class="gold" style="font-weight:700;letter-spacing:.08em;font-size:11px;white-space:nowrap">SHOW YOUR CARDS</div>'
-    + '<div class="muted" style="font-size:11px">Tap a card to show it</div></div>'
+    + '<div class="muted" style="font-size:11px">' + (nOn ? 'Turned over when the hand ends' : 'Tap a card to show it') + '</div></div>'
     + '<div style="display:flex;gap:4px;flex:none">' + cs + '</div>'
     + (cn > 1 ? '<button class="btn ghost" style="flex:none;width:auto;height:34px;padding:0 10px;font-size:12px" onclick="showCard(\'all\')">' + (nOn === cn ? 'Hide' : 'All') + '</button>' : '')
     + '</div>';
@@ -1090,11 +1144,19 @@ function showCard(i) {
   var A = adapt(S.v), my = A.seats[A.you.seat];
   if (!my || !my.cards) return;
   var cn = my.cards.length;
-  var cur = (my.shown || []).map(function (x, k) { return x && x !== '??' ? k : -1; }).filter(function (k) { return k >= 0; });
+  var cur = (my.willShow || []).slice();
   var idx;
   if (i === 'all') idx = cur.length === cn ? [] : my.cards.map(function (c, k) { return k; });
   else idx = cur.indexOf(i) >= 0 ? cur.filter(function (k) { return k !== i; }) : cur.concat([i]);
   api('showcards', { code: S.code, idx: idx }).catch(fail);
+}
+
+// Taking a seat from inside the room: you are already looking at the table, so stay on it whether
+// the seat is yours straight away or the admin has to let you in.
+function sitHere() {
+  api('table-join', { code: S.code })
+    .then(function (j) { toast(j.seated ? 'You are in' : 'Asked. ' + S.v.admin + ' will let you know.'); return refresh(); })
+    .catch(fail);
 }
 
 function act(type, amount) {
@@ -1121,6 +1183,10 @@ function tableMenu(v) {
     h += '<button class="btn ghost" style="margin-top:8px" onclick="setAway(' + (v.me.away ? 'false' : 'true') + ')">' + (v.me.away ? 'Sit back in' : 'Sit out of the next hand') + '</button>';
     if (!v.iRunIt) h += '<button class="btn ghost" style="margin-top:8px" onclick="askLeave()">Ask to leave early</button>';
   }
+
+  h += '<div class="h2">SOUND</div>'
+    + '<button class="btn ghost" onclick="toggleSound()">' + (LOUD ? 'Sound is on &mdash; turn it off' : 'Sound is off &mdash; turn it on') + '</button>'
+    + '<div class="muted small" style="margin-top:6px;white-space:normal">A bell when it is your turn, a tick when it passes to somebody else, and the chips going in.</div>';
 
   // what the game admin can do
   if (v.iRunIt) {
@@ -1242,6 +1308,111 @@ window.addEventListener('resize', fit);
 window.addEventListener('orientationchange', function () { setTimeout(fit, 120); });
 
 // ---------------------------------------------------------------- go
+// ---- sound ----
+// Made on the phone rather than fetched: a few short tones weigh nothing, load instantly and
+// cannot fail halfway. A phone will not make a sound until the person has touched the screen, so
+// the first touch opens the audio and everything before that is silent on purpose.
+var AC = null, LOUD = true;
+try { LOUD = localStorage.getItem('sb-quiet') !== '1'; } catch (e) {}
+function unlockSound() {
+  if (!AC) { var C = window.AudioContext || window.webkitAudioContext; if (C) { try { AC = new C(); } catch (e) { AC = null; } } }
+  if (AC && AC.state === 'suspended') { try { AC.resume(); } catch (e) {} }
+}
+document.addEventListener('touchstart', unlockSound, { passive: true });
+document.addEventListener('click', unlockSound, { passive: true });
+function tone(freq, dur, vol, shape, wait) {
+  if (!LOUD || !AC || AC.state !== 'running') return;
+  try {
+    var t0 = AC.currentTime + (wait || 0);
+    var o = AC.createOscillator(), g = AC.createGain();
+    o.type = shape || 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(vol, t0 + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t0); o.stop(t0 + dur + 0.03);
+  } catch (e) { /* a phone that will not make a sound is not a reason to stop the game */ }
+}
+function sfx(kind) {
+  if (!LOUD) return;
+  unlockSound();
+  if (kind === 'mine') { tone(880, 0.20, 0.25); tone(1320, 0.28, 0.20, 'sine', 0.14); }   // your turn: two notes, unmistakable
+  else if (kind === 'pass') tone(430, 0.07, 0.07, 'triangle');                             // it has moved on to somebody else
+  else if (kind === 'chip') tone(1150, 0.05, 0.07, 'square');                              // chips going in
+  else if (kind === 'over') { tone(660, 0.13, 0.15); tone(520, 0.20, 0.12, 'sine', 0.11); }
+}
+function toggleSound() {
+  LOUD = !LOUD;
+  try { localStorage.setItem('sb-quiet', LOUD ? '0' : '1'); } catch (e) {}
+  if (LOUD) { unlockSound(); sfx('pass'); }
+  render();
+}
+
+// ---- whose turn it is, out loud ----
+// The bell is for your turn and nothing else, so it keeps meaning something. Everyone else moving
+// gets a tick, which is enough to follow the betting with the phone face down on the table.
+function watchTurn() {
+  var h = S.v && S.v.hand;
+  var id = h && !h.finished ? h.turnId : '';
+  var done = !!(h && h.finished);
+  if (done !== !!S.overSeen) { S.overSeen = done; if (done && S.turnSeen) sfx('over'); }
+  if (id === S.turnSeen) return;
+  var first = S.turnSeen === undefined;
+  S.turnSeen = id;
+  if (first || !id) return;                 // arriving at a table is not the turn changing
+  sfx(S.v.me && id === S.v.me.id ? 'mine' : 'pass');
+}
+
+// ---- the move just made ----
+// Every view carries the last move and a running count of moves. When the count moves on, that is
+// somebody acting: say so on their seat for a second. Folding is not flashed - the seat already
+// says Folded, and says it until the hand is over.
+var ACT_WORD = { call: 'CALL', bet: 'BET', raise: 'RAISE', check: 'CHECK', allin: 'ALL IN' };
+function watchActs() {
+  var h = S.v && S.v.hand, la = h && h.lastAct;
+  if (!la) { S.actSeen = 0; return; }
+  if (la.n === S.actSeen) return;
+  var first = !S.actSeen;
+  S.actSeen = la.n;
+  if (first) return;                         // arriving mid-hand is not somebody acting now
+  var word = ACT_WORD[la.k];
+  if (!word) return;                         // posts, antes and folds speak for themselves
+  S.flash = { id: la.id, word: word, until: Date.now() + 1100 };
+  if (la.k !== 'check') sfx('chip');
+  clearTimeout(watchActs.t);
+  watchActs.t = setTimeout(function () { S.flash = null; if (S.screen === 'table') render(); }, 1150);
+}
+
+// ---- the turn clock ----
+// The ring round the player's circle empties over the seconds he has, and the last ten are
+// counted out in figures as well. It is painted straight onto the element rather than through
+// render(), because render() rebuilds the table and would throw away scroll and half-typed
+// amounts twenty times a second. The server sends its own clock with every view, so a phone
+// whose time is a minute out still draws the right amount left.
+function paintTurn() {
+  var v = S.v, h = v && v.hand;
+  if (S.screen !== 'table' || !h || h.finished || !h.turnId || !h.deadline) return;
+  var el = document.getElementById('tb' + h.turnId);
+  if (!el) return;
+  var total = ((v.settings && v.settings.turnSeconds) || 40) * 1000;
+  var left = h.deadline - (Date.now() - (S.skew || 0));
+  var frac = Math.max(0, Math.min(1, left / total));
+  el.style.setProperty('--left', frac.toFixed(3));
+  // The warning is in seconds, not in a share of the clock: a quarter of a forty-second turn is
+  // ten seconds but a quarter of a twenty-second one is five, and five seconds of warning is not
+  // the same thing at all. Ten seconds, or a third of the turn on a short clock, whichever is less.
+  var warnAt = Math.min(10000, total / 3);
+  var hot = left <= warnAt;
+  if (hot) el.classList.add('hot'); else el.classList.remove('hot');
+  var num = document.getElementById('ts' + h.turnId);
+  if (num) {
+    var secs = Math.max(0, Math.ceil(left / 1000));
+    if (hot) { num.textContent = secs; num.style.display = 'flex'; }
+    else num.style.display = 'none';
+  }
+}
+setInterval(paintTurn, 200);
+
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function () {});
 if (S.token) { connect(); refresh().catch(function () { S.token = ''; try { localStorage.removeItem('sb-token'); } catch (e) {} render(); }); }
 else render();

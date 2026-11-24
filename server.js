@@ -201,12 +201,22 @@ function handView(t, me) {
     deadline: t.deadline || 0,
     result: h.finished ? h.result : null,
     runit: h.runit ? { voters: h.runit.voters, votes: h.runit.votes, max: h.maxRuns() } : null,
+    // the move just made, so the table can see it land on the player who made it. The count is
+    // what makes it a new move: the same player calling twice running is two separate flashes.
+    lastAct: (h.acts && h.acts.length)
+      ? { n: h.acts.length, id: h.acts[h.acts.length - 1].id, k: h.acts[h.acts.length - 1].k, a: h.acts[h.acts.length - 1].a }
+      : null,
     players: h.players.map((p) => ({
       id: p.id, seat: p.seat, bet: p.bet, stack: p.stack, folded: p.folded, allIn: p.allIn,
       // your own cards always; everyone else's only once they are shown
       cards: (me && p.id === me.id) ? p.cards : (show[p.id] ? show[p.id].cards || p.cards : p.cards.map(() => '??')),
-      // the ones they chose to turn over, which everybody sees
-      shown: (p.shown && p.shown.length) ? p.cards.map((c, i) => (p.shown.indexOf(i) >= 0 ? c : '??')) : null,
+      // The ones they chose to turn over. Choosing can happen at any point in the hand - a player
+      // decides early that he will show - but it is only carried out once the hand is over. Turning
+      // a card face up while the betting is still going would hand everybody else free information.
+      shown: (h.finished && p.shown && p.shown.length) ? p.cards.map((c, i) => (p.shown.indexOf(i) >= 0 ? c : '??')) : null,
+      // and what he has marked so far goes back to him alone, so his own screen can show the
+      // choice he made without any of it reaching the rest of the table before the hand is over
+      willShow: (me && p.id === me.id && p.shown && p.shown.length) ? p.shown.slice() : null,
     })),
   };
 }
