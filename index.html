@@ -173,6 +173,7 @@ function refresh() {
     S.me = j.me; S.tables = j.tables; S.history = j.history; S.members = j.members;
     S.formats = j.formats; S.variants = j.variants; S.storage = j.storage; S.saveError = j.saveError;
     if (S.screen === 'signin') S.screen = 'home';
+    resumeTable();
     render();
   });
 }
@@ -359,8 +360,29 @@ function tableCard(t) {
 function joinTable(code) { api('table-join', { code: code }).then(function (j) { if (j.seated) openTable(code); else toast('Asked. The admin will let you know.'); refresh(); }).catch(fail); }
 function decide(code, memberId, ok) { api('table-decide', { code: code, memberId: memberId, ok: ok }).then(function (j) { toast(j.let ? 'Let in' : 'Turned down'); refresh(); }).catch(fail); }
 function getInvite(code) { api('table-invite', { code: code }).then(function (j) { S.invite = { code: code, text: j.text }; render(); }).catch(fail); }
-function openTable(code) { S.code = code; S.screen = 'table'; S.v = null; connect(); render(); }
-function leaveTable() { S.screen = 'home'; S.code = ''; S.v = null; connect(); render(); }
+function openTable(code) {
+  S.code = code; S.screen = 'table'; S.v = null;
+  try { localStorage.setItem('sb-table', code); } catch (e) {}
+  connect(); render();
+}
+function leaveTable() {
+  S.screen = 'home'; S.code = ''; S.v = null;
+  try { localStorage.removeItem('sb-table'); } catch (e) {}
+  connect(); render();
+}
+
+// A call comes in, the signal drops, the phone reloads the page. If you were sitting at a table
+// that is still going, go straight back to it rather than making you find it again.
+function resumeTable() {
+  if (S.resumed || S.screen !== 'home') return;
+  S.resumed = true;
+  var code = '';
+  try { code = localStorage.getItem('sb-table') || ''; } catch (e) {}
+  if (!code) return;
+  var t = (S.tables || []).filter(function (x) { return x.code === code; })[0];
+  if (t && t.iAmIn && t.status !== 'ended') openTable(code);
+  else try { localStorage.removeItem('sb-table'); } catch (e) {}
+}
 
 function inviteSheet() {
   var t = S.invite;
@@ -838,6 +860,15 @@ function controls(v, A, RES) {
     return w + '</div>';
   }
   if (v.hand.runit) return '<div style="padding-top:14px">' + runItVote(v) + '</div>';
+
+  // sat out, by choice or because a clock ran out while the phone was away
+  if (v.me && v.me.away) {
+    return '<div style="padding-top:14px">'
+      + '<div class="evc" style="margin:0"><div style="font-weight:600;font-size:14px">You are sitting out</div>'
+      + '<div class="muted small" style="white-space:normal;margin-top:3px">Your seat and your chips are being kept. '
+      + 'You are not in the hand being played and no blinds are coming off you.</div></div>'
+      + '<button class="btn" style="margin-top:10px" onclick="setAway(false)">Join the next hand</button></div>';
+  }
 
   // the hand is over: offer to show what you had
   if (v.hand.finished) {
