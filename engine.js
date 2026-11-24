@@ -281,12 +281,6 @@ class Hand {
   }
 
   // Fold if facing a bet, otherwise check (used for turn timeouts)
-  autoAction() {
-    const id = this.turnId;
-    const L = this.legal(id);
-    return { id, type: L && L.canCheck ? 'check' : 'fold' };
-  }
-
   afterAction() {
     if (this.live().length === 1) return this.finishUncontested();
     if (this.runit) { if (this.runit.voters.filter((v) => !this.players.find((p) => p.id === v).folded).every((v) => this.runit.votes[v])) this.resolveRunIt(); return; }

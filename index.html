@@ -191,6 +191,7 @@ function refresh() {
   return api('me').then(function (j) {
     S.me = j.me; S.tables = j.tables; S.history = j.history; S.members = j.members;
     S.formats = j.formats; S.variants = j.variants; S.storage = j.storage; S.saveError = j.saveError;
+    S.tourney = j.tourney; S.seats = j.seats || S.seats;
     S.push = j.push; clearBadge();
     if (S.screen === 'signin') S.screen = 'home';
     resumeTable();

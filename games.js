@@ -36,28 +36,18 @@ const TOURNEY = {
   maxLevelMin: 60,
 };
 
-// Whoever runs a tournament picks the chips everyone starts with, and the blinds follow from it:
-// everybody begins two hundred big blinds deep, whatever the number. Left to the arithmetic alone
-// a stack like 15,000 would open at 75/37.5, so the big blind is snapped to a round figure near
-// enough to it - and always an even one, so the small blind is a whole number too. The form shows
-// what a given stack works out to before the table is opened, which is the real safeguard.
-const NICE_BB = [2, 4, 10, 20, 40, 50, 100, 200, 250, 400, 500, 1000, 2000, 2500, 4000, 5000,
-  10000, 20000, 25000, 40000, 50000, 100000, 200000, 250000, 500000];
-// The chips everyone starts with go in tens of thousands and nothing in between, so anything else
-// is taken to the nearest one rather than refused outright. The form shows what it settled on.
+// Whoever runs a tournament picks the chips everyone starts with, in tens of thousands, and the
+// blinds follow from it: everybody begins two hundred big blinds deep. Because the stack is always
+// a multiple of ten thousand the arithmetic comes out whole and round every time - 10,000 opens at
+// 25/50, 100,000 at 250/500 - so there is nothing to round and nothing to approximate.
 function tourneyStack(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return TOURNEY.stack;
   const snapped = Math.round(n / TOURNEY.step) * TOURNEY.step;
   return Math.min(TOURNEY.maxStack, Math.max(TOURNEY.minStack, snapped));
 }
-
 function tourneyBlinds(stack) {
-  const want = stack / 200;
-  let bb = NICE_BB[0];
-  // on a tie take the bigger blind: a slightly shorter tournament beats a slightly longer one
-  for (const n of NICE_BB) if (Math.abs(n - want) <= Math.abs(bb - want)) bb = n;
-  return { sb: bb / 2, bb };
+  return { sb: stack / 400, bb: stack / 200 };
 }
 
 const DEFAULTS = {
@@ -128,7 +118,6 @@ class Table {
 
   // ---- seats ----
   freeSeats() { return this.seats.filter((s) => !s).length; }
-  seatOf(pid) { return this.seats.indexOf(pid); }
   at(seat) { return this.seats[seat] ? this.players.get(this.seats[seat]) : null; }
   list() { return [...this.players.values()]; }
   live() { return this.list().filter((p) => !p.out && p.stack > 0); }
@@ -315,4 +304,4 @@ class Table {
   }
 }
 
-module.exports = { Table, FORMATS, PICKABLE, VARIANTS, SEATS, TOURNEY, NICE_BB, tourneyBlinds, tourneySettings, DEFAULTS, cleanSettings, rid };
+module.exports = { Table, FORMATS, PICKABLE, VARIANTS, SEATS, TOURNEY, tourneyBlinds, tourneyStack, tourneySettings, DEFAULTS, cleanSettings, rid };
