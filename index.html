@@ -242,6 +242,19 @@ function pushTest() { api('push-test', {}).then(function () { toast('Sent - lock
 // coming back into the portal clears the number on the icon
 function clearBadge() { if (navigator.clearAppBadge) { try { navigator.clearAppBadge(); } catch (e) {} } }
 
+// An app kept on the home screen is not reloaded when you reopen it: the phone puts the page away
+// and later hands it back exactly as it was, so none of the start-up code runs again. Without this
+// the number would sit on the icon until the next proper sign-in, and the live feed - which does
+// not survive being put away - would leave a table frozen on whatever it last showed.
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState !== 'visible') return;
+  clearBadge();
+  if (!S.token) return;
+  if (!feed || feed.readyState === 2) connect();
+  refresh().catch(function () {});
+});
+window.addEventListener('pageshow', function () { clearBadge(); });
+
 // ---------------------------------------------------------------- getting in
 function askNumber() {
   blurField();
