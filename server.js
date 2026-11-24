@@ -45,20 +45,42 @@ const FX_AUTO = { win: '\uD83C\uDF89', bust: '\uD83D\uDC80', scoop: '\uD83D\uDD2
 // hold up the person who tapped the button, and a subscription the service has thrown away is
 // dropped quietly rather than retried for ever.
 function notify(ids, payload) {
-  if (!state.vapid) return;
+  if (!state.vapid) { console.log('push: no key yet, nothing sent'); return 0; }
   const subject = process.env.PUSH_CONTACT || 'mailto:poker@smart-buddies.invalid';
+  let tried = 0;
+  const asleep = [];
+  for (const id of ids) {
+    const m = state.members[id];
+    if (!m) continue;
+    if (m.pushOff) { asleep.push(m.name + ' (switched off)'); continue; }
+    if (!m.subs || !m.subs.length) { asleep.push(m.name + ' (no phone signed up)'); continue; }
+    tried += m.subs.length;
+  }
+  // Say what happened. A push that never arrives is otherwise completely silent, and there is
+  // nothing to look at when somebody says "I did not get it".
+  console.log(`push: "${payload.title}" to ${tried} phone(s)` + (asleep.length ? '; skipped ' + asleep.join(', ') : ''));
   (async () => {
     for (const id of ids) {
       const m = state.members[id];
       if (!m || m.pushOff || !m.subs || !m.subs.length) continue;
       for (const sub of m.subs.slice()) {
+        const where = (sub.endpoint || '').slice(0, 40);
         try {
           const r = await webpush.send(sub, payload, state.vapid, subject);
-          if (r.gone) { m.subs = m.subs.filter((s) => s.endpoint !== sub.endpoint); changed(); }
-        } catch (err) { /* an unreachable phone is not the portal's problem */ }
+          if (r.gone) {
+            console.log(`push: ${m.name}'s phone is no longer signed up (${r.status}), forgetting it`);
+            m.subs = m.subs.filter((s) => s.endpoint !== sub.endpoint);
+            changed();
+          } else if (!r.ok) {
+            console.log(`push: ${m.name} refused with ${r.status} from ${where}`);
+          }
+        } catch (err) {
+          console.log(`push: could not reach ${m.name}'s phone (${err.message}) at ${where}`);
+        }
       }
     }
-  })().catch(() => {});
+  })().catch((err) => console.log('push: gave up - ' + err.message));
+  return tried;
 }
 
 function pushFx(t, k, from, to, icon, hit) {
@@ -413,8 +435,8 @@ const routes = {
   },
   'push-test'(b) {
     const m = people.auth(b);
-    notify([m.id], { title: 'Smart Buddies', body: 'That is working. You will hear from the table.', url: '/', tag: 'test', badge: 1, force: true });
-    return { sent: true };
+    const tried = notify([m.id], { title: 'Smart Buddies', body: 'That is working. You will hear from the table.', url: '/', tag: 'test', badge: 1, force: true });
+    return { sent: tried, phones: (m.subs || []).length };
   },
 
   'set-pin'(b) { const m = people.auth(b); return people.changePin(m, b); },
