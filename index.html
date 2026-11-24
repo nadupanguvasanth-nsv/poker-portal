@@ -8,6 +8,11 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Smart Buddies">
 <link rel="apple-touch-icon" href="/icon-192.png">
+<meta property="og:title" content="Smart Buddies &middot; Private Poker Party">
+<meta property="og:description" content="Our own poker table. Chips only, settle up between ourselves.">
+<meta property="og:image" content="{{BASE}}/poster.jpg">
+<meta property="og:url" content="{{BASE}}/">
+<meta property="og:type" content="website">
 <link rel="manifest" href="/manifest.webmanifest">
 <title>Smart Buddies</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -56,15 +61,6 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .card.dim{opacity:.35}
 @keyframes wglow{to{box-shadow:0 0 0 2px #f3d27a,0 0 24px 7px rgba(243,210,122,1)}}
 .felt{border-radius:167px/128px;background:radial-gradient(ellipse at 50% 42%,#1a6a4d 0%,#13543e 60%,#0d3326 100%);border:7px solid #2b2017;box-shadow:inset 0 0 0 2px rgba(216,180,92,.3),inset 0 14px 30px rgba(0,0,0,.35),0 18px 44px rgba(0,0,0,.55)}
-.plq{position:absolute;width:104px;box-sizing:border-box;border-radius:9px;background:linear-gradient(#222a25,#151a17);border:1px solid #3a433c;box-shadow:0 4px 10px rgba(0,0,0,.5);padding:4px 7px 6px;overflow:hidden}
-.plq.turn{border-color:#d8b45c;box-shadow:0 0 0 2px rgba(216,180,92,.28),0 4px 10px rgba(0,0,0,.5)}
-.plq.allin{border-color:#d2454d}
-.plq.out{opacity:.42}
-.plq .prow{display:flex;align-items:center;gap:6px}
-.plq .nm{font-size:10.5px;color:#bfe0cf;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
-.plq .stk{font-size:14px;font-weight:700;line-height:1.1;letter-spacing:-.01em}
-.plq .tbar{position:absolute;left:0;bottom:0;height:3px;background:#d8b45c}
-.plq .ptag{position:absolute;right:4px;top:4px;height:14px;padding:0 5px;border-radius:7px;font-size:9px;font-weight:700;letter-spacing:.06em;display:flex;align-items:center}
 .pmini{position:relative;width:28px;height:28px;border-radius:14px;background:#1b2a22;border:1px solid #2a312d;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:13px;flex:none}
 .betchip{display:inline-flex;align-items:center;gap:4px;margin-top:2px;padding:1px 7px 1px 4px;border-radius:9px;background:rgba(10,14,12,.72);border:1px solid #4a4a3a;font-size:11px;font-weight:700;color:#f3e9cf;white-space:nowrap}
 
@@ -72,8 +68,6 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .seat{position:absolute;width:64px;display:flex;flex-direction:column;align-items:center;text-align:center;pointer-events:none}
 /* Out of the flow on purpose: in the flow they pushed the whole seat down, so a player holding
    cards sat lower than the empty seat beside them and names drifted onto the board. */
-.seat .hole{position:absolute;left:50%;bottom:100%;margin-bottom:-7px;display:flex;
-transform:translateX(-50%) scale(.72);transform-origin:bottom center}
 /* The cards a player turns over sit outside the ring, away from the board, and out of the
    layout so they cannot push the seat off the felt. */
 .seat .showc{position:absolute;left:50%;display:flex;transform:translateX(-50%) scale(.84)}
@@ -82,7 +76,6 @@ transform:translateX(-50%) scale(.72);transform-origin:bottom center}
 .seat .showc .card+.card{margin-left:-7px}
 /* fanned rather than side by side: narrower, so a neighbour's name stays clear, and it reads
    more like cards held in a hand - which matters most in Omaha, where there are four or five */
-.seat .hole .card+.card{margin-left:-8px}
 .bull{position:absolute;left:0;top:0;width:100%;height:100%;border-radius:50%;cursor:pointer;pointer-events:auto}
 .fx{position:absolute;pointer-events:none;z-index:40;font-size:28px;line-height:1;margin:-14px 0 0 -14px}
 @keyframes fxfly{0%{transform:translate(0,0) scale(.6) rotate(0);opacity:1}85%{opacity:1}100%{transform:translate(var(--dx),var(--dy)) scale(1.15) rotate(540deg);opacity:0}}
@@ -110,8 +103,6 @@ transform:translateX(-50%) scale(.72);transform-origin:bottom center}
 .h2{font-size:12px;font-weight:600;letter-spacing:.1em;color:#a3aba5;margin:22px 0 8px}
 .toast{position:absolute;left:16px;right:16px;top:62px;z-index:60;padding:12px 14px;border-radius:12px;background:#2a1417;border:1px solid #d2454d;font-size:13px}
 .toast.ok{background:#14221a;border-color:#2f7d53}
-.poster{border-radius:10px;overflow:hidden;border:1px solid #d8b45c;box-shadow:0 12px 28px rgba(0,0,0,.6);flex:none}
-.poster img{width:100%;height:100%;object-fit:cover;display:block}
 .evc{border:1px solid #2a312d;background:#141917;border-radius:16px;padding:14px;margin-top:12px}
 .evc.off{opacity:.5}
 .pill2{font-size:10px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:999px;border:1px solid #2a312d;color:#a3aba5;white-space:nowrap}
@@ -123,7 +114,6 @@ transform:translateX(-50%) scale(.72);transform-origin:bottom center}
 .rolechip{height:34px;padding:0 10px;border-radius:17px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px;font-weight:600}
 .rolechip.on{border-color:#d8b45c;color:#d8b45c;background:rgba(216,180,92,.1)}
 @keyframes drin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-.dr.anim{opacity:0;animation:drin .45s ease forwards}
 input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 .small{font-size:12px;line-height:1.5}
 </style>
@@ -136,51 +126,7 @@ input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 <div class="muted small" style="margin-top:10px;white-space:normal">The table is dealt tall, so it needs the long way up.</div></div></div>
 <script>
 // all in one SVG so it stays sharp and correctly spaced at every size.
-var SUIT_SHAPE={
-  h:'<path d="M5 9.15 L1.68 5.83 A2.35 2.35 0 1 1 5 2.5 A2.35 2.35 0 1 1 8.32 5.83 Z"/>',
-  s:'<g transform="rotate(180 5 5)"><path d="M5 9.15 L1.68 5.83 A2.35 2.35 0 1 1 5 2.5 A2.35 2.35 0 1 1 8.32 5.83 Z"/></g><path d="M3.9 9.6 Q5 6.9 6.1 9.6 Z"/>',
-  d:'<path d="M5 0.6 L8.95 5 L5 9.4 L1.05 5 Z"/>',
-  c:'<circle cx="5" cy="3.15" r="2.1"/><circle cx="2.75" cy="6.4" r="2.1"/><circle cx="7.25" cy="6.4" r="2.1"/><path d="M3.9 9.7 Q5 7 6.1 9.7 Z"/>'
-};
-function suitAt(su,x,y,sz){return '<g transform="translate('+(x-sz/2)+' '+(y-sz/2)+') scale('+(sz/10)+')">'+SUIT_SHAPE[su]+'</g>';}
-var PIP_ROWS={
-  '2':[[1,0],[1,4]],'3':[[1,0],[1,2],[1,4]],'4':[[0,0],[2,0],[0,4],[2,4]],
-  '5':[[0,0],[2,0],[1,2],[0,4],[2,4]],'6':[[0,0],[2,0],[0,2],[2,2],[0,4],[2,4]],
-  '7':[[0,0],[2,0],[1,1],[0,2],[2,2],[0,4],[2,4]],
-  '8':[[0,0],[2,0],[1,1],[0,2],[2,2],[1,3],[0,4],[2,4]],
-  '9':[[0,0],[2,0],[0,1.34],[2,1.34],[1,2],[0,2.66],[2,2.66],[0,4],[2,4]],
-  '10':[[0,0],[2,0],[1,0.67],[0,1.34],[2,1.34],[0,2.66],[2,2.66],[1,3.33],[0,4],[2,4]]
-};
-function cardFace(r,su,small){
-  var W=62,H=86,g='';
-  if(small){ // a seat-sized card: one rank, one suit, nothing else to squint at
-    return '<svg class="cf" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true">'+
-      '<text x="31" y="40" text-anchor="middle" font-size="'+(r==='10'?30:34)+'" font-weight="700" font-family="Georgia,\'Times New Roman\',serif">'+r+'</text>'+
-      suitAt(su,31,60,24)+'</svg>';
-  }
-  // the index in two opposite corners, the way a real card is read from either end
-  var ix=function(){
-    var fs=r==='10'?11:13.5;
-    return '<text x="8.6" y="15.4" text-anchor="middle" font-size="'+fs+'" font-weight="700" font-family="Georgia,\'Times New Roman\',serif">'+r+'</text>'+suitAt(su,8.6,21.6,7.4);
-  };
-  g+=ix()+'<g transform="rotate(180 31 43)">'+ix()+'</g>';
-  if(PIP_ROWS[r]){
-    g+=PIP_ROWS[r].map(function(p){
-      var x=[21.5,31,40.5][p[0]], y=18.5+p[1]*12.4;
-      return suitAt(su,x,y,11.4);
-    }).join('');
-  } else if(r==='A'){
-    g+=suitAt(su,31,43,30);
-  } else {
-    // court card: a framed panel with the letter and suit mirrored top and bottom
-    g+='<rect x="17.5" y="14.5" width="27" height="57" rx="2.5" fill="currentColor" fill-opacity=".05" stroke="currentColor" stroke-opacity=".5" stroke-width="0.9"/>'+
-       '<line x1="17.5" y1="43" x2="44.5" y2="43" stroke="currentColor" stroke-opacity=".28" stroke-width="0.7"/>';
-    var half='<text x="31" y="34.5" text-anchor="middle" font-size="19" font-weight="700" font-family="Georgia,\'Times New Roman\',serif">'+r+'</text>'+suitAt(su,31,39.6,7.6);
-    g+=half+'<g transform="rotate(180 31 43)">'+half+'</g>';
-  }
-  return '<svg class="cf" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true">'+g+'</svg>';
-}
-function initials(n){return esc(n.replace(/[^A-Za-z0-9 ]/g,'').trim().slice(0,2).toUpperCase()||'?');}
+// The card artwork lives in 3-table.js, next to the code that draws the table.
 
 
 // ---------------------------------------------------------------- the shape of things
@@ -225,7 +171,7 @@ function connect() {
 function refresh() {
   return api('me').then(function (j) {
     S.me = j.me; S.tables = j.tables; S.history = j.history; S.members = j.members;
-    S.formats = j.formats; S.variants = j.variants; S.seats = j.seats; S.storage = j.storage; S.saveError = j.saveError;
+    S.formats = j.formats; S.variants = j.variants; S.storage = j.storage; S.saveError = j.saveError;
     if (S.screen === 'signin') S.screen = 'home';
     render();
   });
@@ -632,7 +578,6 @@ function bullSvg() {
     + '<circle cx="26" cy="26" r="16" fill="none" stroke="#e8ece9" stroke-opacity=".4" stroke-width="3"/>'
     + '<circle cx="26" cy="26" r="8" fill="none" stroke="#d2454d" stroke-opacity=".55" stroke-width="3"/></svg>';
 }
-function kfmt(n) { n = Math.round(Number(n) || 0); return n >= 10000 ? Math.round(n / 1000) + 'k' : fmt(n); }
 function behindTag(st) {
   if (!st || !st.bought) return '';
   var d = st.bought - st.stack;
@@ -965,7 +910,6 @@ function showCard(i) {
 }
 
 function act(type, amount) {
-  S.raise = false;
   api('act', { code: S.code, type: type, amount: amount }).catch(fail);
 }
 function startGame() { api('table-start', { code: S.code }).catch(fail); }

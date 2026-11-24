@@ -562,6 +562,13 @@ const FILES = {
 
 // Nonsense arrives sooner or later - a half-sent request, a stray crawler, a bug in a phone.
 // Answer it plainly rather than with a stack trace, so the log only ever shows real trouble.
+// The page carries {{BASE}} in its link-preview tags so a shared link shows a card in WhatsApp
+// rather than a bare address. Only the portal knows what it is being served as, so fill it here.
+function indexHtml() {
+  const raw = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  return raw.split('{{BASE}}').join(publicUrl().replace(/\/$/, ''));
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -614,6 +621,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/manifest.webmanifest') {
       res.writeHead(200, { 'content-type': 'application/manifest+json', 'cache-control': 'max-age=86400' });
       return res.end(MANIFEST);
+    }
+
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+      const body = indexHtml();
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      return res.end(body);
     }
 
     const file = FILES[url.pathname];
