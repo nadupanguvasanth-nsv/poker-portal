@@ -28,10 +28,37 @@ const PICKABLE = ['omaha4', 'omaha5', 'bomb2', 'bomb5', 'bomb5x3'];
 
 const TOURNEY = {
   stack: Number(process.env.TOURNEY_STACK || 10000),
-  sb: Number(process.env.TOURNEY_SB || 50),
-  bb: Number(process.env.TOURNEY_BB || 100),
   levelMs: Number(process.env.TOURNEY_LEVEL_MS || 5 * 60000),  // blinds double at every level
+  step: 10000,            // the chips are set in tens of thousands, nothing in between
+  minStack: 10000,
+  maxStack: 10000000,
+  minLevelMin: 2,
+  maxLevelMin: 60,
 };
+
+// Whoever runs a tournament picks the chips everyone starts with, and the blinds follow from it:
+// everybody begins two hundred big blinds deep, whatever the number. Left to the arithmetic alone
+// a stack like 15,000 would open at 75/37.5, so the big blind is snapped to a round figure near
+// enough to it - and always an even one, so the small blind is a whole number too. The form shows
+// what a given stack works out to before the table is opened, which is the real safeguard.
+const NICE_BB = [2, 4, 10, 20, 40, 50, 100, 200, 250, 400, 500, 1000, 2000, 2500, 4000, 5000,
+  10000, 20000, 25000, 40000, 50000, 100000, 200000, 250000, 500000];
+// The chips everyone starts with go in tens of thousands and nothing in between, so anything else
+// is taken to the nearest one rather than refused outright. The form shows what it settled on.
+function tourneyStack(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return TOURNEY.stack;
+  const snapped = Math.round(n / TOURNEY.step) * TOURNEY.step;
+  return Math.min(TOURNEY.maxStack, Math.max(TOURNEY.minStack, snapped));
+}
+
+function tourneyBlinds(stack) {
+  const want = stack / 200;
+  let bb = NICE_BB[0];
+  // on a tie take the bigger blind: a slightly shorter tournament beats a slightly longer one
+  for (const n of NICE_BB) if (Math.abs(n - want) <= Math.abs(bb - want)) bb = n;
+  return { sb: bb / 2, bb };
+}
 
 const DEFAULTS = {
   sb: 100, bb: 200, minBuyin: 10000, maxBuyin: 100000,
@@ -55,6 +82,18 @@ function cleanSettings(s = {}, old = DEFAULTS) {
   };
 }
 
+// A tournament settles its own blinds and buy-in from the chips everyone starts with, so only the
+// stack, the level length and the ordinary table settings come from whoever opens it.
+function tourneySettings(s = {}) {
+  const base = cleanSettings(s);
+  const stack = tourneyStack(s.stack);
+  const m = Math.floor(Number(s.levelMin));
+  const levelMin = Number.isFinite(m) && m >= TOURNEY.minLevelMin && m <= TOURNEY.maxLevelMin
+    ? m : Math.round(TOURNEY.levelMs / 60000);
+  const b = tourneyBlinds(stack);
+  return { ...base, sb: b.sb, bb: b.bb, minBuyin: stack, maxBuyin: stack, levelMs: levelMin * 60000 };
+}
+
 class Table {
   constructor({ format, variant, admin, settings, title }) {
     if (!FORMATS[format]) throw new Error('Pick a game');
@@ -69,9 +108,7 @@ class Table {
     this.startedAt = 0;
     this.endedAt = 0;
     this.status = 'waiting';                 // waiting -> playing -> ended
-    this.settings = format === 'tournament'
-      ? { ...cleanSettings(settings), sb: TOURNEY.sb, bb: TOURNEY.bb, minBuyin: TOURNEY.stack, maxBuyin: TOURNEY.stack }
-      : cleanSettings(settings);
+    this.settings = format === 'tournament' ? tourneySettings(settings) : cleanSettings(settings);
     this.seats = Array(SEATS).fill(null);    // seat -> player id
     this.players = new Map();
     this.hand = null;
@@ -112,7 +149,7 @@ class Table {
     this.players.set(p.id, p);
     this.seats[seat] = p.id;
     this.say(`${p.name} sat down`);
-    if (this.format === 'tournament') this.give(p, TOURNEY.stack, 'stack');
+    if (this.format === 'tournament') this.give(p, this.settings.minBuyin, 'stack');
     return p;
   }
   stand(p, why) {
@@ -186,14 +223,16 @@ class Table {
   blinds() {
     if (this.format !== 'tournament') return { sb: this.settings.sb, bb: this.settings.bb };
     const mult = Math.pow(2, this.level - 1);
-    return { sb: TOURNEY.sb * mult, bb: TOURNEY.bb * mult };
+    return { sb: this.settings.sb * mult, bb: this.settings.bb * mult };
   }
+  // A table stored before the level length could be set has no levelMs of its own.
+  levelMs() { return Number(this.settings.levelMs) || TOURNEY.levelMs; }
   // Returns true if the level went up, so the table can be told.
   tickLevel() {
     if (this.format !== 'tournament' || this.status !== 'playing') return false;
     if (!this.levelAt || Date.now() < this.levelAt) return false;
     this.level += 1;
-    this.levelAt = Date.now() + TOURNEY.levelMs;
+    this.levelAt = Date.now() + this.levelMs();
     const b = this.blinds();
     this.say(`Blinds up: ${b.sb}/${b.bb}`);
     return true;
@@ -243,7 +282,7 @@ class Table {
     this.status = 'playing';
     if (!this.startedAt) {
       this.startedAt = Date.now();
-      if (this.format === 'tournament') this.levelAt = Date.now() + TOURNEY.levelMs;
+      if (this.format === 'tournament') this.levelAt = Date.now() + this.levelMs();
     }
     this.say(`Hand ${this.handNo}: ${spec.name}${variant !== 'holdem' ? ' (variant hand)' : ''}`);
     return this.hand;
@@ -276,4 +315,4 @@ class Table {
   }
 }
 
-module.exports = { Table, FORMATS, PICKABLE, VARIANTS, SEATS, TOURNEY, DEFAULTS, cleanSettings, rid };
+module.exports = { Table, FORMATS, PICKABLE, VARIANTS, SEATS, TOURNEY, NICE_BB, tourneyBlinds, tourneySettings, DEFAULTS, cleanSettings, rid };
