@@ -105,7 +105,7 @@ class Table {
     const seat = this.seats.findIndex((s) => !s);
     if (seat < 0) throw new Error('The table is full');
     const p = {
-      id: rid(6), memberId: member.id, name: member.name, seat,
+      id: rid(6), memberId: member.id, name: member.nick || member.name, seat,
       stack: 0, bought: 0, ledger: [], away: false, out: false,
       joinedAt: Date.now(), leaveAsk: 0, leaveOk: false, busted: 0,
     };

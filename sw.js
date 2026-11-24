@@ -5,8 +5,10 @@ self.addEventListener('push', function (e) {
   var data = {};
   try { data = e.data ? e.data.json() : {}; } catch (err) { data = { body: e.data ? e.data.text() : '' }; }
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
-    // the app is open and in front: it already shows its own alert
-    if (list.some(function (c) { return c.visibilityState === 'visible'; })) return;
+    // Normally there is no point interrupting somebody who is already looking at the portal.
+    // A test is the exception: the whole point is to see it, and you tap it from inside the app.
+    var inFront = list.some(function (c) { return c.visibilityState === 'visible'; });
+    if (inFront && !data.force) return;
     // the number on the home screen icon, so you see it without unlocking
     if (data.badge && self.navigator && self.navigator.setAppBadge) {
       try { self.navigator.setAppBadge(Number(data.badge) || 1); } catch (err) {}

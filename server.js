@@ -413,7 +413,7 @@ const routes = {
   },
   'push-test'(b) {
     const m = people.auth(b);
-    notify([m.id], { title: 'Smart Buddies', body: 'That is working. You will hear from the table.', url: '/', tag: 'test', badge: 0 });
+    notify([m.id], { title: 'Smart Buddies', body: 'That is working. You will hear from the table.', url: '/', tag: 'test', badge: 1, force: true });
     return { sent: true };
   },
 
@@ -433,7 +433,7 @@ const routes = {
     // everybody else's phone, so a game can be got up without chasing people in the group chat
     notify(people.members().map((x) => x.id).filter((id) => id !== m.id), {
       title: 'A table is up',
-      body: `${m.name} has started ${FORMATS[t.format].name}. ${t.freeSeats()} of ${SEATS} seats free.`,
+      body: `${m.nick || m.name} has started ${FORMATS[t.format].name}. ${t.freeSeats()} of ${SEATS} seats free.`,
       url: '/', tag: 'table-' + t.code, badge: 1,
     });
     return { code: t.code, invite: lobby.invite(t, publicUrl()) };
@@ -447,7 +447,7 @@ const routes = {
     if (r && r.asked) {
       notify([t.adminId], {
         title: 'Someone wants in',
-        body: `${m.name} is asking to join your table.`,
+        body: `${m.nick || m.name} is asking to join your table.`,
         url: '/', tag: 'ask-' + t.code, badge: 1,
       });
     }
@@ -477,16 +477,6 @@ const routes = {
     if (why) throw httpErr(400, why);
     nextHand(t);
     return { ok: true };
-  },
-  'table-settings'(b) {
-    const m = people.auth(b);
-    const t = lobby.mustRun(lobby.need(b.code), m);
-    if (t.format === 'tournament') throw httpErr(400, 'A tournament runs to its own rules');
-    const { cleanSettings } = require('./games');
-    t.settings = cleanSettings(b.settings, t.settings);
-    t.say('The admin changed the table settings');
-    changed(); broadcast(t); broadcastLobby();
-    return { settings: t.settings };
   },
   'table-end'(b) {
     const m = people.auth(b);

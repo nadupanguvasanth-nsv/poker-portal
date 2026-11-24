@@ -49,7 +49,8 @@ function makePeople(ctx) {
   const byId = (id) => state.members[id] || null;
 
   function publicMember(m) {
-    return { id: m.id, name: m.name, phone: m.phone, isAdmin: !!m.isAdmin, hasPin: !!m.pin, addedAt: m.addedAt };
+    return { id: m.id, name: m.name, nick: m.nick || '', shown: m.nick || m.name,
+      phone: m.phone, isAdmin: !!m.isAdmin, hasPin: !!m.pin, addedAt: m.addedAt };
   }
 
   // ---- sessions: a phone stays signed in, and can be signed out from anywhere ----
@@ -177,13 +178,26 @@ function makePeople(ctx) {
       changed();
       return publicMember(m);
     },
+    // Your own name, and the short one you go by at the table.
     rename(m, b) {
-      const name = cleanName(b.name);
-      if (!name) throw httpErr(400, 'A name, please');
-      if (members().some((x) => x.id !== m.id && x.name.toLowerCase() === name.toLowerCase())) throw httpErr(400, 'Somebody already goes by that name');
-      m.name = name;
+      const who = m;
+      if (b.name !== undefined) {
+        const name = cleanName(b.name);
+        if (!name) throw httpErr(400, 'A name, please');
+        if (members().some((x) => x.id !== who.id && x.name.toLowerCase() === name.toLowerCase())) {
+          throw httpErr(400, 'Somebody already goes by that name');
+        }
+        who.name = name;
+      }
+      if (b.nick !== undefined) {
+        const nick = cleanName(b.nick);
+        if (nick && members().some((x) => x.id !== who.id && (x.nick || '').toLowerCase() === nick.toLowerCase())) {
+          throw httpErr(400, 'Somebody already goes by that at the table');
+        }
+        who.nick = nick || '';
+      }
       changed();
-      return publicMember(m);
+      return publicMember(who);
     },
     remove(b) {
       const m = byId(b.memberId);

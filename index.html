@@ -179,6 +179,16 @@ function refresh() {
   });
 }
 
+function doRename() {
+  blurField();
+  var name = val('nm_name'), nick = val('nm_nick');
+  api('rename', { name: name, nick: nick }).then(function () {
+    S.editName = false;
+    toast('Saved');
+    return refresh();
+  }).catch(fail);
+}
+
 // ---------------------------------------------------------------- being told things
 // A push needs the key as bytes, and it arrives as text.
 function keyBytes(b64) {
@@ -303,11 +313,13 @@ function signInScreen() {
         + '<div class="muted small" style="margin-top:22px;text-align:center"><a href="#" onclick="S.adminSetup=true;render();return false" style="color:#a3aba5">Setting the portal up for the first time?</a></div>')
     + '</div>';
 }
-function field(id, label, type, ph, mode) {
+// ph is the grey hint; value fills the box with something already there to edit
+function field(id, label, type, ph, mode, value) {
   return '<div class="field" style="margin-top:12px"><label for="' + id + '">' + label + '</label>'
     + '<input id="' + id + '" type="' + (type || 'text') + '"' + (mode ? ' inputmode="' + mode + '"' : '')
     + (mode === 'numeric' ? ' maxlength="4" style="letter-spacing:.5em;font-size:22px"' : '')
-    + ' autocomplete="off" placeholder="' + esc(ph || '') + '"></div>';
+    + ' autocomplete="off" placeholder="' + esc(ph || '') + '"'
+    + (value ? ' value="' + esc(value) + '"' : '') + '></div>';
 }
 
 // ---------------------------------------------------------------- home: tables, history, me
@@ -497,7 +509,16 @@ function meTab() {
   var h = '<div class="evc" style="margin-top:16px"><div class="muted small">SIGNED IN AS</div>'
     + '<div class="disp" style="font-size:26px">' + esc(S.me.name) + '</div>'
     + '<div class="muted small">' + esc(S.me.phone) + '</div>'
-    + '<button class="btn ghost" style="margin-top:12px" onclick="S.changePin=!S.changePin;render()">Change my passcode</button>';
+    + (S.me.nick ? '<div class="muted small" style="margin-top:2px">goes by <b>' + esc(S.me.nick) + '</b> at the table</div>' : '')
+    + '<button class="btn ghost" style="margin-top:12px" onclick="S.editName=!S.editName;render()">Change my name</button>';
+  if (S.editName) {
+    h += field('nm_name', 'MY NAME', 'text', '', '', S.me.name)
+      + field('nm_nick', 'WHAT I GO BY AT THE TABLE', 'text', 'same as my name', '', S.me.nick || '')
+      + '<div class="muted small" style="margin:-4px 2px 8px;white-space:normal">Leave the second one empty to use your name. '
+      + 'It sits under your seat, so keep it short.</div>'
+      + '<button class="btn" onclick="doRename()">Save</button>';
+  }
+  h += '<button class="btn ghost" style="margin-top:8px" onclick="S.changePin=!S.changePin;render()">Change my passcode</button>';
   if (S.changePin) {
     h += field('cp_old', 'CURRENT PASSCODE', 'password', '', 'numeric') + field('cp_new', 'NEW PASSCODE', 'password', '', 'numeric')
       + '<button class="btn" style="margin-top:10px" onclick="doChangePin()">Save</button>';
@@ -881,8 +902,15 @@ function tableScreen() {
   } else {
     status = v.status === 'ended' ? 'THE GAME HAS ENDED' : (v.waiting ? esc(v.waiting) : 'WAITING TO START');
   }
-  h += '<div class="abs" style="left:50px;top:' + stTop + 'px;width:290px;text-align:center;font-size:12px;font-weight:600;'
-    + 'letter-spacing:.08em;color:' + (RES ? '#d8b45c' : '#bfe0cf') + ';line-height:1.5">' + status + '</div>';
+  // The street name is short and sits on the felt where it belongs. The result of a hand is
+  // not - "Vashanth wins 800 . High card" is wider than the gap between the seats - so it goes
+  // in the clear band under the felt, where it has the whole width and covers nobody.
+  // Only the middle column of the felt is clear - the seats own the sides and the band below -
+  // so the words live there and wrap onto a second line rather than running under somebody.
+  h += '<div class="abs" style="left:120px;top:' + stTop + 'px;width:150px;text-align:center">'
+    + '<span class="handsay" style="display:inline-block;max-width:150px;font-size:12px;'
+    + 'font-weight:600;letter-spacing:.06em;color:' + (RES ? '#d8b45c' : '#bfe0cf') + ';line-height:1.45;'
+    + 'white-space:normal">' + status + '</span></div>';
 
   // everybody else, round the table
   for (var s = 0; s < n; s++) {
