@@ -37,6 +37,8 @@ function makeLobby(ctx) {
       maxBuyin: t.settings.maxBuyin, turnSeconds: t.settings.turnSeconds,
       minPlayers: t.settings.minPlayers, bombAnteBB: t.settings.bombAnteBB,
       lastHands: t.lastHands || 0, endAt: t.endAt || 0,
+      // whose regular game this is, and whether the person looking is in it
+      groupName: t.groupName || '', inGroup: !t.groupId || (t.groupMembers || []).includes(m.id) || runs(t, m),
       // the portal's own figures, so the rules sheet states what the server actually enforces
       house: {
         graceSeconds: Math.round(HOUSE.START_GRACE_MS / 1000),
@@ -49,7 +51,10 @@ function makeLobby(ctx) {
       handNo: t.handNo, level: t.format === 'tournament' ? t.level : 0,
       iAmIn: !!mine, asked: t.requests.some((r) => r.memberId === m.id),
       waiting: t.status === 'waiting' ? t.canStart() : '',
+      // A flag follows the name wherever the name appears. Everybody sees the mark; what is
+      // behind it is for the person themselves, whoever brought them in, and the portal admin.
       names: t.seated().map((p) => p.name),
+      marks: t.seated().map((p) => ({ name: p.name, flag: (ctx.flagOf && ctx.flagOf(p.memberId)) || '' })),
       requests: runs(t, m) ? t.requests.slice() : [],
       leaveAsks: runs(t, m) ? t.seated().filter((p) => p.leaveAsk && !p.leaveOk).map((p) => ({ id: p.id, name: p.name })) : [],
     };
@@ -84,9 +89,23 @@ function makeLobby(ctx) {
       if (FORMATS[format].needsVariant && !PICKABLE.includes(b.variant)) throw httpErr(400, 'Pick the variant to go with it');
       const running = [...tables.values()].filter((t) => t.status !== 'ended' && t.adminId === m.id);
       if (running.length >= 2) throw httpErr(400, 'You are already running two tables. Finish one first.');
+      // A table opened to one of his groups: the people in it walk in as they would anywhere,
+      // and anybody else has to ask. The table is not hidden - everybody sees it and sees that
+      // it is somebody's regular game, which is less pointed than a game that is simply not there.
+      let group = null;
+      if (b.group) {
+        group = people.findGroup(String(b.group));
+        if (!group) throw httpErr(404, 'No such group');
+        if (group.ownerId !== m.id && !m.isAdmin) throw httpErr(403, 'That is not your group');
+      }
       let t;
       try { t = new Table({ format, variant: b.variant, admin: m, settings: b.settings, title: b.title }); }
       catch (err) { throw httpErr(400, err.message); }
+      if (group) {
+        t.groupId = group.id;
+        t.groupName = group.name;
+        t.groupMembers = group.members.slice();
+      }
       while (tables.has(t.code)) t.code = t.code.slice(0, 3) + Math.floor(Math.random() * 10);
       tables.set(t.code, t);
       t.say(`${m.name} opened the table`);
@@ -105,11 +124,15 @@ function makeLobby(ctx) {
       if (mine && !mine.out) return { seated: true };
       if (t.format === 'tournament' && t.startedAt) throw httpErr(400, 'A tournament takes no late entries');
       if (!t.freeSeats()) throw httpErr(400, 'The table is full');
-      if (t.status === 'playing' && !runs(t, m)) {
+      // Somebody from outside a closed group asks, whether or not the game has started. Whoever
+      // runs the table can let him in as a guest - a group saves him chasing people, it does not
+      // lock him out of his own game.
+      const outsider = t.groupId && !runs(t, m) && !(t.groupMembers || []).includes(m.id);
+      if (outsider || (t.status === 'playing' && !runs(t, m))) {
         if (t.requests.some((r) => r.memberId === m.id)) return { asked: true };
-        t.requests.push({ memberId: m.id, name: m.name, at: Date.now() });
+        t.requests.push({ memberId: m.id, name: m.name, at: Date.now(), guest: !!outsider });
         broadcast(t);
-        return { asked: true };
+        return { asked: true, guest: !!outsider };
       }
       const p = t.sit(m);
       if (t.format === 'tournament') { /* the stack came with the seat */ }

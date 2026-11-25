@@ -199,7 +199,8 @@ input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 // ---------------------------------------------------------------- the shape of things
 // S is everything the screen knows. render() draws S. Nothing else touches the DOM.
 var S = { screen: 'signin', tab: 'tables', token: '', me: null, tables: [], history: [], members: [],
-          formats: [], variants: [], code: '', v: null, toast: '', busy: false, open: {}, seats: 7 };
+          formats: [], variants: [], code: '', v: null, toast: '', busy: false, open: {}, seats: 7,
+          openSponsor: {}, showGone: false, groups: [], roster: [], groupEdit: null };
 
 try { S.token = localStorage.getItem('sb-token') || ''; } catch (e) {}
 
@@ -248,6 +249,8 @@ function refresh() {
     S.games = j.games || S.games; S.ranking = j.ranking || S.ranking;
     S.flags = j.flags || {}; S.toPay = j.toPay || []; S.toGet = j.toGet || []; S.flagged = j.flagged || [];
     S.adminName = j.adminName || S.adminName;
+    S.induct = j.induct || null; S.owedBy = j.owedBy || {};
+    S.groups = j.groups || []; S.roster = j.roster || [];
     S.push = j.push; clearBadge();
     if (S.screen === 'signin') S.screen = 'home';
     resumeTable();
@@ -444,6 +447,24 @@ function tablesTab() {
   return h;
 }
 
+// Opening the table to one of his groups, or to anybody. Anybody is the default: a regular game
+// is the exception, not the rule.
+function groupPicker() {
+  var gs = (S.groups || []).filter(function (g) { return !S.me.isAdmin || g.ownerId === S.me.id; });
+  if (!gs.length) return '';
+  var h = '<div class="h2" style="margin-top:12px">WHO IT IS FOR</div><div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<button class="rolechip' + (!S.newGroup ? ' on' : '') + '" onclick="S.newGroup=\'\';render()">Anybody</button>';
+  gs.forEach(function (g) {
+    h += '<button class="rolechip' + (S.newGroup === g.id ? ' on' : '') + '" onclick="S.newGroup=\'' + g.id + '\';render()">' + esc(g.name) + '</button>';
+  });
+  h += '</div><div class="muted small" style="margin:6px 2px 0;white-space:normal">'
+    + (S.newGroup
+      ? 'They sit down as usual. Anybody else sees the table, sees it is yours, and asks \u2014 let them in as a guest if you want them.'
+      : 'Anybody on the list can take a free seat.')
+    + '</div>';
+  return h;
+}
+
 function newTableForm() {
   var chosen = S.newFormat || 'holdem';
   var needsVariant = chosen === 'mixed' || chosen === 'roe';
@@ -471,6 +492,7 @@ function newTableForm() {
       + miniField('n_sb', 'SMALL', S.lastSb || 100) + miniField('n_bb', 'BIG', S.lastBb || 200) + miniField('n_min', 'MIN BUY-IN', S.lastMin || 10000)
       + '</div><div style="display:flex;gap:8px;margin-top:8px">'
       + miniField('n_players', 'START WITH', 4) + miniField('n_turn', 'SECONDS A TURN', 40) + '</div>'
+    + groupPicker()
       + '<div style="display:flex;gap:8px;margin-top:8px">'
       + miniField('n_stay', 'MINUTES EACH', S.lastStay === undefined ? 60 : S.lastStay) + '<div style="flex:1"></div></div>'
       + '<div class="muted small" style="margin-top:6px;white-space:normal">How long everybody is expected to stay once they sit down, so the game does not fall apart the moment somebody is ahead. Anyone who has lost the lot may always go, and you can let somebody go early. 0 for no minimum.</div>';
@@ -523,6 +545,7 @@ function doOpen() {
   var chosen = S.newFormat || 'holdem';
   if ((chosen === 'mixed' || chosen === 'roe') && !S.newVariant) { toast('Pick the variant to go with it'); return; }
   var body = { format: chosen, variant: S.newVariant };
+  if (S.newGroup) body.group = S.newGroup;        // opened to his regular crowd rather than anybody
   if (chosen === 'tournament') {
     S.lastStack = tStack(val('n_stack'));
     S.lastLevel = tLevel(val('n_level'));
@@ -556,6 +579,27 @@ function generalBook() {
     });
     h += '</div></div>';
   };
+
+  part('Who is who', [
+    'Everybody here plays. What separates a <b>primary</b> member from a <b>secondary</b> one is who can get a game going, and who can bring somebody in.',
+    'A <b>primary</b> member can start a table, and runs the one he starts: he lets latecomers in, decides who may leave early, can break for food, call the last few hands or set a time to finish, and closes it at the end.',
+    'A <b>primary</b> member can also bring people in - up to ten at a time. Whoever he brings in waits for the portal admin to let them in, and comes in secondary.',
+    'A <b>primary</b> member can keep groups - the people he sits down with regularly - and open a table to one of them. They take a free seat as they would anywhere. Everybody else still sees the table and sees whose game it is, and asks to come in; whoever runs it lets them in as a guest or does not. The portal admin is kept out of nothing.',
+    'A group is no way round anything else: a red flag still keeps you off the table, group or no group.',
+    'A <b>secondary</b> member plays. Every table, every seat, every game, the same as anybody else. What he cannot do is start one or bring somebody in.',
+    'Only the portal admin makes anybody primary, or takes it away again. A primary member cannot make another.',
+    'Only the portal admin takes anybody out of the portal.',
+  ]);
+
+  part('Bringing somebody in', [
+    'A primary member puts a name and a mobile number forward. The portal writes a message for the group - who is being brought in, by whom, and what he is taking on - and he posts it, so everybody hears about it before anything is decided.',
+    'The group has its say, and then the portal admin lets them in or turns them away.',
+    'Nothing is sent to the new person until the portal admin has let them in - so nobody\u2019s first go at the portal is being refused at the door.',
+    'Once they are in, whoever put them forward sends them the message to sign in. That message carries the rules of the table as well as the link, because passing the rules on is the job.',
+    'Ten at a time is the limit, counting anybody still waiting. Somebody taken out, or made primary, frees the place.',
+    'Whoever brings somebody in is answerable for them: that they know how the table works, and that they settle up. If one of them is flagged, the man who brought them in is told, can see what it is for, and is the one who has a word.',
+    'If a primary member is made secondary, the people he brought in become the portal admin\u2019s. Who first brought them in stays on the record.',
+  ]);
 
   part('Getting a game going', [
     'A primary member can start a table, and whoever starts it runs it. Several can run at once. Everybody else plays in them - the portal admin decides who is which, and tells you if he changes yours.',
@@ -597,10 +641,12 @@ function generalBook() {
     'A debt is settled when the person owed confirms the money arrived - not when the payer says he has sent it. You can say you have paid and it is recorded, but it is your word, not a receipt.',
     'If the money has gone and he has not marked it, chasing him is your job.',
     'Leave one unpaid long enough and you are flagged yellow: you can still play if whoever runs the table lets you in, and it clears itself the moment the winner confirms. Nobody has to lift it.',
+    'A flag is not private. It shows against your name wherever your name appears - at the table, in the list of who is sitting at one - so everybody can see who owes from a previous night. What it is for, and how much, is seen only by you, whoever brought you in, and the portal admin.',
     'Carry several yellows at once, or leave one much longer, and it turns red. Red keeps you out of the table altogether, playing or watching.',
     'Only the portal admin lifts a red flag, and paying up does not lift it by itself.',
     'If a winner cannot be reached, the portal admin can enter the receipt for him - and it is recorded as exactly that.',
     'Chips are virtual. What you settle between yourselves, and how, is your own business.',
+    'Being taken out of the portal does not erase you. Every game you played, and anything owed either way, stays on the record, and you come back as yourself if the portal admin puts you back.',
   ]);
 
   part('Where the numbers are', [
@@ -759,7 +805,16 @@ function tableCard(t) {
     + '<div class="pill2' + (t.paused ? '' : t.status === 'playing' ? ' g' : '') + '">' + (t.paused ? 'PAUSED' : t.status === 'playing' ? 'PLAYING' : 'WAITING') + '</div></div>';
   h += '<div class="muted small" style="margin-top:8px;white-space:normal">Run by <b>' + esc(t.admin) + '</b> &middot; '
     + t.players + ' of ' + t.seats + ' seats' + (t.free ? ', ' + t.free + ' free' : ', full') + '</div>';
-  if (t.names.length) h += '<div class="muted small" style="margin-top:2px;white-space:normal">' + t.names.map(esc).join(', ') + '</div>';
+  if (t.names.length) {
+    // who is sitting there, with a mark against anybody who owes from a previous night
+    var who = (t.marks && t.marks.length ? t.marks : t.names.map(function (n) { return { name: n, flag: '' }; }));
+    h += '<div class="muted small" style="margin-top:2px;white-space:normal">'
+      + who.map(function (x) {
+        return esc(x.name) + (x.flag
+          ? '<span style="display:inline-block;width:6px;height:6px;border-radius:3px;margin-left:3px;vertical-align:middle;background:'
+            + (x.flag === 'red' ? '#d2454d' : '#d8b45c') + '"></span>' : '');
+      }).join(', ') + '</div>';
+  }
   if (t.waiting) h += '<div class="muted small" style="margin-top:6px">' + esc(t.waiting) + '</div>';
   if (t.requests && t.requests.length) {
     h += '<div class="h2" style="margin:12px 0 4px">ASKING TO COME IN</div>';
@@ -813,12 +868,15 @@ function resumeTable() {
 
 function inviteSheet() {
   var t = S.invite;
-  return '<div class="sheet" style="z-index:50"><div class="disp" style="font-size:28px">' + (t.who ? 'Send this to ' + esc(t.who) : 'Send it to the group') + '</div>'
+  return '<div class="sheet" style="z-index:50"><div class="disp" style="font-size:28px">'
+    + (t.who ? 'Send this to ' + esc(t.who) : t.induct ? 'Tell the group' : 'Send it to the group') + '</div>'
     + '<div class="muted small" style="margin:8px 0 12px;white-space:normal">' + (t.who
       ? 'This tells them where the portal is, how to keep it on their home screen, and how to sign in.'
-      : t.group
-        ? 'Paste this into your WhatsApp group. It names whoever you have set to primary right now, so set them before you send it.'
-        : 'Paste this into your WhatsApp group. Anyone on the list can open the link and take a seat.') + '</div>'
+      : t.induct
+        ? 'Send this to the group now. They have their say, and then the portal admin lets them in or turns them away \u2014 nothing reaches the person you named until he does.'
+        : t.group
+          ? 'Paste this into your WhatsApp group. It names whoever you have set to primary right now, so set them before you send it.'
+          : 'Paste this into your WhatsApp group. Anyone on the list can open the link and take a seat.') + '</div>'
     + '<div class="evc" style="white-space:pre-wrap;font-size:13px;line-height:1.5">' + esc(t.text) + '</div>'
     + '<a class="btn" style="margin-top:14px;display:flex;align-items:center;justify-content:center;text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(t.text) + '">Open WhatsApp</a>'
     + '<button class="btn ghost" style="margin-top:8px" onclick="copyText(S.invite.text)">Copy the message</button>'
@@ -1421,29 +1479,12 @@ function meTab() {
   }
   h += '</div>';
 
-  if (!S.me.isAdmin) return h;
+  if (!S.me.isAdmin) return h + groupsBlock() + myMembersBlock();
 
   h += statsBlock();
 
-  h += '<div class="h2">MEMBERS (' + S.members.length + ')</div>'
-    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">Add somebody with their name and mobile number. They sign in with that number and set their own passcode the first time. '
-    + 'Everybody plays; only a <span class="gold">primary</span> member can start a table. New members come in as secondary \u2014 tap the chip beside a name to change it.</div>'
-    + '<div class="evc"><div style="display:flex;gap:8px">'
-    + '<input id="am_name" placeholder="Name" maxlength="18" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit">'
-    + '<input id="am_phone" placeholder="Mobile" inputmode="tel" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit"></div>'
-    + '<button class="btn" style="margin-top:8px;height:46px" onclick="addMember()">Add member</button></div>';
-  h += '<button class="btn ghost" style="margin-top:8px" onclick="portalInvite()">Share the portal with the group</button>';
-  S.members.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (m) {
-    h += '<div class="row" style="margin-top:8px"><div style="flex:1;min-width:0">'
-      + '<div style="font-size:14px;font-weight:600">' + esc(m.name) + (m.isAdmin ? ' <span class="gold" style="font-size:10px">ADMIN</span>' : '') + '</div>'
-      + '<div class="muted small">' + esc(m.phone) + ' &middot; ' + (m.hasPin ? 'signed in before' : 'has not signed in yet')
-      + ' &middot; ' + (m.canOpen ? '<span class="gold">can start a game</span>' : 'plays only') + '</div></div>'
-      + (m.isAdmin ? '' : '<button class="rolechip' + (m.tier === 'primary' ? ' on' : '') + '" onclick="setTier(\'' + m.id + '\',\'' + (m.tier === 'primary' ? 'secondary' : 'primary') + '\')">'
-        + (m.tier === 'primary' ? 'Primary' : 'Secondary') + '</button>'
-        + '<button class="rolechip on" onclick="memberLink(\'' + m.id + '\')">Send link</button>'
-        + '<button class="rolechip" onclick="resetMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Reset passcode</button>'
-        + '<button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="removeMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Remove</button>') + '</div>';
-  });
+  h += groupsBlock();
+  h += membersBlock();
   h += '<div class="h2">STORAGE</div><div class="muted small">' + esc(S.storage || '') + (S.saveError ? '<br><span style="color:#f08a8f">' + esc(S.saveError) + '</span>' : '') + '</div>';
   return h;
 }
@@ -1464,10 +1505,22 @@ function memberLink(id) {
   var m = S.members.filter(function (x) { return x.id === id; })[0];
   if (!m) return;
   var url = location.origin;
+  // Whoever brings somebody in is answerable for them knowing the rules, so the message carries
+  // the rules rather than leaving it to be remembered.
+  var mine = !S.me.isAdmin;
   var text = 'Hi ' + m.name + '! This is Smart Buddies, our private poker portal.\n\n' + url
     + '\n\n1. Open that on your phone.\n2. Add it to your home screen, so it opens like an app.\n'
     + '3. Sign in with this mobile number: ' + m.phone + '\n4. Choose a 4-digit passcode. That is how you get in from then on.\n\n'
-    + 'After that you can see your account and past games, join a table, or start one yourself.';
+    + 'How it works:\n'
+    + '\u2022 Chips are virtual. What you settle between yourselves, and how, is your own business.\n'
+    + '\u2022 Take a free seat at any table on the list. It deals itself once enough of us are sitting down - nobody presses anything.\n'
+    + '\u2022 Turn up after it has started and you ask to come in.\n'
+    + '\u2022 However long a table asks you to stay, your time runs from when you sat down.\n'
+    + '\u2022 Nobody types at the table. There is a list of things to say and you tap one.\n'
+    + '\u2022 When a game ends the portal works out who pays who. A debt is settled when the person owed says the money arrived - not when you say you have sent it.\n'
+    + '\u2022 Leave one unpaid and you are flagged, and everybody can see it. Leave it longer and you cannot sit down at all.\n'
+    + '\u2022 The full rules are in the app: The rule book, on the Tables screen.\n\n'
+    + (mine ? 'I brought you in, so any questions come to me.' : 'Any questions, ask me.');
   S.invite = { code: '', text: text, who: m.name };
   render();
 }
@@ -1479,8 +1532,304 @@ function portalInvite() {
     render();
   }).catch(fail);
 }
+// ---- the portal admin's list of people ----
+// Grouped by whoever brought each one in, because that is the shape of the group: the portal
+// admin's own people, then each primary member with his own underneath him. Inductions waiting
+// on a decision come first, since somebody is standing at the door; people taken out come last,
+// because they are kept rather than gone.
+function membersBlock() {
+  var all = S.members || [];
+  var live = all.filter(function (m) { return m.status === 'active'; });
+  var waiting = all.filter(function (m) { return m.status === 'pending'; });
+  var gone = all.filter(function (m) { return m.status === 'archived'; });
+  var byName = function (a, b) { return a.name.localeCompare(b.name); };
+
+  var h = '<div class="h2">MEMBERS (' + live.length + ')</div>'
+    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">'
+    + 'Everybody plays. A <span class="gold">primary</span> member can also start a table and bring people in \u2014 '
+    + 'whoever they bring in waits here for you. Only you make anybody primary, and only you take anybody out.</div>'
+    + '<div class="evc"><div style="display:flex;gap:8px">'
+    + '<input id="am_name" placeholder="Name" maxlength="18" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit">'
+    + '<input id="am_phone" placeholder="Mobile" inputmode="tel" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit"></div>'
+    + '<button class="btn" style="margin-top:8px;height:46px" onclick="addMember()">Add member</button></div>'
+    + '<button class="btn ghost" style="margin-top:8px" onclick="portalInvite()">Share the portal with the group</button>';
+
+  // waiting on you
+  if (waiting.length) {
+    h += '<div class="h2" style="margin-top:16px">WAITING TO BE LET IN (' + waiting.length + ')</div>';
+    waiting.slice().sort(byName).forEach(function (m) {
+      h += '<div class="evc" style="margin-top:8px;border-color:#d8b45c">'
+        + '<div style="font-size:14px;font-weight:600">' + esc(m.name) + '</div>'
+        + '<div class="muted small" style="white-space:normal">' + esc(m.phone)
+        + ' &middot; brought in by <span class="gold">' + esc(m.sponsor || 'somebody since demoted') + '</span></div>'
+        + '<div style="display:flex;gap:8px;margin-top:10px">'
+        + '<button class="btn" style="flex:1;height:42px;font-size:14px" onclick="decideMember(\'' + m.id + '\',true)">Let in</button>'
+        + '<button class="btn ghost" style="flex:1;height:42px;font-size:14px;border-color:#6b2a2e;color:#d2454d" onclick="decideMember(\'' + m.id + '\',false)">Decline</button>'
+        + '</div></div>';
+    });
+  }
+
+  // everybody who is in, under whoever brought them
+  var mine = live.filter(function (m) { return !m.sponsorId; }).sort(byName);
+  var sponsors = live.filter(function (m) { return m.canOpen && !m.isAdmin && live.some(function (x) { return x.sponsorId === m.id; }); });
+  h += '<div style="margin-top:14px"></div>';
+  mine.forEach(function (m) {
+    h += memberRow(m);
+    if (m.canOpen && !m.isAdmin) {
+      var theirs = live.filter(function (x) { return x.sponsorId === m.id; }).sort(byName);
+      var pend = waiting.filter(function (x) { return x.sponsorId === m.id; }).length;
+      if (theirs.length || pend) {
+        var open = !!S.openSponsor[m.id];
+        h += '<div style="margin:2px 0 0 12px"><div class="muted small" style="cursor:pointer;padding:4px 0" '
+          + 'onclick="S.openSponsor[\'' + m.id + '\']=!S.openSponsor[\'' + m.id + '\'];render()">'
+          + (open ? '&#9652;' : '&#9662;') + ' brought in ' + theirs.length
+          + (pend ? ' &middot; ' + pend + ' waiting' : '') + '</div>';
+        if (open) theirs.forEach(function (x) { h += memberRow(x, true); });
+        h += '</div>';
+      }
+    }
+  });
+  void sponsors;
+
+  if (gone.length) {
+    var shown = !!S.showGone;
+    h += '<div class="h2" style="margin-top:16px;cursor:pointer" onclick="S.showGone=!S.showGone;render()">'
+      + 'REMOVED (' + gone.length + ') ' + (shown ? '&#9652;' : '&#9662;') + '</div>'
+      + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">Taken out of the portal, not erased. '
+      + 'Every game they played, and anything they owe, is still theirs. Put one back and they return as themselves.</div>';
+    if (shown) gone.slice().sort(byName).forEach(function (m) { h += memberRow(m); });
+  }
+  return h;
+}
+
+function memberRow(m, inset) {
+  var f = m.flags || {};
+  var mark = f.red ? '<span class="pill2" style="background:#3a1517;color:#f08a8f">RED</span>'
+    : f.yellow ? '<span class="pill2" style="background:#3a2f12;color:#f0c674">YELLOW</span>' : '';
+  var h = '<div class="row" style="margin-top:8px' + (inset ? ';margin-left:4px' : '') + '"><div style="flex:1;min-width:0">'
+    + '<div style="font-size:14px;font-weight:600">' + esc(m.name)
+    + (m.isAdmin ? ' <span class="gold" style="font-size:10px">ADMIN</span>' : '') + ' ' + mark + '</div>'
+    + '<div class="muted small">' + esc(m.phone)
+    + (m.status === 'archived'
+      ? ' &middot; removed ' + when(m.removedAt)
+      : ' &middot; ' + (m.hasPin ? 'signed in before' : 'has not signed in yet')
+        + ' &middot; ' + (m.canOpen ? '<span class="gold">can start a game</span>' : 'plays only'))
+    + (m.sponsorWas && !m.sponsorId ? ' &middot; first brought in by ' + esc(m.sponsorWas) : '')
+    + '</div></div>';
+  if (m.isAdmin) return h + '</div>';
+  if (m.status === 'archived') {
+    return h + '<button class="rolechip on" onclick="restoreMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Put back</button></div>';
+  }
+  h += '<button class="rolechip' + (m.tier === 'primary' ? ' on' : '') + '" onclick="setTier(\'' + m.id + '\',\'' + (m.tier === 'primary' ? 'secondary' : 'primary') + '\')">'
+    + (m.tier === 'primary' ? 'Primary' : 'Secondary') + '</button>'
+    + '<button class="rolechip on" onclick="memberLink(\'' + m.id + '\')">Send link</button>'
+    + '<button class="rolechip" onclick="resetMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Reset passcode</button>'
+    + '<button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="removeMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Remove</button>';
+  return h + '</div>';
+}
+
+// ---- what a primary member sees of the people he brought in ----
+// His own, and nobody else's. He is answerable for them - he passes on the rules and he is the
+// one who has a word when somebody does not settle up - so he sees how they are getting on, down
+// to what a flag is actually for. He sees no part of the rest of the list, and nobody else's
+// mobile number.
+function myMembersBlock() {
+  var ind = S.induct;
+  if (!ind) return '';
+  var all = S.members || [];
+  var waiting = all.filter(function (m) { return m.status === 'pending'; });
+  var live = all.filter(function (m) { return m.status === 'active'; });
+  var room = Math.max(0, ind.cap - ind.used);
+
+  var h = '<div class="h2" style="margin-top:18px">PEOPLE YOU BROUGHT IN (' + ind.used + ' of ' + ind.cap + ')</div>'
+    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">'
+    + 'You can bring in up to ' + ind.cap + ' people. ' + esc(S.adminName || 'The portal admin') + ' lets each one in, and '
+    + 'you send them the message once he has. They play; only he makes anybody primary.<br><br>'
+    + 'They are yours while they are here: pass on the rules of the table, and if one of them does not settle up, '
+    + 'you are the one who has a word.</div>';
+
+  if (room) {
+    h += '<div class="evc"><div style="display:flex;gap:8px">'
+      + '<input id="im_name" placeholder="Name" maxlength="18" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit">'
+      + '<input id="im_phone" placeholder="Mobile" inputmode="tel" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit"></div>'
+      + '<button class="btn" style="margin-top:8px;height:46px" onclick="inductMember()">Put them forward</button>'
+      + '<div class="muted small" style="margin-top:6px">' + room + ' more' + (room === 1 ? '' : '') + ' you can bring in.</div></div>';
+  } else {
+    h += '<div class="evc"><div class="muted small" style="white-space:normal">That is all ' + ind.cap
+      + ' of yours in the portal. One of them has to be taken out, or made primary, before you can bring in another.</div></div>';
+  }
+
+  if (waiting.length) {
+    h += '<div class="h2" style="margin-top:14px">WAITING ON ' + esc((S.adminName || 'the admin').toUpperCase()) + '</div>';
+    waiting.forEach(function (m) {
+      h += '<div class="row" style="margin-top:8px"><div style="flex:1;min-width:0">'
+        + '<div style="font-size:14px;font-weight:600">' + esc(m.name) + '</div>'
+        + '<div class="muted small">' + esc(m.phone) + ' &middot; not let in yet, so do not send them anything</div></div></div>';
+    });
+  }
+
+  live.forEach(function (m) {
+    var f = m.flags || {};
+    var owes = (S.owedBy || {})[m.id];
+    h += '<div class="evc" style="margin-top:8px' + (f.red ? ';border-color:#6b2a2e' : f.yellow ? ';border-color:#5a4a1c' : '') + '">'
+      + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
+      + '<div style="font-size:14px;font-weight:600">' + esc(m.name) + '</div>'
+      + (f.red ? '<span class="pill2" style="background:#3a1517;color:#f08a8f">RED</span>'
+        : f.yellow ? '<span class="pill2" style="background:#3a2f12;color:#f0c674">YELLOW</span>' : '')
+      + '</div>'
+      + '<div class="muted small">' + esc(m.phone) + ' &middot; ' + (m.hasPin ? 'signed in' : 'has not signed in yet') + '</div>';
+    if (f.red || f.yellow) {
+      h += '<div class="muted small" style="margin-top:6px;white-space:normal">'
+        + (f.red ? esc(f.redWhy || 'unsettled too long') + '. Only ' + esc(S.adminName || 'the portal admin') + ' can lift a red flag.'
+                 : f.yellow + ' unsettled debt' + (f.yellow === 1 ? '' : 's') + ' past two days.')
+        + (owes && owes.length ? '<br>' + owes.map(function (d) {
+            return 'owes ' + esc(d.toName) + ' ' + fmt(d.amount) + ' from ' + when(d.at);
+          }).join('<br>') : '')
+        + '<br>Have a word \u2014 they are yours.</div>';
+    }
+    h += '<button class="btn ghost" style="margin-top:8px;height:40px;font-size:14px" onclick="memberLink(\'' + m.id + '\')">Send them the message</button></div>';
+  });
+  return h;
+}
+
+// ---- the groups a primary member plays with ----
+// The people he sits down with regularly, so opening the table to them is one tap rather than a
+// round of messages. Everybody else still sees the game and can still be let in - a group saves
+// him chasing people, it does not shut the door.
+function groupsBlock() {
+  if (!(S.me && (S.me.canOpen || S.me.isAdmin))) return '';
+  var gs = S.groups || [];
+  var h = '<div class="h2" style="margin-top:18px">YOUR REGULAR GROUPS</div>'
+    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">'
+    + 'Name the people you play with and you can open a table to just them. They sit down as they would at any table; '
+    + 'anybody else sees the game, sees it is yours, and asks - and you let them in as a guest if you want them.</div>';
+
+  gs.forEach(function (g) {
+    var names = (g.members || []).map(function (id) {
+      var r = (S.roster || []).filter(function (x) { return x.id === id; })[0];
+      return r ? r.name : '';
+    }).filter(Boolean);
+    h += '<div class="evc" style="margin-top:8px">'
+      + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
+      + '<div style="font-size:15px;font-weight:600">' + esc(g.name) + '</div>'
+      + '<div class="muted small">' + names.length + '</div></div>'
+      + '<div class="muted small" style="margin-top:4px;white-space:normal">' + names.map(esc).join(', ') + '</div>'
+      + (S.me.isAdmin && g.owner ? '<div class="muted small" style="margin-top:2px">kept by ' + esc(g.owner) + '</div>' : '')
+      + '<div style="display:flex;gap:8px;margin-top:10px">'
+      + '<button class="rolechip on" onclick="editGroup(\'' + g.id + '\')">Change who is in it</button>'
+      + '<button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="dropGroup(\'' + g.id + '\',\'' + esc(g.name) + '\')">Remove</button>'
+      + '</div></div>';
+  });
+
+  h += '<button class="btn ghost" style="margin-top:10px" onclick="editGroup(\'\')">Name a new group</button>';
+  return h;
+}
+
+// Picking who is in one. Everybody's name is here to choose from - names only; the numbers stay
+// with the portal admin.
+function groupSheet() {
+  var e = S.groupEdit;
+  var chosen = e.members || [];
+  var h = '<div class="sheet" style="z-index:55">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+    + '<div><div class="disp" style="font-size:28px;line-height:1.05">' + (e.id ? 'Change the group' : 'A new group') + '</div>'
+    + '<div class="muted small">Who you play with regularly</div></div>'
+    + '<button class="rolechip" onclick="S.groupEdit=null;render()">Close</button></div>'
+    + '<div class="evc" style="margin-top:12px">'
+    + '<input id="gp_name" placeholder="Thursday crowd" maxlength="18" value="' + esc(e.name || '') + '" '
+    + 'style="width:100%;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit;box-sizing:border-box"></div>'
+    + '<div class="h2" style="margin-top:14px">WHO IS IN IT (' + chosen.length + ')</div>';
+
+  (S.roster || []).forEach(function (r) {
+    var mine = r.id === (S.me && S.me.id);
+    var on = chosen.indexOf(r.id) >= 0 || mine;
+    h += '<div class="row" style="margin-top:6px"><div style="flex:1;min-width:0">'
+      + '<div style="font-size:14px;font-weight:600">' + esc(r.name) + (mine ? ' <span class="muted" style="font-size:11px">you</span>' : '') + '</div></div>'
+      + '<button class="rolechip' + (on ? ' on' : '') + '"' + (mine ? ' disabled' : '')
+      + ' onclick="toggleInGroup(\'' + r.id + '\')">' + (on ? 'In' : 'Add') + '</button></div>';
+  });
+  h += '<div class="muted small" style="margin-top:8px;white-space:normal">You are always in your own group - you are the one opening the table.</div>'
+    + '<button class="btn" style="margin-top:14px" onclick="saveGroup()">' + (e.id ? 'Save' : 'Make the group') + '</button>'
+    + '<button class="btn ghost" style="margin-top:8px" onclick="S.groupEdit=null;render()">Back</button></div>';
+  return h;
+}
+
+function editGroup(id) {
+  var g = (S.groups || []).filter(function (x) { return x.id === id; })[0];
+  S.groupEdit = g ? { id: g.id, name: g.name, members: (g.members || []).slice() } : { id: '', name: '', members: [] };
+  render();
+}
+function toggleInGroup(id) {
+  var e = S.groupEdit; if (!e) return;
+  var i = e.members.indexOf(id);
+  if (i < 0) e.members.push(id); else e.members.splice(i, 1);
+  render();
+}
+function saveGroup() {
+  var e = S.groupEdit; if (!e) return;
+  var name = val('gp_name') || e.name;
+  if (!name) { toast('Give the group a name'); return; }
+  api('group-save', { id: e.id || undefined, name: name, members: e.members }).then(function () {
+    S.groupEdit = null; toast('Saved'); return refresh();
+  }).catch(fail);
+}
+function dropGroup(id, name) {
+  S.ask = {
+    title: 'Remove ' + name + '?',
+    detail: 'Only the group goes. Any table already open to it carries on exactly as it is, and nobody loses anything.',
+    yes: 'Yes, remove it',
+    go: "doDropGroup('" + id + "')",
+  };
+  render();
+}
+function doDropGroup(id) { S.ask = null; api('group-remove', { id: id }).then(function () { toast('Removed'); return refresh(); }).catch(fail); }
+
+function inductMember() {
+  var name = val('im_name'), phone = val('im_phone');
+  if (!name || !phone) { toast('A name and a mobile number'); return; }
+  api('member-add', { name: name, phone: phone }).then(function (j) {
+    // Straight to the message for the group: putting somebody forward and telling everybody are
+    // one action, not two, or the second one gets forgotten and nobody knows who turned up.
+    return refresh().then(function () {
+      S.invite = { code: '', text: j.share || '', group: true, induct: true };
+      render();
+    });
+  }).catch(fail);
+}
+
 function setTier(id, tier) { api('member-tier', { memberId: id, tier: tier }).then(refresh).catch(fail); }
-function removeMember(id, name) { if (!confirm('Remove ' + name + '?')) return; api('member-remove', { memberId: id }).then(refresh).catch(fail); }
+
+function decideMember(id, ok) {
+  var m = (S.members || []).filter(function (x) { return x.id === id; })[0];
+  if (!m) return;
+  if (ok) { api('member-decide', { memberId: id, ok: true }).then(function () { toast(m.name + ' is in'); return refresh(); }).catch(fail); return; }
+  S.ask = {
+    title: 'Decline ' + m.name + '?',
+    detail: esc(m.sponsor || 'Whoever put them forward') + ' will be told. The number is kept on the removed list so it cannot be put forward again and again \u2014 you can let them in later from there.',
+    yes: 'Yes, decline',
+    go: "doDecline('" + id + "')",
+  };
+  render();
+}
+function doDecline(id) { S.ask = null; api('member-decide', { memberId: id, ok: false }).then(function () { toast('Declined'); return refresh(); }).catch(fail); }
+
+function restoreMember(id, name) {
+  api('member-restore', { memberId: id }).then(function () { toast(name + ' is back'); return refresh(); }).catch(fail);
+}
+// Taking somebody out is not erasing them, and the question says so - otherwise it reads like a
+// delete and nobody would dare use it.
+function removeMember(id, name) {
+  S.ask = {
+    title: 'Take ' + name + ' out of the portal?',
+    detail: name + ' will not be able to sign in, and will not appear at a table. Nothing is erased: '
+      + 'every game ' + name + ' played, and anything owed either way, stays on the record. '
+      + 'You can put ' + name + ' back from the removed list whenever you like.',
+    yes: 'Yes, take them out',
+    go: "doRemoveMember('" + id + "')",
+  };
+  render();
+}
+function doRemoveMember(id) { S.ask = null; api('member-remove', { memberId: id }).then(function () { toast('Removed'); return refresh(); }).catch(fail); }
 function resetMember(id, name) { if (!confirm('Forget ' + name + "'s passcode? They set a new one next time they sign in.")) return; api('member-reset', { memberId: id }).then(function () { toast('Done'); refresh(); }).catch(fail); }
 // ---------------------------------------------------------------- the table
 // The presentation here is the one settled on in the first build, carried across whole rather
@@ -1699,6 +2048,15 @@ function fxTray(A) {
 }
 
 // ---- one seat ----
+// Everybody can see who is carrying a flag - that is the point of having one. What it is for is
+// not shown here: that is between the person, whoever brought them in, and the portal admin.
+function flagDot(flag) {
+  if (!flag) return '';
+  return '<span title="' + (flag === 'red' ? 'owes from a previous game - cleared by the portal admin' : 'owes from a previous game')
+    + '" style="display:inline-block;width:7px;height:7px;border-radius:4px;margin-left:4px;vertical-align:middle;background:'
+    + (flag === 'red' ? '#d2454d' : '#d8b45c') + '"></span>';
+}
+
 function plaque(A, st, x, y, w, rel, hand, RES, n, up) {
   var out = (st.away || st.busted || st.folded || (!st.inHand && hand && !hand.finished));
   var cls = 'seat ' + (up ? 'up' : 'low') + (st.isTurn ? ' turn' : '') + (out ? ' out' : '') + (st.allIn ? ' allin' : '') + (st.wants ? ' wants' : '');
@@ -1706,7 +2064,7 @@ function plaque(A, st, x, y, w, rel, hand, RES, n, up) {
     : st.busted ? '<div class="sname">Out</div>'
     : st.away ? '<div class="sname">Away</div>'
     : st.folded ? '<div class="sname">Folded</div>'
-    : '<div class="sname">' + esc(st.name) + '</div>';
+    : '<div class="sname">' + esc(st.name) + flagDot(st.flag) + '</div>';
   var bull = (fxCanPlay(A) && rel !== 0) ? '<span class="bull" onclick="fxOpen(\'' + st.id + '\')">' + bullSvg() + '</span>' : bullSvg();
   // what he just did, for a moment, so you can follow the betting without watching every chip
   var flash = (S.flash && S.flash.id === st.id && Date.now() < S.flash.until)
@@ -2261,6 +2619,7 @@ function askSheet() {
 function screenKey() {
   if (!S.token || !S.me) return 'signin';
   if (S.ask) return 'ask';
+  if (S.groupEdit) return 'group:' + (S.groupEdit.id || 'new');
   if (S.book) return 'book';
   if (S.rules) return 'rules:' + S.rules;
   if (S.replay) return 'replay:' + S.replay.i;
@@ -2279,6 +2638,7 @@ function render() {
   }
   var html = !S.token || !S.me ? signInScreen()
     : S.ask ? askSheet()
+    : S.groupEdit ? groupSheet()
     : S.book === 'portal' ? generalBook()
     : S.book ? gameBook()
     : S.rules ? rulesSheet()

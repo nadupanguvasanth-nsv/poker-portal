@@ -215,7 +215,14 @@ function tellMember(memberId, event, data) {
 
 // ---------------------------------------------------------------- the pieces
 const people = makePeople({ state, changed, httpErr, secret: () => process.env.DRIVE_SECRET || process.env.SETUP_SECRET || '' });
-const lobby = makeLobby({ state, changed, httpErr, people, broadcast });
+// A flag follows the name: the lobby and the table both show it, so the mark is handed to them
+// rather than each working it out. It is only ever the colour - what is behind it stays with the
+// person, whoever brought them in, and the portal admin.
+const flagOf = (memberId) => {
+  const f = flagsFor(memberId);
+  return f.red ? 'red' : f.yellow ? 'yellow' : '';
+};
+const lobby = makeLobby({ state, changed, httpErr, people, broadcast, flagOf });
 
 // ---------------------------------------------------------------- the view each phone gets
 function handView(t, me) {
@@ -278,6 +285,7 @@ function tableView(t, member) {
         away: !!p.away, busted: !!p.busted, place: p.place || 0,
         leaveAsk: !!p.leaveAsk, leaveOk: !!p.leaveOk,
         isAdmin: p.memberId === t.adminId, me: !!(mine && p.id === mine.id),
+        flag: flagOf(p.memberId),          // everybody at the table can see who owes from before
       };
     }),
     me: mine ? { id: mine.id, memberId: mine.memberId, seat: mine.seat, stack: mine.stack, bought: mine.bought, away: !!mine.away, out: !!mine.out,
@@ -645,9 +653,34 @@ const routes = {
       tables: lobby.list(m),
       // The portal admin is given everybody's flags with the list, because a statistics page
       // that shows who is up and down but not who owes money is the half of it he does not need.
+      // The portal admin gets everybody - waiting, in, and taken out - because that is his list to
+      // run. A primary member gets only the people he brought in: he needs to see how they are
+      // getting on, and he has no business with anybody else's mobile number.
       members: m.isAdmin
-        ? people.members().map((x) => ({ ...people.publicMember(x), flags: flagsFor(x.id) }))
+        ? people.everyone().map((x) => ({ ...people.publicMember(x), flags: flagsFor(x.id) }))
+        : people.canOpen(m)
+          ? people.sponsored(m.id).map((x) => ({ ...people.publicMember(x), flags: flagsFor(x.id) }))
+          : [],
+      // His own groups - the portal admin sees everybody's.
+      groups: people.canOpen(m) ? people.groups(m) : [],
+      // Everybody's name, for filling a group in. Names only: who is on the list is no secret
+      // among nineteen friends, but their mobile numbers are the portal admin's to hold.
+      roster: people.canOpen(m)
+        ? people.members().map((x) => ({ id: x.id, name: x.nick || x.name, tier: people.tierOf(x) }))
         : [],
+      // how many more he may bring in
+      induct: m.isAdmin ? null : (people.canOpen(m)
+        ? { used: people.sponsored(m.id).length, cap: people.INDUCT_CAP }
+        : null),
+      // What a flag on one of his people is actually for. He is answerable for them and is
+      // expected to have a word, and you cannot have a word about a debt you cannot see.
+      owedBy: people.canOpen(m) && !m.isAdmin
+        ? people.sponsored(m.id).reduce((acc, x) => {
+          const his = openDebts().filter((d) => d.from === x.id);
+          if (his.length) acc[x.id] = his;
+          return acc;
+        }, {})
+        : {},
       formats: Object.entries(FORMATS).map(([id, f]) => ({ id, ...f })),
       // the whole spec of each game, so the rule book is written out of the rules themselves
       variants: PICKABLE.map((id) => ({ id, name: VARIANTS[id].name })),
@@ -703,8 +736,53 @@ const routes = {
   rename(b) { const m = people.auth(b); return people.rename(m, b); },
 
   // --- the admin's list of members ---
-  'member-add'(b) { const m = people.auth(b); people.adminOnly(m); return people.add(b); },
+  // Adding somebody. The portal admin's go in; a primary member's is an induction that waits on
+  // him. Either way the person who did it is told what happened to it.
+  'member-add'(b) {
+    const m = people.auth(b);
+    if (!m.isAdmin && !people.canOpen(m)) throw httpErr(403, 'Only a primary member can bring somebody in');
+    const who = people.add(b, m);
+    if (m.isAdmin) return who;
+
+    const boss = Object.values(state.members).find((x) => x.isAdmin);
+    if (boss) {
+      notify([boss.id], {
+        title: 'Somebody to let in',
+        body: `${m.nick || m.name} wants to bring in ${who.name} on ${who.phone}. Approve or decline on the Portal screen.`,
+        url: '/', tag: 'induct-' + who.id, badge: 1,
+      });
+    }
+
+    // Nobody joins a private game without the group hearing about it first. The portal writes the
+    // message rather than leaving it to be typed, so it always carries the same things: who is
+    // being put forward, by whom, and that it is the portal admin who decides.
+    const share = `${m.nick || m.name} would like to bring somebody into Smart Buddies.\n\n`
+      + `${who.name}\n${who.phone}\n\n`
+      + `${m.nick || m.name} vouches for ${who.name}: passing on how we play, and chasing it up if ${who.name} does not settle after a game.\n\n`
+      + `Say now if you would rather not, or if you know the number is wrong. `
+      + `${(boss && (boss.nick || boss.name)) || 'The portal admin'} lets them in or turns them away once you have all had your say - nothing is sent to ${who.name} until then.`;
+    return { ...who, share };
+  },
+
+  // Letting an induction in, or turning it away. The portal admin's call, and the member who put
+  // them forward is told either way - he is the one who has to go back to them.
+  'member-decide'(b) {
+    const m = people.auth(b);
+    people.adminOnly(m);
+    const who = people.decide(b);
+    const sponsor = who.sponsorId ? state.members[who.sponsorId] : null;
+    if (sponsor) {
+      notify([sponsor.id], b.ok
+        ? { title: `${who.name} is in`, body: `${m.nick || m.name} approved ${who.name}. Send them the message to sign in.`, url: '/', badge: 1 }
+        : { title: `${who.name} was not let in`, body: `${m.nick || m.name} declined that induction.`, url: '/', badge: 1 });
+    }
+    return who;
+  },
+
+  // Taking somebody out of the portal, and putting them back. Only the portal admin, and nothing
+  // is ever deleted: their games, their accounts and what they owe stay attached to them.
   'member-remove'(b) { const m = people.auth(b); people.adminOnly(m); return people.remove(b); },
+  'member-restore'(b) { const m = people.auth(b); people.adminOnly(m); return people.restore(b); },
   'member-reset'(b) { const m = people.auth(b); people.adminOnly(m); return people.resetPin(b); },
 
   // Primary or secondary: who can get a game going at all. Only the portal admin decides it, and
@@ -744,6 +822,10 @@ const routes = {
       + `Chips are virtual. Seven seats, first come first served.`;
     return { text, starters, count: all.length };
   },
+
+  // ---- the groups a primary member plays with ----
+  'group-save'(b) { const m = people.auth(b); return people.saveGroup(m, b); },
+  'group-remove'(b) { const m = people.auth(b); return people.removeGroup(m, b); },
 
   // --- tables ---
   'table-open'(b) {
