@@ -859,6 +859,8 @@ function historyPaint() {
   if (n) n.innerHTML = historyCount();
   var b = document.getElementById('hbooks');
   if (b) b.innerHTML = theBooks();
+  var c = document.getElementById('hclear');
+  if (c) c.innerHTML = clearButton();
 }
 function historySearch() { S.hq = val('cp_hq'); historyPaint(); }
 function historyDates() {
@@ -910,7 +912,8 @@ function historyTab() {
     + '<input id="cp_to" type="date" value="' + esc(S.hTo || '') + '" onchange="historyDates()" style="flex:1;min-width:0;height:40px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:13px;padding:0 10px;font-family:inherit"></div>'
     + '<div id="hcount">' + historyCount() + '</div>'
     + '</div>';
-  return h + '<div id="hbooks">' + theBooks() + '</div><div id="hlist">' + historyList() + '</div>';
+  return h + '<div id="hbooks">' + theBooks() + '</div><div id="hlist">' + historyList() + '</div>'
+    + '<div id="hclear">' + clearButton() + '</div>';
 }
 
 // Everything the portal knows about who is up and who is down, over whatever the search is
@@ -1049,6 +1052,46 @@ function overallCurve() {
     + '<div class="muted small">' + games.length + ' games played</div>'
     + '<div style="font-weight:700;color:' + (run > 0 ? '#7ddba0' : run < 0 ? '#f08a8f' : '#a3aba5') + '">'
     + (run > 0 ? '+' : '') + fmt(run) + '</div></div></div>';
+}
+
+// Clearing out a batch: the trial games, or a run of nights that went wrong. It removes exactly
+// what the search is showing, so you narrow it down, look at what is left, and then clear that -
+// rather than naming a date range to a thing you cannot see.
+function clearButton() {
+  if (!(S.me && S.me.isAdmin)) return '';
+  var shown = historyShown();
+  if (!shown.length) return '';
+  var filtered = !!(S.hq || S.hFrom || S.hTo);
+  return '<button class="btn ghost" style="margin-top:14px;border-color:#6b2a2e;color:#d2454d" onclick="clearShown()">'
+    + (filtered ? 'Remove these ' + shown.length + ' game' + (shown.length === 1 ? '' : 's')
+                : 'Remove all ' + shown.length + ' game' + (shown.length === 1 ? '' : 's'))
+    + '</button>'
+    + (filtered ? '' : '<div class="muted small" style="margin-top:6px;white-space:normal">Search or set dates first if you only want some of them gone.</div>');
+}
+
+function clearShown() {
+  var shown = historyShown();
+  if (!shown.length) return;
+  var owing = 0;
+  shown.forEach(function (g) { (g.transfers || []).forEach(function (x) { if (!x.confirmedAt) owing += 1; }); });
+  S.ask = {
+    title: 'Remove ' + shown.length + ' game' + (shown.length === 1 ? '' : 's') + '?',
+    detail: 'They go from the records for everybody who played in them, with their accounts and replays. '
+      + (owing ? owing + ' unsettled debt' + (owing === 1 ? '' : 's') + ' in them will disappear too, along with any flag that came from them. ' : '')
+      + 'This cannot be undone.',
+    yes: 'Yes, remove them',
+    go: 'doClearShown()',
+  };
+  render();
+}
+function doClearShown() {
+  var ids = historyShown().map(function (g) { return g.id; });
+  S.ask = null;
+  api('history-clear', { ids: ids }).then(function (j) {
+    toast(j.removed + ' removed');
+    S.hq = ''; S.hFrom = ''; S.hTo = '';
+    return refresh();
+  }).catch(fail);
 }
 
 function historyList() {

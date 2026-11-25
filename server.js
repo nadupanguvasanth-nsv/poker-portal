@@ -1132,6 +1132,25 @@ const routes = {
     return { rounds: g.rounds || [] };
   },
 
+  // Clearing out a batch - the trial games, a run of nights that went wrong. The ids come from
+  // the phone rather than a search the server runs again, so what goes is exactly what the person
+  // was looking at when he tapped it, and a game that arrived in between is not swept up with it.
+  'history-clear'(b) {
+    const m = people.auth(b);
+    if (!m.isAdmin) throw httpErr(403, 'Only the portal admin can remove games from the records');
+    const ids = Array.isArray(b.ids) ? b.ids.filter((x) => typeof x === 'string') : [];
+    if (!ids.length) throw httpErr(400, 'Nothing was chosen');
+    const wanted = new Set(ids);
+    const going = state.history.filter((g) => wanted.has(g.id));
+    if (!going.length) throw httpErr(404, 'None of those are on record any more');
+    state.history = state.history.filter((g) => !wanted.has(g.id));
+    changed();
+    // anybody who was in one of them has a history that just changed under them
+    const told = new Set();
+    for (const g of going) for (const p of g.people) if (!told.has(p.memberId)) { told.add(p.memberId); tellMember(p.memberId, 'ended', { code: '', id: '' }); }
+    return { removed: going.length, left: state.history.length };
+  },
+
   // Taking a game out of the records. Only the portal admin, and only him: a game is everybody's
   // account of who owes who, so a player cannot quietly remove one he did badly in. It goes for
   // good - the replays with it - which is why the app asks before calling this.
