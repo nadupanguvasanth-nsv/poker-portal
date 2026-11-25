@@ -200,7 +200,7 @@ input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 // S is everything the screen knows. render() draws S. Nothing else touches the DOM.
 var S = { screen: 'signin', tab: 'tables', token: '', me: null, tables: [], history: [], members: [],
           formats: [], variants: [], code: '', v: null, toast: '', busy: false, open: {}, seats: 7,
-          openSponsor: {}, showGone: false, groups: [], roster: [], groupEdit: null };
+          openSponsor: {}, showGone: false, groups: [], roster: [], groupEdit: null, study: null };
 
 try { S.token = localStorage.getItem('sb-token') || ''; } catch (e) {}
 
@@ -646,6 +646,9 @@ function generalBook() {
     'Only the portal admin lifts a red flag, and paying up does not lift it by itself.',
     'If a winner cannot be reached, the portal admin can enter the receipt for him - and it is recorded as exactly that.',
     'Chips are virtual. What you settle between yourselves, and how, is your own business.',
+    'The portal counts how you play, out of the Texas hands it has watched: how often you put money in, how often you raise rather than call, how often you bet the flop, how often you give it up. On the Me screen, under How it is going, and nobody sees yours but you - the portal admin sees everybody\u2019s.',
+    'It also works out what the pots were worth to you when everybody was all-in and the rest was down to the cards, and sets that against what you actually took. That is the answer to always getting unlucky, one way or the other.',
+    'None of it is ever shown while a hand is being played, and none of it is advice. The portal knows what you did and what it was worth. It does not know what you should have done, and will not pretend to.',
     'Being taken out of the portal does not erase you. Every game you played, and anything owed either way, stays on the record, and you come back as yourself if the portal admin puts you back.',
   ]);
 
@@ -1479,10 +1482,11 @@ function meTab() {
   }
   h += '</div>';
 
-  if (!S.me.isAdmin) return h + groupsBlock() + myMembersBlock();
+  if (!S.me.isAdmin) return h + studyBlock() + groupsBlock() + myMembersBlock();
 
   h += statsBlock();
 
+  h += studyBlock();
   h += groupsBlock();
   h += membersBlock();
   h += '<div class="h2">STORAGE</div><div class="muted small">' + esc(S.storage || '') + (S.saveError ? '<br><span style="color:#f08a8f">' + esc(S.saveError) + '</span>' : '') + '</div>';
@@ -1690,6 +1694,84 @@ function myMembersBlock() {
     h += '<button class="btn ghost" style="margin-top:8px;height:40px;font-size:14px" onclick="memberLink(\'' + m.id + '\')">Send them the message</button></div>';
   });
   return h;
+}
+
+// ---- what the portal makes of how people play ----
+// Counted from its own records: what somebody did, how often, and what the pots were worth when
+// the cards took over. Nothing here is advice - the portal has no idea what the right frequency
+// is, and a number dressed up as a verdict would be a lie told confidently. It is never shown
+// while a hand is live; it is a thing to look at afterwards.
+function studyBlock() {
+  var d = S.study;
+  if (!d) {
+    return '<div class="h2" style="margin-top:18px">HOW IT IS GOING</div>'
+      + '<button class="btn ghost" onclick="loadStudy()">Work out the numbers</button>';
+  }
+  if (!d.hands) {
+    return '<div class="h2" style="margin-top:18px">HOW IT IS GOING</div>'
+      + '<div class="evc"><div class="muted small" style="white-space:normal">'
+      + 'Nothing to count yet. Texas hands are kept from now on, and the figures start meaning something after a few dozen of them.</div></div>';
+  }
+  var h = '<div class="h2" style="margin-top:18px">HOW IT IS GOING</div>'
+    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">'
+    + d.hands + ' Texas hands over ' + d.games + ' game' + (d.games === 1 ? '' : 's')
+    + '. Counted from what the portal watched - what was done, not what should have been.</div>';
+
+  d.who.forEach(function (w) {
+    var luck = w.luck || 0;
+    h += '<div class="evc" style="margin-top:8px">'
+      + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
+      + '<div style="font-size:15px;font-weight:600">' + esc(w.name) + '</div>'
+      + '<div class="muted small">' + w.hands + ' hands</div></div>';
+    if (w.hands < 20) {
+      h += '<div class="muted small" style="margin-top:6px;white-space:normal">Too few hands to say anything worth saying yet.</div></div>';
+      return;
+    }
+    h += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">'
+      + statBit('IN', w.vpip, '%', 'how often he put money in before the flop')
+      + statBit('RAISED', w.pfr, '%', 'how often that was a raise rather than a call')
+      + statBit('RE-RAISED', w.threeBet, '%', 'how often he put in a second raise when he had the chance')
+      + statBit('GAVE UP TO ONE', w.foldTo3Bet, '%', 'how often he folded to a re-raise')
+      + statBit('BET THE FLOP', w.cbet, '%', 'having raised before it')
+      + statBit('FOLDED TO ONE', w.foldToCbet, '%', 'how often he folded to a bet on the flop')
+      + statBit('TO SHOWDOWN', w.wtsd, '%', 'of the hands he saw a flop with')
+      + statBit('WON THERE', w.wonAtShowdown, '%', 'of the showdowns he reached')
+      + statBit('BETS PER CALL', w.aggression, '', 'bets and raises against calls')
+      + '</div>';
+    if (w.allIns) {
+      h += '<div style="margin-top:10px;border-top:1px solid #2a312d;padding-top:8px">'
+        + '<div class="muted small" style="white-space:normal">'
+        + w.allIns + ' pot' + (w.allIns === 1 ? '' : 's') + ' decided by the cards. Worth ' + fmt(w.dueAllIn)
+        + ' to him; he took ' + fmt(w.gotAllIn) + '.</div>'
+        + '<div style="font-weight:700;margin-top:4px;color:' + (luck > 0 ? '#7ddba0' : luck < 0 ? '#f08a8f' : '#a3aba5') + '">'
+        + (luck > 0 ? '+' : '') + fmt(luck) + ' against what the cards owed him</div>'
+        + (w.sampled ? '<div class="muted small" style="margin-top:2px">' + w.sampled + ' of those were counted by sampling, so the figure is close rather than exact.</div>' : '')
+        + '</div>';
+    }
+    if (w.remarks && w.remarks.length) {
+      h += '<div style="margin-top:10px;border-top:1px solid #2a312d;padding-top:8px">';
+      w.remarks.forEach(function (line) {
+        h += '<div style="display:flex;gap:8px;margin-top:4px"><div class="gold" style="flex:none">&middot;</div>'
+          + '<div class="muted small" style="white-space:normal">' + line + '</div></div>';
+      });
+      h += '</div>';
+    }
+    h += '</div>';
+  });
+  h += '<button class="btn ghost" style="margin-top:10px" onclick="S.study=null;loadStudy()">Count it again</button>';
+  return h;
+}
+
+function statBit(label, v, suffix, why) {
+  if (v === null || v === undefined) return '';
+  return '<div style="min-width:84px" title="' + esc(why) + '">'
+    + '<div class="muted" style="font-size:9px;letter-spacing:.08em">' + label + '</div>'
+    + '<div style="font-size:16px;font-weight:700">' + v + suffix + '</div></div>';
+}
+
+function loadStudy() {
+  toast('Counting\u2026');
+  api('study', {}).then(function (j) { S.study = j; render(); }).catch(fail);
 }
 
 // ---- the groups a primary member plays with ----

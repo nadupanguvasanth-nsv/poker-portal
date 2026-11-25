@@ -15,6 +15,8 @@ const { makeLobby } = require('./lobby');
 const { Table, FORMATS, PICKABLE, SEATS, TOURNEY, NO_CAP, VARIANTS } = require('./games');
 const { CATEGORY } = require('./engine');
 const { settle, statementPdf } = require('./statement');
+const study = require('./study');
+const { STUDY_KINDS, STUDY_STREETS } = study;
 const { START_GRACE_MS, ROUND_TO, YELLOW_AFTER_MS, RED_AFTER_MS, RED_AT_DEBTS } = require('./house');
 const webpush = require('./webpush');
 
@@ -526,6 +528,36 @@ function keepRound(t, h) {
     reveal: h.result.reveal || {}, won: h.result.won || {},
   };
   t.rounds.push(rec);
+
+  // Every Texas hand is also kept for the study, where ten of a night is no use - a figure over
+  // ten hands is noise. What is kept is only what the counting needs: who acted, what they did,
+  // what it came to, and the cards where the pot was decided by the board rather than by anybody.
+  // The boards and the replay trimmings are left out, which is most of the weight.
+  if (h.variant === 'holdem') {
+    t.study = t.study || [];
+    // Written down tight. Everything in this file is read and written whole on every save, so a
+    // record that is four times the size is four times the thing going back and forth all night.
+    // An action is [street, what, who, how much] with the first three as numbers, and who is the
+    // player's place in this hand's list rather than his id again.
+    const seatOf = {};
+    rec.players.forEach((x, i) => { seatOf[x.id] = i; });
+    const KINDS = STUDY_KINDS;
+    const STREETS = STUDY_STREETS;
+    t.study.push({
+      no: rec.no, pot: h.pot,
+      p: rec.players.map((x) => (t.players.get(x.id) || {}).memberId || x.id),
+      a: (h.acts || []).map((x) => [STREETS.indexOf(x.s), KINDS.indexOf(x.k), seatOf[x.id], x.a || 0])
+        .filter((x) => x[0] >= 0 && x[1] >= 0 && x[2] !== undefined),
+      w: rec.players.map((x) => (rec.won || {})[x.id] || 0),
+      sh: rec.players.map((x) => ((rec.reveal || {})[x.id] ? 1 : 0)),
+      ai: h.allIn ? {
+        b: h.allIn.board,
+        c: h.allIn.ids.map((id) => h.allIn.cards[id]),
+        i: h.allIn.ids.map((id) => seatOf[id]),
+      } : null,
+    });
+  }
+
   // the rare ones first, then the biggest pots fill what is left
   const rare = t.rounds.filter((r) => r.tier).sort((a, b) => (b.tier - a.tier) || (b.pot - a.pot)).slice(0, MONSTER_SLOTS);
   const keepIds = new Set(rare.map((r) => r.no));
@@ -590,6 +622,7 @@ function endGame(t, why) {
     sb: b.sb, bb: b.bb, sessions: 1, live: false,
     people: people_,
     curve: t.curve || {},                    // everybody's chips, hand by hand
+    study: t.study || [],                    // every Texas hand, for the numbers
     // Who pays who, named by member rather than by seat. A player id belongs to one night at one
     // table; a debt outlives both, and everything that acts on it afterwards - marking it paid,
     // confirming it, the flags, the books - knows people by their membership. Settling on seat
@@ -821,6 +854,35 @@ const routes = {
         : `Nobody is set up to start a game yet.\n\n`)
       + `Chips are virtual. Seven seats, first come first served.`;
     return { text, starters, count: all.length };
+  },
+
+  // What the portal makes of how people play, out of its own records and nothing else. The
+  // portal admin sees everybody; everybody else sees himself. Nothing of it is ever shown while a
+  // hand is being played - it is a thing to look at afterwards, not a man at your elbow.
+  //
+  // Counted here rather than kept running, because the sums are small and a figure worked out
+  // fresh can never be a stale one left over from a rule that has since changed.
+  study(b) {
+    const m = people.auth(b);
+    const from = Number(b.from) || 0;
+    const games = state.history
+      .filter((g) => (g.study || []).length)
+      .filter((g) => !from || g.at >= from)
+      .filter((g) => m.isAdmin || g.people.some((p) => p.memberId === m.id));
+    const hands = [];
+    for (const g of games) for (const h of g.study) hands.push(h);
+    const full = study.report(hands);
+    const mine = m.isAdmin ? full : (full[m.id] ? { [m.id]: full[m.id] } : {});
+    const names = {};
+    for (const g of games) for (const p of g.people) if (p.memberId) names[p.memberId] = p.name;
+    return {
+      games: games.length,
+      hands: hands.length,
+      who: Object.keys(mine).map((id) => ({
+        id, name: names[id] || (state.members[id] || {}).name || 'somebody',
+        ...mine[id], remarks: study.remarks(mine[id]),
+      })).sort((a, c) => c.hands - a.hands),
+    };
   },
 
   // ---- the groups a primary member plays with ----

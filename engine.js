@@ -322,6 +322,20 @@ class Hand {
       this.currentBet = 0; this.minRaise = this.bb;
       if (this.street === 'river') return this.showdown();
       if (this.runItDue()) { this.runit = { voters: this.live().map((p) => p.id), votes: {} }; this.turn = -1; return; }
+      // Everybody who is going to act has acted, and the rest of the board is a formality. This is
+      // the moment the hand was decided by chance rather than by anybody, so the cards and the
+      // board as they stand are written down. What the equities actually were is worked out later,
+      // away from the table - a seven-handed all-in before the flop takes long enough to count
+      // that doing it here would hold the game up for the sake of a statistic.
+      if (!this.allIn && this.boards.length === 1 && this.live().length > 1 && this.canAct().length <= 1) {
+        const inIt = this.live();
+        this.allIn = {
+          street: this.street,
+          board: this.boards[0].slice(),
+          cards: inIt.reduce((a, p) => { a[p.id] = p.cards.slice(); return a; }, {}),
+          ids: inIt.map((p) => p.id),
+        };
+      }
       if (this.runs > 1) return this.finishRuns();
       this.dealNext();
       if (this.canAct().length > 1) {
