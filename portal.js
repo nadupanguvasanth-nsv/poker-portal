@@ -45,12 +45,22 @@ function makePeople(ctx) {
 
   const members = () => Object.values(state.members);
   const admin = () => members().find((m) => m.isAdmin) || null;
+
+  // Primary members can get a game going; secondary ones play in it. The portal admin is primary
+  // whatever his record says, because somebody has to be able to open a table.
+  //
+  // Everybody is secondary until the portal admin says otherwise - the people already on the list
+  // included. Starting a game is a thing that is given, not a thing you have unless somebody takes
+  // it away, and the admin goes down the list and sets it before the portal is posted to the group.
+  const tierOf = (m) => (m.isAdmin ? 'primary' : (m.tier === 'primary' ? 'primary' : 'secondary'));
+  const canOpen = (m) => tierOf(m) === 'primary';
   const byPhone = (phone) => members().find((m) => m.phone === cleanPhone(phone)) || null;
   const byId = (id) => state.members[id] || null;
 
   function publicMember(m) {
     return { id: m.id, name: m.name, nick: m.nick || '', shown: m.nick || m.name,
-      phone: m.phone, isAdmin: !!m.isAdmin, hasPin: !!m.pin, addedAt: m.addedAt };
+      phone: m.phone, isAdmin: !!m.isAdmin, hasPin: !!m.pin, addedAt: m.addedAt,
+      tier: tierOf(m), canOpen: canOpen(m) };
   }
 
   // ---- sessions: a phone stays signed in, and can be signed out from anywhere ----
@@ -99,6 +109,7 @@ function makePeople(ctx) {
 
   return {
     members, admin, byPhone, byId, publicMember, whoIs, signOut, cleanPhone, cleanName, isPin,
+    tierOf, canOpen,
 
     // Whoever is asking, or nobody.
     auth(b) {
@@ -173,11 +184,23 @@ function makePeople(ctx) {
       if (phone.length !== 10) throw httpErr(400, 'A 10-digit mobile number, please');
       if (byPhone(phone)) throw httpErr(400, 'That number is already on the list');
       if (members().some((x) => x.name.toLowerCase() === name.toLowerCase())) throw httpErr(400, 'Somebody already goes by that name');
-      const m = { id: rid(6), name, phone, addedAt: Date.now(), sessions: [], push: [] };
+      const m = { id: rid(6), name, phone, addedAt: Date.now(), sessions: [], push: [], tier: 'secondary' };
       state.members[m.id] = m;
       changed();
       return publicMember(m);
     },
+    // Primary or secondary. The portal admin's own standing is not his to give away - if he could
+    // make himself secondary there would be nobody left who could open a table.
+    setTier(b) {
+      const who = state.members[b.memberId];
+      if (!who) throw httpErr(404, 'No such member');
+      if (who.isAdmin) throw httpErr(400, 'The portal admin can always start a game');
+      if (b.tier !== 'primary' && b.tier !== 'secondary') throw httpErr(400, 'Primary or secondary');
+      who.tier = b.tier;
+      changed();
+      return publicMember(who);
+    },
+
     // Your own name, and the short one you go by at the table.
     rename(m, b) {
       const who = m;

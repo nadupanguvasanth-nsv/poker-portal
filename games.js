@@ -50,9 +50,13 @@ function tourneyBlinds(stack) {
   return { sb: stack / 400, bb: stack / 200 };
 }
 
+// Nobody is capped by default. A ceiling the person opening the table never chose is worse than
+// no ceiling at all: it sits there invisibly until somebody is refused by it. Whoever wants one
+// can still set maxBuyin, and a tournament sets its own.
+const NO_CAP = 1e9;
 const DEFAULTS = {
-  sb: 100, bb: 200, minBuyin: 10000, maxBuyin: 100000,
-  minPlayers: 2, turnSeconds: 40, bombAnteBB: 5,
+  sb: 100, bb: 200, minBuyin: 10000, maxBuyin: NO_CAP,
+  minPlayers: 4, turnSeconds: 40, bombAnteBB: 5, minMinutes: 0,
 };
 
 function cleanSettings(s = {}, old = DEFAULTS) {
@@ -68,6 +72,8 @@ function cleanSettings(s = {}, old = DEFAULTS) {
     maxBuyin: num(s.maxBuyin, minBuyin, 1e9, Math.max(minBuyin, old.maxBuyin)),
     minPlayers: num(s.minPlayers, 2, SEATS, old.minPlayers),
     turnSeconds: num(s.turnSeconds, 10, 300, old.turnSeconds),
+    // how long somebody is expected to stay once they sit down; 0 means they may go when they like
+    minMinutes: num(s.minMinutes, 0, 600, old.minMinutes || 0),
     bombAnteBB: num(s.bombAnteBB, 0, 50, old.bombAnteBB),
   };
 }
@@ -148,6 +154,19 @@ class Table {
     this.say(`${p.name} left${why ? ' (' + why + ')' : ''}`);
   }
 
+  // Whether somebody has stayed as long as they said they would. A player who has lost everything
+  // has nothing left to stay for, so his time is up whatever the clock says.
+  servedTime(p) {
+    if (!p) return true;
+    if (p.stack <= 0) return true;
+    const mins = this.settings.minMinutes || 0;
+    if (!mins) return true;
+    return Date.now() - (p.joinedAt || this.createdAt) >= mins * 60000;
+  }
+  // Somebody who asked to leave early and was told no: he stays in the ring paying his blinds
+  // until his time is up, but he is not dealt a hand.
+  isForfeiting(p) { return !!(p && p.forfeit && !this.servedTime(p)); }
+
   give(p, amount, kind = 'buyin') {
     p.stack += amount;
     p.bought += amount;
@@ -227,9 +246,13 @@ class Table {
     return true;
   }
 
+  // Who is actually ready to be dealt in: chips in front of them and not sitting out. Four people
+  // where one has stepped away is a three-handed game, and should not set a table going.
+  ready() { return this.seated().filter((p) => p.stack > 0 && !p.away); }
+
   canStart() {
     if (this.status === 'ended') return 'This game has ended';
-    const ready = this.seated().filter((p) => p.stack > 0);
+    const ready = this.ready();
     if (ready.length < Math.max(2, this.settings.minPlayers)) {
       return `Waiting for ${Math.max(2, this.settings.minPlayers)} players with chips (${ready.length} so far)`;
     }
@@ -263,7 +286,7 @@ class Table {
     const b = this.blinds();
     const bombAnte = spec.bomb ? b.bb * this.settings.bombAnteBB : 0;
     this.hand = new Hand({
-      players: playing.map((p) => ({ id: p.id, seat: p.seat, stack: p.stack })),
+      players: playing.map((p) => ({ id: p.id, seat: p.seat, stack: p.stack, ghost: this.isForfeiting(p) })),
       buttonIdx, sb: b.sb, bb: b.bb, variant, bombAnte,
       runItMin: this.format === 'tournament' ? 0 : this.settings.minBuyin,
     });
@@ -304,4 +327,4 @@ class Table {
   }
 }
 
-module.exports = { Table, FORMATS, PICKABLE, VARIANTS, SEATS, TOURNEY, tourneyBlinds, tourneyStack, tourneySettings, DEFAULTS, cleanSettings, rid };
+module.exports = { Table, FORMATS, PICKABLE, VARIANTS, SEATS, TOURNEY, NO_CAP, tourneyBlinds, tourneyStack, tourneySettings, DEFAULTS, cleanSettings, rid };

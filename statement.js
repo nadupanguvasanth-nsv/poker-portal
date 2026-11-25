@@ -22,37 +22,6 @@ function settle(rows) {
 
 // one row per session the player was part of: chips at the start, at the end, and what they won or lost
 // (chips added by the banker during the session are not counted as winnings)
-function sessionRows(sessLog, history, ledger, live) {
-  const rows = [];
-  const upto = (T) => { let e = null; for (const h of history) if (h.t <= T && h.kind !== 'cashout') e = h; return e; };
-  (sessLog || []).forEach((s, i) => {
-    const isLast = i === sessLog.length - 1, end = s.end || Date.now();
-    const st = upto(s.start), startStack = st ? st.stack : 0;
-    let e = history.find((h) => h.kind === 'deck' && h.session === s.no);
-    if (!e && isLast && s.end) e = history.find((h) => h.kind === 'end');
-    const ended = !!s.end;
-    let endStack = e ? e.stack : (ended ? (upto(end) || { stack: 0 }).stack : live);
-    if (!st && !history.some((h) => h.t <= end && h.t >= s.start) && !e) return; // not at the table in this session
-    const added = ledger.filter((l) => l.kind !== 'cashout' && l.t > s.start && l.t <= end).reduce((a, l) => a + l.amount, 0);
-    rows.push({ no: s.no, start: startStack, end: endStack, added, net: endStack - startStack - added, from: s.start, to: s.end || 0, live: !ended });
-  });
-  return rows;
-}
-
-// everybody who sat at the table: still seated, or cashed out earlier
-function buildFinal(t) {
-  const people = [];
-  const add = (id, token, name, ledger, history, finalChips, isAdmin, memberId) => {
-    const invested = ledger.filter((l) => l.kind !== 'cashout').reduce((s, l) => s + l.amount, 0);
-    const bought = ledger.filter((l) => l.kind === 'buyin').reduce((s, l) => s + l.amount, 0);
-    const carried = ledger.filter((l) => l.kind === 'buyin' && l.by === 'carried over').reduce((s, l) => s + l.amount, 0);
-    people.push({ id, token, name, isAdmin, memberId, sessions: sessionRows(t.sessLog, history, ledger, finalChips), dl: require('crypto').randomBytes(18).toString('hex'), ledger: ledger.slice(), history: history.slice(), final: finalChips, invested, bought, carried, net: finalChips - invested });
-  };
-  for (const d of t.departed) add(d.id, d.token, d.name, d.ledger, d.history, d.amount, false, d.memberId);
-  for (const p of t.players.values()) add(p.id, p.token, p.name, p.ledger, p.history, p.stack + p.queued, p.id === t.adminId, p.memberId);
-  return { at: Date.now(), code: t.code, sessions: t.sessionNo, sb: t.settings.sb, bb: t.settings.bb, people, transfers: settle(people) };
-}
-
 // ---- tiny PDF writer ----
 const W_ = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584];
 const clean = (s) => String(s == null ? '' : s).replace(/[−–—]/g, '-').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[^\x20-\x7e]/g, '?');
@@ -139,11 +108,13 @@ function statementPdf(final, personId, tz) {
   const section = (title) => { d.need(40); d.text(title, 40, d.y, 9, GOLD, { bold: true }); d.line(40, d.y - 6, 555, d.y - 6, LINE, 0.6); d.y -= 22; };
   if (!final.live) {
   section('SETTLEMENT');
-  const mine = final.transfers.filter((x) => x.from === me.id || x.to === me.id);
+  // transfers are named by member; older records named them by seat, so both are matched
+  const meKeys = [me.memberId, me.id].filter(Boolean);
+  const mine = final.transfers.filter((x) => meKeys.includes(x.from) || meKeys.includes(x.to));
   if (!mine.length) { d.text(me.net === 0 ? 'You finished even. Nothing to settle.' : 'Nothing to settle.', 40, d.y, 11, INK); d.y -= 20; }
   mine.forEach((x) => {
     d.need(24);
-    const pay = x.from === me.id;
+    const pay = meKeys.includes(x.from);
     d.text(pay ? `You pay ${x.toName}` : `${x.fromName} pays you`, 40, d.y, 12, INK, { bold: true });
     d.text((pay ? '-' : '+') + fmt(x.amount) + ' chips', 555, d.y, 12, pay ? RED : GREEN, { align: 'right', bold: true });
     d.y -= 20;
@@ -151,24 +122,25 @@ function statementPdf(final, personId, tz) {
   d.y -= 10;
   }
 
-  // session by session
-  if (me.sessions && me.sessions.length) {
-    section('SESSION BY SESSION');
-    d.text('SESSION', 40, d.y, 7.5, MUTED, { bold: true }); d.text('STARTED WITH', 240, d.y, 7.5, MUTED, { bold: true, align: 'right' }); d.text('ENDED WITH', 400, d.y, 7.5, MUTED, { bold: true, align: 'right' }); d.text('WON / LOST', 555, d.y, 7.5, MUTED, { bold: true, align: 'right' }); d.y -= 14;
-    me.sessions.forEach((r) => {
-      d.need(16);
-      d.text(`Session ${r.no}  ${timeOnly(r.from, tz)}${r.to ? ' - ' + timeOnly(r.to, tz) : ''}`, 40, d.y, 9.5, INK);
-      d.text(fmt(r.start), 240, d.y, 9.5, INK, { align: 'right' }); d.text(fmt(r.end), 400, d.y, 9.5, INK, { align: 'right' });
-      d.text(signed(r.net), 555, d.y, 9.5, r.net > 0 ? GREEN : r.net < 0 ? RED : INK, { align: 'right', bold: true });
-      d.y -= 15;
-    });
-    d.y -= 12;
-  }
-
   // chart
   d.need(210);
   section('CHIP STACK AFTER EACH HAND');
-  const hist = me.history.filter((h) => h.stack != null);
+  // A finished game keeps everybody's chips hand by hand in one place - the record's curve -
+  // rather than repeating them inside each person's row. Older records kept a history instead,
+  // so both are read, the newer shape first.
+  const hist = (me.history && me.history.length)
+    ? me.history.filter((h) => h.stack != null)
+    : (function () {
+      // The curve is hand numbers and chips, nothing else - a time against every hand would be
+      // half again as much to carry in the one file this portal keeps, for two labels. The two
+      // the graph prints are the ones the record already knows: when the game started and when
+      // it ended.
+      const pts = ((final.curve || {})[me.id]) || [];
+      return pts.map((pt, i) => ({
+        no: pt[0], stack: pt[1],
+        t: i === pts.length - 1 ? final.at : (final.startedAt || final.at),
+      }));
+    }());
   const cx = 40, cw = 515, ch = 130, cy = d.y - ch;
   d.rect(cx, cy, cw, ch, PALE);
   if (hist.length >= 2) {
@@ -176,7 +148,6 @@ function statementPdf(final, personId, tz) {
     let lo = Math.min(...vals), hi = Math.max(...vals); if (hi === lo) { hi += 1; lo -= 1; }
     const px = (i) => cx + 12 + (cw - 24) * i / (vals.length - 1), py = (v) => cy + 14 + (ch - 36) * (v - lo) / (hi - lo);
     d.line(cx + 12, py(vals[0]), cx + cw - 12, py(vals[0]), LINE, 0.5, true);
-    hist.forEach((h, i) => { if (h.kind === 'deck') { d.line(px(i), cy + 8, px(i), cy + ch - 18, GOLDL, 0.8, true); d.text('DC' + h.session, px(i) + 3, cy + ch - 16, 7, GOLD, { bold: true }); } });
     let path = vals.map((v, i) => `${px(i).toFixed(1)} ${py(v).toFixed(1)} ${i ? 'l' : 'm'}`).join(' ');
     d.op(`${hex(INK)} RG 1.4 w [] 0 d ${path} S`);
     d.text('Low ' + fmt(lo), cx + 12, cy + 3, 8, MUTED); d.text('High ' + fmt(hi), cx + cw - 12, cy + 3, 8, MUTED, { align: 'right' });
@@ -184,14 +155,6 @@ function statementPdf(final, personId, tz) {
     d.text('End ' + timeOnly(hist[hist.length - 1].t, tz), cx + cw / 2 + 60, cy + 3, 8, MUTED, { align: 'center' });
   } else d.text('Not enough hands played to draw a graph.', cx + cw / 2, cy + ch / 2, 10, MUTED, { align: 'center' });
   d.y = cy - 26;
-
-  // deck changes
-  const decks = hist.filter((h) => h.kind === 'deck');
-  if (decks.length) {
-    section('CHIP COUNT AT EACH DECK CHANGE');
-    decks.forEach((h) => { d.need(16); d.text(`Deck change ${h.session}`, 40, d.y, 9.5, INK); d.text(timeOnly(h.t, tz), 300, d.y, 9.5, MUTED, { align: 'right' }); d.text(fmt(h.stack), 555, d.y, 9.5, INK, { align: 'right', bold: true }); d.y -= 14; });
-    d.y -= 12;
-  }
 
   // buy-in timings
   section('BUY-INS AND CHIP MOVEMENTS');
@@ -212,4 +175,4 @@ function statementPdf(final, personId, tz) {
   return d.build();
 }
 
-module.exports = { settle, buildFinal, statementPdf, sessionRows };
+module.exports = { settle, statementPdf };

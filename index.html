@@ -29,7 +29,13 @@ padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-
    to ask for it the right way up than to show a table nobody can read. */
 #turn{display:none;position:fixed;inset:0;z-index:999;background:#0a0c0b;color:#f2efe6;
 align-items:center;justify-content:center;text-align:center;padding:24px}
-#stage{position:relative;width:390px;height:844px;overflow:hidden;background:#0a0c0b}
+#stage{position:relative;width:390px;height:844px;overflow:hidden;background:#0a0c0b;
+  --f1:#1a6a4d;--f2:#13543e;--f3:#0d3326;--rail:#2b2017;--deep:#16201b;--av:#1b2a22}
+/* The table can be dressed differently without touching anything that has to stay readable: the
+   cards keep their white, the chips their gold, the names their contrast. Only the cloth, the
+   rail and the dark backing behind the card backs and the faces change. */
+#stage[data-felt="midnight"]{--f1:#24507f;--f2:#1a3a5e;--f3:#0e1f35;--rail:#1b2433;--deep:#141c28;--av:#1a2534}
+#stage[data-felt="claret"]{--f1:#7a2634;--f2:#5c1b26;--f3:#330f16;--rail:#2a1a16;--deep:#1f1216;--av:#2a181d}
 button{font-family:inherit;cursor:pointer}
 button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offset:2px}
 .disp{font-family:'Bebas Neue',sans-serif;letter-spacing:.03em}
@@ -44,7 +50,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .card{position:relative;width:38px;height:54px;border-radius:5px;background:#faf8f2;color:#14110a;font-weight:700;font-size:14px;line-height:1;flex:none;overflow:hidden;font-family:Georgia,'Times New Roman',serif}
 .cf{position:absolute;left:0;top:0;width:100%;height:100%;fill:currentColor}
 .card.red{color:#b3262e}
-.card.back{background:repeating-linear-gradient(45deg,rgba(216,180,92,.16) 0 2px,transparent 2px 7px),repeating-linear-gradient(-45deg,rgba(216,180,92,.16) 0 2px,transparent 2px 7px),#16201b;border:1px solid #d8b45c;box-shadow:inset 0 0 0 3px #16201b,inset 0 0 0 4px rgba(216,180,92,.5)}
+.card.back{background:repeating-linear-gradient(45deg,rgba(216,180,92,.16) 0 2px,transparent 2px 7px),repeating-linear-gradient(-45deg,rgba(216,180,92,.16) 0 2px,transparent 2px 7px),var(--deep);border:1px solid #d8b45c;box-shadow:inset 0 0 0 3px var(--deep),inset 0 0 0 4px rgba(216,180,92,.5)}
 .card.empty{background:transparent;border:1px dashed rgba(191,224,207,.3)}
 .card.sm{width:24px;height:34px;font-size:13px;border-radius:3px}
 /* The sizes below are never written as a literal class anywhere - card(c, 'xl') builds them at
@@ -61,7 +67,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .card.win{box-shadow:0 0 0 2px #d8b45c,0 0 14px 3px rgba(216,180,92,.8);animation:wglow 1.3s ease-in-out infinite alternate;position:relative;z-index:2}
 .card.dim{opacity:.35}
 @keyframes wglow{to{box-shadow:0 0 0 2px #f3d27a,0 0 24px 7px rgba(243,210,122,1)}}
-.felt{border-radius:167px/128px;background:radial-gradient(ellipse at 50% 42%,#1a6a4d 0%,#13543e 60%,#0d3326 100%);border:7px solid #2b2017;box-shadow:inset 0 0 0 2px rgba(216,180,92,.3),inset 0 14px 30px rgba(0,0,0,.35),0 18px 44px rgba(0,0,0,.55)}
+.felt{border-radius:167px/128px;background:radial-gradient(ellipse at 50% 42%,var(--f1) 0%,var(--f2) 60%,var(--f3) 100%);border:7px solid var(--rail);box-shadow:inset 0 0 0 2px rgba(216,180,92,.3),inset 0 14px 30px rgba(0,0,0,.35),0 18px 44px rgba(0,0,0,.55)}
 .pmini{position:relative;width:28px;height:28px;border-radius:14px;background:#1b2a22;border:1px solid #2a312d;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:13px;flex:none}
 .betchip{display:inline-flex;align-items:center;gap:4px;margin-top:2px;padding:1px 7px 1px 4px;border-radius:9px;background:rgba(10,14,12,.72);border:1px solid #4a4a3a;font-size:11px;font-weight:700;color:#f3e9cf;white-space:nowrap}
 
@@ -71,10 +77,22 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
    cards sat lower than the empty seat beside them and names drifted onto the board. */
 /* The cards a player turns over sit outside the ring, away from the board, and out of the
    layout so they cannot push the seat off the felt. */
-.seat .showc{position:absolute;left:50%;display:flex;transform:translateX(-50%) scale(.84)}
+.tbar{z-index:8}
+.seat .showc{position:absolute;left:50%;display:flex;transform:translateX(-50%) scale(1)}
+/* As big as each seat can take. The seats along the top have only the gap between them and
+   the bar at the top to fan into, so theirs are smaller; the ones lower down have the whole
+   felt below them and can be read from across the room. */
+.seat.up .showc{transform:translateX(-50%) scale(.72)}
+.seat.low .showc{transform:translateX(-50%) scale(1.15)}
 .seat.up .showc{bottom:100%;margin-bottom:-2px;transform-origin:bottom center}
 .seat.low .showc{top:100%;margin-top:-2px;transform-origin:top center}
 .seat .showc .card+.card{margin-left:-7px}
+/* Turned-over cards have to read against a dark green felt from across the room: a little more
+   white than a card in the hand, a hard dark edge so they do not bleed into the felt, and a
+   shadow underneath so they sit on top of it rather than in it. */
+.seat .showc .card{background:#fffdf6;box-shadow:0 0 0 1.5px rgba(8,11,9,.92),0 4px 10px rgba(0,0,0,.7)}
+.seat .showc .card.red{color:#c8232c}
+.seat .showc{filter:saturate(1.06) contrast(1.05)}
 /* fanned rather than side by side: narrower, so a neighbour's name stays clear, and it reads
    more like cards held in a hand - which matters most in Omaha, where there are four or five */
 .bull{position:absolute;left:0;top:0;width:100%;height:100%;border-radius:50%;cursor:pointer;pointer-events:auto}
@@ -82,11 +100,27 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 @keyframes fxfly{0%{transform:translate(0,0) scale(.6) rotate(0);opacity:1}85%{opacity:1}100%{transform:translate(var(--dx),var(--dy)) scale(1.15) rotate(540deg);opacity:0}}
 @keyframes fxpop{0%{transform:scale(.2);opacity:0}15%{opacity:1}35%{transform:scale(1.9);opacity:1}100%{transform:scale(1.2) translateY(-16px);opacity:0}}
 @keyframes fxbub{0%{transform:translateY(8px) scale(.4);opacity:0}10%{transform:translateY(0) scale(1.15);opacity:1}15%{transform:scale(1)}85%{opacity:1}100%{transform:translateY(-14px) scale(1);opacity:0}}
+/* chips going in: a small stack leaves the player and lands on the pot. Same trick as the thrown
+   bombs - the flight is a CSS animation with a negative delay, so a redraw mid-flight picks it up
+   where it had got to instead of starting it again from the seat. */
+.chipfly{position:absolute;pointer-events:none;z-index:6;margin:-9px 0 0 -9px;width:18px;height:18px}
+.chipfly i{display:block;width:18px;height:18px;border-radius:9px;
+  background:radial-gradient(circle at 35% 30%,#f3d58f,#c69b3c);
+  border:2px solid #8c6a22;box-shadow:0 2px 5px rgba(0,0,0,.55)}
+.chipfly b{position:absolute;left:50%;top:20px;transform:translateX(-50%);font-family:'Inter',sans-serif;
+  font-size:10px;font-weight:700;color:#f3e9cf;text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap}
+@keyframes chipin{0%{transform:translate(0,0) scale(.5);opacity:0}
+  12%{transform:translate(calc(var(--dx)*.12),calc(var(--dy)*.12 - 10px)) scale(1);opacity:1}
+  80%{opacity:1}
+  100%{transform:translate(var(--dx),var(--dy)) scale(.72);opacity:0}}
 .fxbub{background:#141917;border:1px solid #2a312d;border-radius:20px;padding:4px 8px;font-size:30px;margin:-22px 0 0 -26px}
 .fxbtn{width:34px;height:34px;border-radius:17px;border:1px solid #2a312d;background:#1b2a22;font-size:20px;line-height:1;padding:0;flex:none}
-.av{position:relative;width:52px;height:52px;border-radius:26px;background:#1b2a22;border:2px solid #2a312d;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:20px}
+.av{position:relative;width:52px;height:52px;border-radius:26px;background:var(--av);border:2px solid #2a312d;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:20px}
 .seat.turn .av{border-color:#d8b45c;box-shadow:0 0 0 4px rgba(216,180,92,.25)}
-.seat.out{opacity:.45}
+/* A player who has folded or gone is dimmed - but not the cards he chose to turn over. Dimming
+   the whole seat dimmed those too, and a child cannot be brighter than the parent it sits in, so
+   the one thing everybody is leaning in to look at was the faintest thing on the table. */
+.seat.out .av,.seat.out .sname,.seat.out .sstack,.seat.out .sbh,.seat.out .betchip{opacity:.45}
 .seat.allin .av{border-color:#d2454d}
 .badge{position:absolute;left:-12px;top:-4px;width:22px;height:22px;border-radius:11px;background:#d8b45c;color:#14110a;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
 .sname{margin-top:3px;font-size:11px;color:#bfe0cf;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -99,12 +133,31 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
           mask:radial-gradient(circle at center,transparent 27px,#000 28px)}
 .seat .tring.hot{background:conic-gradient(#d2454d calc(var(--left,1) * 360deg),rgba(210,69,77,.16) 0)}
 /* the move just made, sitting above the player's circle for a moment */
+/* Something somebody said, across the bottom of the table. It sits above the buttons rather than
+   over them: a message covering Fold while your clock runs is the one time it costs real money. */
+.saybar{position:absolute;left:12px;right:12px;bottom:8px;z-index:40;pointer-events:none;
+  background:#1b2a22;border:1px solid #d8b45c;border-radius:12px;padding:9px 12px;
+  box-shadow:0 8px 22px rgba(0,0,0,.6);animation:sayin .22s ease-out}
+.saybar .who{font-family:'Inter',sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;color:#d8b45c}
+.saybar .what{font-size:14px;color:#f2efe6;margin-top:2px;white-space:normal}
+@keyframes sayin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .actflash{position:absolute;left:50%;bottom:100%;margin-bottom:2px;transform:translateX(-50%);
   padding:2px 8px;border-radius:9px;background:#d8b45c;color:#14110a;font-family:'Inter',sans-serif;
   font-size:11px;font-weight:800;letter-spacing:.06em;white-space:nowrap;z-index:6;
   animation:actpop .22s ease-out}
 .av.acted{border-color:#d8b45c!important;box-shadow:0 0 0 5px rgba(216,180,92,.35)!important}
 @keyframes actpop{from{opacity:0;transform:translateX(-50%) translateY(4px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+/* The celebration: fireworks over the whole table for a hand worth looking up from your phone
+   for. Both sit inside #wrap so they scale with everything else, and outside #stage so a redraw
+   in the middle of a betting round does not wipe them off. */
+#sky{position:absolute;left:0;top:0;width:390px;height:844px;pointer-events:none;z-index:70;display:none}
+#shout{position:absolute;left:0;top:286px;width:390px;padding:0 14px;text-align:center;pointer-events:none;z-index:71;display:none}
+#shout .big{display:inline-block;max-width:362px;font-family:'Bebas Neue',sans-serif;font-size:46px;line-height:1;
+  color:#f7e7bd;letter-spacing:.03em;text-shadow:0 2px 0 #7a5a16,0 0 22px rgba(216,180,92,.85);
+  animation:shoutin .5s cubic-bezier(.2,1.5,.4,1) both}
+#shout .who{display:block;margin-top:6px;font-family:'Inter',sans-serif;font-size:15px;font-weight:700;
+  color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.9);animation:shoutin .5s .08s cubic-bezier(.2,1.5,.4,1) both}
+@keyframes shoutin{from{opacity:0;transform:scale(.4) translateY(14px)}to{opacity:1;transform:scale(1) translateY(0)}}
 .seat .tsec{position:absolute;right:-8px;top:-6px;min-width:20px;height:20px;padding:0 4px;border-radius:10px;
   background:#d2454d;color:#fff;font-family:'Inter',sans-serif;font-size:11px;font-weight:700;
   display:flex;align-items:center;justify-content:center}
@@ -128,7 +181,6 @@ button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offse
 .tabs button.on{color:#d8b45c}
 .rolechip{height:34px;padding:0 10px;border-radius:17px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px;font-weight:600}
 .rolechip.on{border-color:#d8b45c;color:#d8b45c;background:rgba(216,180,92,.1)}
-@keyframes drin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 .small{font-size:12px;line-height:1.5}
 </style>
@@ -136,7 +188,7 @@ input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 </head>
 <body>
 <div id="safe"></div>
-<div id="wrap"><div id="stage"></div></div>
+<div id="wrap"><div id="stage"></div><canvas id="sky" width="390" height="844"></canvas><div id="shout"></div></div>
 <div id="turn"><div><div class="disp" style="font-size:30px;line-height:1.1">Turn your phone<br>upright</div>
 <div class="muted small" style="margin-top:10px;white-space:normal">The table is dealt tall, so it needs the long way up.</div></div></div>
 <script>
@@ -180,6 +232,7 @@ function connect() {
     // the phone's clock may be minutes out; keep the difference so the turn ring runs true
     if (S.v.now) S.skew = Date.now() - S.v.now;
     watchActs();            // did somebody just call or raise? flash it on their seat
+    watchSaid();            // and has anybody said anything to you?
     watchTurn();            // and has the turn moved? ring for yours, tick for theirs
     fxIngest(S.v);          // take in anything newly thrown, once, and let it fly
     if (S.screen === 'table') render();
@@ -192,6 +245,9 @@ function refresh() {
     S.me = j.me; S.tables = j.tables; S.history = j.history; S.members = j.members;
     S.formats = j.formats; S.variants = j.variants; S.storage = j.storage; S.saveError = j.saveError;
     S.tourney = j.tourney; S.seats = j.seats || S.seats;
+    S.games = j.games || S.games; S.ranking = j.ranking || S.ranking;
+    S.flags = j.flags || {}; S.toPay = j.toPay || []; S.toGet = j.toGet || []; S.flagged = j.flagged || [];
+    S.adminName = j.adminName || S.adminName;
     S.push = j.push; clearBadge();
     if (S.screen === 'signin') S.screen = 'home';
     resumeTable();
@@ -374,7 +430,15 @@ function tabBtn(id, label) {
 
 function tablesTab() {
   var h = '';
-  h += S.newTable ? newTableForm() : '<button class="btn" style="margin-top:16px" onclick="S.newTable=true;render()">Start a table</button>';
+  var mayOpen = !S.me || S.me.canOpen !== false;
+  h += S.newTable ? newTableForm()
+    : (mayOpen
+      ? '<button class="btn" style="margin-top:16px" onclick="S.newTable=true;render()">Start a table</button>'
+      : '<div class="evc" style="margin-top:16px"><div class="muted small" style="white-space:normal">'
+        + 'Any table that is up is below, and you can sit down in it. Starting one is for primary members \u2014 ask '
+        + esc(S.adminName || 'the portal admin') + ' if you should be one.</div></div>')
+    + '<button class="btn ghost" style="margin-top:8px" onclick="S.book=\'portal\';render()">The rule book</button>'
+    + '<button class="btn ghost" style="margin-top:8px" onclick="S.book=\'games\';render()">How the games go</button>';
   if (!S.tables.length) h += '<div class="evc"><div class="muted small">No tables running. Start one and send the message to the group.</div></div>';
   S.tables.forEach(function (t) { h += tableCard(t); });
   return h;
@@ -406,7 +470,10 @@ function newTableForm() {
     h += '<div class="h2">THE TABLE</div><div style="display:flex;gap:8px">'
       + miniField('n_sb', 'SMALL', S.lastSb || 100) + miniField('n_bb', 'BIG', S.lastBb || 200) + miniField('n_min', 'MIN BUY-IN', S.lastMin || 10000)
       + '</div><div style="display:flex;gap:8px;margin-top:8px">'
-      + miniField('n_players', 'START WITH', 2) + miniField('n_turn', 'SECONDS A TURN', 40) + '</div>';
+      + miniField('n_players', 'START WITH', 4) + miniField('n_turn', 'SECONDS A TURN', 40) + '</div>'
+      + '<div style="display:flex;gap:8px;margin-top:8px">'
+      + miniField('n_stay', 'MINUTES EACH', S.lastStay === undefined ? 60 : S.lastStay) + '<div style="flex:1"></div></div>'
+      + '<div class="muted small" style="margin-top:6px;white-space:normal">How long everybody is expected to stay once they sit down, so the game does not fall apart the moment somebody is ahead. Anyone who has lost the lot may always go, and you can let somebody go early. 0 for no minimum.</div>';
   }
   h += '<button class="btn" style="margin-top:14px" onclick="doOpen()">Open the table</button>'
     + '<button class="btn ghost" style="margin-top:8px" onclick="S.newTable=false;render()">Cancel</button></div>';
@@ -462,7 +529,9 @@ function doOpen() {
     body.settings = { stack: S.lastStack, levelMin: S.lastLevel };
   } else {
     S.lastSb = Number(val('n_sb')); S.lastBb = Number(val('n_bb')); S.lastMin = Number(val('n_min'));
-    body.settings = { sb: S.lastSb, bb: S.lastBb, minBuyin: S.lastMin, minPlayers: Number(val('n_players')), turnSeconds: Number(val('n_turn')) };
+    S.lastStay = Math.max(0, Math.floor(Number(val('n_stay'))) || 0);
+    body.settings = { sb: S.lastSb, bb: S.lastBb, minBuyin: S.lastMin, minPlayers: Number(val('n_players')),
+      turnSeconds: Number(val('n_turn')), minMinutes: S.lastStay };
   }
   api('table-open', body).then(function (j) {
     S.newTable = false;
@@ -471,13 +540,223 @@ function doOpen() {
   }).catch(fail);
 }
 
+// How each game is played, written out of the same specification the dealer deals by. Nobody has
+// to take this on trust or keep it up to date: if a game is ever changed, this changes with it.
+function generalBook() {
+  var h = '<div class="sheet" style="z-index:55">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+    + '<div><div class="disp" style="font-size:28px;line-height:1.05">The rule book</div>'
+    + '<div class="muted small">How a night works, whatever is being dealt</div></div>'
+    + '<button class="rolechip" onclick="S.book=false;render()">Close</button></div>';
+  var part = function (title, bits) {
+    h += '<div class="evc" style="margin-top:12px"><div class="disp" style="font-size:22px;line-height:1.1">' + title + '</div><div style="margin-top:8px">';
+    bits.forEach(function (b) {
+      h += '<div style="display:flex;gap:8px;margin-top:5px"><div class="gold" style="flex:none">&middot;</div>'
+        + '<div class="muted small" style="white-space:normal">' + b + '</div></div>';
+    });
+    h += '</div></div>';
+  };
+
+  part('Getting a game going', [
+    'A primary member can start a table, and whoever starts it runs it. Several can run at once. Everybody else plays in them - the portal admin decides who is which, and tells you if he changes yours.',
+    'Starting one gives you a message to paste into the group chat.',
+    'Before play, take a free seat from the list. The table deals itself once enough of you are sitting down with chips - nobody presses anything, and it says so a few seconds before it does.',
+    'If somebody stands up again before it deals, it stops and says why rather than going quiet.',
+    'Arrive after it has started and you ask to come in; whoever runs the table lets you in or does not.',
+    'You can watch a running game without taking a seat, and be offered one from inside the room.',
+  ]);
+
+  part('At the table', [
+    'Seven seats, first come first served.',
+    'Nothing waits on a tap that never comes: run out of time on your turn and you check if you can, fold if you cannot, and sit out until you say otherwise.',
+    'However long a table asks you to stay, your time runs from when <b>you</b> sat down, not from when the game began.',
+    'Three ways out before your time is up: you have lost the lot, whoever runs the table lets you go, or you sit in the ring paying your blinds - posted and folded, never dealt - until your time is up.',
+    'Chips bought while a hand is being played go on when that hand ends, never in the middle of it.',
+    'If somebody is all-in for less than the bets around him, the rest goes into a side pot that only the players who paid into it can win. He can win no more than he put in, matched by everybody still in the hand.',
+    'Showing your cards can be chosen at any point in a hand, but only happens once the hand is over.',
+    'A hand nobody folded is settled by the cards. A pot four times the usual, quads or a straight flush puts fireworks over the table.',
+  ]);
+
+  part('Saying something', [
+    'Nobody types at a table. There is a list of things worth saying and you tap one - back in five minutes, deal me out, one more orbit, nice hand, I need to leave early.',
+    'It lands at the bottom of the other person\u2019s screen for five seconds and then goes.',
+    'Some of them do the thing as well as say it: asking to leave early raises the real request, and buying back in, sitting out and coming back happen on the tap.',
+    'Whoever runs the table has his own list - starting in a minute, your turn, taking a break, wrapping up, please settle up.',
+  ]);
+
+  part('When the game ends', [
+    'Whoever runs the table closes it, and a hand in progress is always played out first.',
+    'He can also call the last five or ten hands, or set a time to finish, at any point during the game.',
+    'Everybody\u2019s stack is rounded off and whatever the rounding makes or loses goes onto the biggest stack, so the books tally to the chip.',
+    'The portal pairs the biggest loser with the biggest winner until everybody is square - fewer payments than everyone paying everyone.',
+    'The night is filed with the date and time. You see the games you played in, with your own account, the chips hand by hand, and your running total across every game.',
+    'A game where no hand was ever dealt leaves no record: everybody still holds what they bought in with.',
+  ]);
+
+  part('Settling up', [
+    'A debt is settled when the person owed confirms the money arrived - not when the payer says he has sent it. You can say you have paid and it is recorded, but it is your word, not a receipt.',
+    'If the money has gone and he has not marked it, chasing him is your job.',
+    'Leave one unpaid long enough and you are flagged yellow: you can still play if whoever runs the table lets you in, and it clears itself the moment the winner confirms. Nobody has to lift it.',
+    'Carry several yellows at once, or leave one much longer, and it turns red. Red keeps you out of the table altogether, playing or watching.',
+    'Only the portal admin lifts a red flag, and paying up does not lift it by itself.',
+    'If a winner cannot be reached, the portal admin can enter the receipt for him - and it is recorded as exactly that.',
+    'Chips are virtual. What you settle between yourselves, and how, is your own business.',
+  ]);
+
+  part('Where the numbers are', [
+    'This book is the same whatever is being dealt. The buy-in, the blinds, the time to act, how many it takes to start, how long you are expected to stay and the exact hours on the flags belong to a particular table.',
+    'Every table carries its own sheet with its own figures: the (i) beside it in the list, or House rules in the table menu. Those are read from the game as it is being played, so they cannot drift.',
+    'What each game deals, which of your cards play, and what beats what are in How the games go.',
+  ]);
+
+  return h + '<button class="btn ghost" style="margin-top:16px" onclick="S.book=false;render()">Back</button></div>';
+}
+
+function gameBook() {
+  var games = S.games || [];
+  var h = '<div class="sheet" style="z-index:55">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+    + '<div><div class="disp" style="font-size:28px;line-height:1.05">How the games go</div>'
+    + '<div class="muted small">Every game the portal deals, and what beats what</div></div>'
+    + '<button class="rolechip" onclick="S.book=false;render()">Close</button></div>';
+
+  games.forEach(function (g) {
+    h += '<div class="evc" style="margin-top:12px"><div class="disp" style="font-size:22px;line-height:1.1">' + esc(g.name) + '</div>';
+    var bits = [];
+    bits.push(g.hole + ' card' + (g.hole === 1 ? '' : 's') + ' to each player, face down');
+    if (g.omaha) {
+      bits.push(g.hole === 2
+        ? 'Both of your cards play, with three from the board'
+        : 'Exactly two of your cards play, with three from the board \u2014 no more, no fewer');
+      // the hand people argue about: exactly two from hand cuts both ways
+      bits.push('So one in your hand with three on the board <b>is</b> four of a kind \u2014 your card and one other, with the three from the board. A pair in your hand with two on the board is four of a kind too.');
+      bits.push('But four of a kind lying on the board is only three of a kind to you: you may take three board cards and no more, so the fourth is out of reach and two of your own have to come with it. The same board in Texas would be quads for everybody.');
+    } else {
+      bits.push('Make the best five from your two and the board, in any combination \u2014 both, one, or neither');
+    }
+    if (g.boards > 2) {
+      bits.push(g.boards + ' separate boards are dealt, each scored on its own');
+      bits.push('Every board you win is worth a point, and a board you split is worth a share of one. The most points takes the <b>whole</b> pot \u2014 so you need to be good on two of the three. Win one board while somebody else wins the other two and you get nothing.');
+      bits.push('Level on points and the pot is split equally between those who are level \u2014 three players winning a board each take a third apiece');
+      bits.push('If somebody is all-in for less, the points are counted again for the side pot among only the players who paid into it. His cards have no claim on money he did not put in, and a board he would have won goes to the best of the rest.');
+    } else if (g.boards > 1) {
+      bits.push(g.boards + ' separate boards are dealt, each scored on its own, and the pot is split between them \u2014 win one board and you take half, win both and you take the lot');
+    }
+    else bits.push('One board: three cards, then one, then one');
+    if (g.bomb) bits.push('Everybody antes before the deal and there is no betting before the flop \u2014 the hand starts there');
+    else bits.push('Betting before the flop, and after each card that follows');
+    bits.push(g.pl
+      ? 'Pot-limit: raise anything you like between the minimum and the pot \u2014 and a pot raise means your call first, then the pot as it stands after that call, so with 300 in the middle and 200 to call it comes to 700. The \u00bd pot and \u00be pot buttons work out the amounts for you.'
+      : 'No-limit: raise anything from the minimum up to every chip you have');
+    bits.push('Up to ' + Math.min(g.max, S.seats || 7) + ' players in a hand');
+    h += '<div style="margin-top:8px">';
+    bits.forEach(function (b) {
+      h += '<div style="display:flex;gap:8px;margin-top:5px"><div class="gold" style="flex:none">&middot;</div>'
+        + '<div class="muted small" style="white-space:normal">' + b + '</div></div>';
+    });
+    h += '</div></div>';
+  });
+
+  var rank = S.ranking || [];
+  if (rank.length) {
+    h += '<div class="h2" style="margin-top:16px">WHAT BEATS WHAT</div><div class="evc">'
+      + '<div class="muted small" style="white-space:normal;margin-bottom:4px">Best first. Every game here is scored the same way.</div>';
+    rank.forEach(function (r, i) {
+      h += '<div style="padding:5px 0;border-top:1px solid #1d2420;font-size:13px;font-weight:600">' + (i + 1) + '. ' + esc(r) + '</div>';
+    });
+    h += '</div><div class="muted small" style="white-space:normal;margin-top:8px">A royal flush is the ace-high straight flush - the same hand, and the best there is. Two hands of the same kind are settled by the cards in them, highest first. Still level, and the pot is split.</div>';
+  }
+  return h + '<button class="btn ghost" style="margin-top:16px" onclick="S.book=false;render()">Back</button></div>';
+}
+
+// The rules of a table, written out of the table's own settings rather than typed somewhere and
+// left to go stale. Everything here is a real number the game is being played on.
+function rulesSheet() {
+  var t = (S.tables || []).filter(function (x) { return x.code === S.rules; })[0];
+  if (!t) return '<div class="sheet"><div class="muted">That table has gone.</div>'
+    + '<button class="btn ghost" style="margin-top:14px" onclick="S.rules=null;render()">Back</button></div>';
+
+  var tourney = t.format === 'tournament';
+  var row = function (k, v) {
+    return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid #1d2420">'
+      + '<div class="muted small" style="flex:none">' + k + '</div>'
+      + '<div style="font-size:13px;text-align:right;font-weight:600">' + v + '</div></div>';
+  };
+  var note = function (txt) { return '<div class="muted small" style="white-space:normal;margin-top:6px">' + txt + '</div>'; };
+  // The portal's own figures travel with the table, so this sheet states what the server is
+  // actually enforcing tonight rather than what somebody typed in here once.
+  var H = t.house || { graceSeconds: 6, roundTo: 50, yellowHours: 48, redHours: 96, redAtDebts: 3 };
+
+  var h = '<div class="sheet" style="z-index:55">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+    + '<div><div class="disp" style="font-size:28px;line-height:1.05">House rules</div>'
+    + '<div class="muted small">' + esc(t.formatName) + (t.variantName ? ' &middot; ' + esc(t.variantName) : '') + ' &middot; table ' + esc(t.code) + '</div></div>'
+    + '<button class="rolechip" onclick="S.rules=null;render()">Close</button></div>';
+
+  h += '<div class="h2">THE MONEY</div>';
+  if (tourney) {
+    h += row('Everybody starts with', fmt(t.minBuyin) + ' chips')
+      + row('Blinds', fmt(t.blinds.sb) + ' / ' + fmt(t.blinds.bb) + ' at level 1')
+      + row('Buying more', 'Nobody does');
+    h += note('A tournament gives everyone the same chips. The blinds double as the night goes on, nobody joins late and nobody buys more. The last player holding the lot wins.');
+  } else {
+    h += row('Buy in for', t.maxBuyin >= 1e9 ? fmt(t.minBuyin) + ' or more' : fmt(t.minBuyin) + ' to ' + fmt(t.maxBuyin))
+      + row('Blinds', fmt(t.blinds.sb) + ' / ' + fmt(t.blinds.bb))
+      + row('Buying more', 'Any time');
+    h += note('Chips bought while a hand is being played go on when that hand ends, never in the middle of it. You can also ask to be bought back in automatically: run out, and ' + fmt(t.minBuyin) + ' goes on at the end of that hand. Until you have chips you are dealt out.');
+  }
+
+  h += '<div class="h2">STAYING AND LEAVING</div>';
+  h += row('Expected to stay', t.minMinutes ? t.minMinutes + ' minutes' : 'As long as you like');
+  if (t.minMinutes) {
+    h += note('Your ' + t.minMinutes + ' minutes run from when you sat down, not from when the game began, so arriving late does not mean leaving early. Three ways out before your time is up: you have lost the lot, ' + esc(t.admin) + ' lets you go, or you sit in the ring paying your blinds - posted and folded, never dealt - until your time is up and then leave with what is left. After that nobody has to ask anybody.');
+  } else {
+    h += note('Nobody has to ask to leave at this table.');
+  }
+
+  h += '<div class="h2">THE PLAY</div>';
+  h += row('Seats', t.seats + ', first come first served')
+    + row('Deals itself at', t.minPlayers + ' players')
+    + row('Time to act', t.turnSeconds + ' seconds');
+  h += note('Nobody has to press anything to begin. Once ' + t.minPlayers + ' of you are sitting down with chips the table says so and deals '
+    + (H.graceSeconds ? H.graceSeconds + ' seconds later' : 'straight away')
+    + ' - and if somebody stands up again before then it stops and says why. '
+    + esc(t.admin) + ' can deal early, or go short-handed, from the table menu. Anyone arriving after that asks to come in.');
+  if (t.lastHands) h += row('Still to play', t.lastHands + ' hand' + (t.lastHands === 1 ? '' : 's'));
+  if (t.endAt) h += row('Finishing at', clock(t.endAt));
+  h += note('Run out of time on your turn and you check if you can, fold if you cannot, and sit out until you say otherwise. Nothing ever waits on a tap that never comes.');
+  if (t.format === 'mixed') h += note('The variant comes round on its own button, travelling the other way: when the deal reaches the seat holding it, that hand is ' + esc(t.variantName) + '.');
+  if (t.format === 'roe') h += note('A full orbit of Texas, then a full orbit of ' + esc(t.variantName) + ', turn and turn about.');
+  if (t.bombAnteBB && /bomb/i.test(t.variantName || '')) h += note('In a bomb pot everybody antes ' + t.bombAnteBB + ' big blinds and the hand starts on the flop.');
+
+  h += '<div class="h2">SAYING SOMETHING</div>';
+  h += row('How', 'Tap it, do not type it');
+  h += note('There is a list of things worth saying at a table and you tap one - back in five minutes, deal me out, one more orbit, nice hand, I need to leave early. It lands at the bottom of the other person\u2019s screen for five seconds and then goes. Some of them do the thing as well as say it: asking to leave early raises the real request with ' + esc(t.admin) + ', and buying back in, sitting out and coming back happen on the tap. ' + esc(t.admin) + ' has his own list - starting in a minute, your turn, taking a break, wrapping up, please settle up.');
+
+  h += '<div class="h2">SETTLING UP</div>';
+  h += row('Stacks rounded to', fmt(H.roundTo) + ' chips');
+  h += row('Who pays who', 'Biggest loser to biggest winner');
+  h += row('Settled when', 'The winner says it arrived');
+  h += row('Yellow flag at', H.yellowHours + ' hours unpaid');
+  h += row('Red flag at', H.redHours + ' hours, or ' + H.redAtDebts + ' yellows');
+  h += note('When the game closes, everybody\u2019s stack is rounded to the nearest ' + fmt(H.roundTo) + ' and whatever the rounding makes or loses goes onto the biggest stack, so the books tally to the chip. The portal then pairs the biggest loser with the biggest winner until everybody is square, which is fewer payments than everyone paying everyone.');
+  h += note('A debt is settled when the person owed confirms the money arrived, and not before. You can say you have paid and it is recorded, but it is your word, not a receipt - if the money has gone and he has not marked it, chasing him is your job.');
+  h += note('Leave it ' + H.yellowHours + ' hours and you are flagged yellow: you can still play if ' + esc(t.admin) + ' lets you in, and the flag clears itself the moment the winner confirms - nobody has to lift it. ' + H.redAtDebts + ' yellows at once, or ' + H.redHours + ' hours on any one of them, turns it red. Red keeps you out of the table altogether, playing or watching, only the portal admin lifts it, and paying up does not lift it by itself.');
+
+  h += '<div class="h2">WHO RUNS IT</div>';
+  h += row('This table', esc(t.admin));
+  h += note(esc(t.admin) + ' lets latecomers in, decides who may leave early, can stop the game for a break, call the last few hands or set a time to finish, and closes it at the end. Closing works out everyone\u2019s account and says who pays who. The portal admin can do all of that too.');
+
+  return h + '<button class="btn ghost" style="margin-top:16px" onclick="S.rules=null;render()">Back</button></div>';
+}
+
 function tableCard(t) {
   var h = '<div class="evc' + (t.iAmIn ? '" style="border-color:#d8b45c' : '') + '">';
   h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">'
     + '<div style="min-width:0"><div class="disp" style="font-size:24px;line-height:1.05">' + esc(t.formatName) + '</div>'
     + '<div class="muted small">' + (t.variantName ? esc(t.variantName) + ' &middot; ' : '')
     + (t.format === 'tournament' ? 'level ' + t.level + ' &middot; ' : '') + 'blinds ' + fmt(t.blinds.sb) + '/' + fmt(t.blinds.bb) + '</div></div>'
-    + '<div class="pill2' + (t.status === 'playing' ? ' g' : '') + '">' + (t.status === 'playing' ? 'PLAYING' : 'WAITING') + '</div></div>';
+    + '<div class="pill2' + (t.paused ? '' : t.status === 'playing' ? ' g' : '') + '">' + (t.paused ? 'PAUSED' : t.status === 'playing' ? 'PLAYING' : 'WAITING') + '</div></div>';
   h += '<div class="muted small" style="margin-top:8px;white-space:normal">Run by <b>' + esc(t.admin) + '</b> &middot; '
     + t.players + ' of ' + t.seats + ' seats' + (t.free ? ', ' + t.free + ' free' : ', full') + '</div>';
   if (t.names.length) h += '<div class="muted small" style="margin-top:2px;white-space:normal">' + t.names.map(esc).join(', ') + '</div>';
@@ -500,6 +779,7 @@ function tableCard(t) {
   if (!t.iAmIn && t.status !== 'ended') {
     h += '<button class="btn ghost" style="width:86px;height:46px;font-size:13px" onclick="openTable(\'' + t.code + '\')">Watch</button>';
   }
+  h += '<button class="btn ghost" style="width:52px;height:46px;font-size:17px" title="House rules" onclick="S.rules=\'' + t.code + '\';render()">&#9432;</button>';
   if (t.iRunIt) h += '<button class="btn ghost" style="width:52px;height:46px;font-size:18px" title="Invite" onclick="getInvite(\'' + t.code + '\')">&#9993;</button>';
   h += '</div></div>';
   return h;
@@ -536,7 +816,9 @@ function inviteSheet() {
   return '<div class="sheet" style="z-index:50"><div class="disp" style="font-size:28px">' + (t.who ? 'Send this to ' + esc(t.who) : 'Send it to the group') + '</div>'
     + '<div class="muted small" style="margin:8px 0 12px;white-space:normal">' + (t.who
       ? 'This tells them where the portal is, how to keep it on their home screen, and how to sign in.'
-      : 'Paste this into your WhatsApp group. Anyone on the list can open the link and take a seat.') + '</div>'
+      : t.group
+        ? 'Paste this into your WhatsApp group. It names whoever you have set to primary right now, so set them before you send it.'
+        : 'Paste this into your WhatsApp group. Anyone on the list can open the link and take a seat.') + '</div>'
     + '<div class="evc" style="white-space:pre-wrap;font-size:13px;line-height:1.5">' + esc(t.text) + '</div>'
     + '<a class="btn" style="margin-top:14px;display:flex;align-items:center;justify-content:center;text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(t.text) + '">Open WhatsApp</a>'
     + '<button class="btn ghost" style="margin-top:8px" onclick="copyText(S.invite.text)">Copy the message</button>'
@@ -548,10 +830,232 @@ function copyText(t) {
 }
 
 // ---------------------------------------------------------------- history
+// What a game can be found by: what was played, who played it, and when. The date is matched
+// against the way it is printed on the card, so looking for "24 Nov" finds what you can see.
+function historyMatch(g, q) {
+  if (!q) return true;
+  q = q.toLowerCase();
+  var hay = [g.formatName, g.variantName, g.title, when(g.startedAt), g.winner || '']
+    .concat((g.people || []).map(function (p) { return p.name; })).join(' ').toLowerCase();
+  return hay.indexOf(q) >= 0;
+}
+function historyInRange(g) {
+  var at = g.startedAt || g.at;
+  if (S.hFrom) { var f = new Date(S.hFrom); f.setHours(0, 0, 0, 0); if (at < f.getTime()) return false; }
+  if (S.hTo) { var t = new Date(S.hTo); t.setHours(23, 59, 59, 999); if (at > t.getTime()) return false; }
+  return true;
+}
+function historyShown() {
+  return S.history.filter(function (g) { return historyMatch(g, S.hq || '') && historyInRange(g); });
+}
+// The whole screen is never redrawn while somebody is typing in it - that is what keeps the
+// caret where they put it - so searching replaces only the list of games underneath. A full
+// render() here would either be refused by that guard, leaving a stale list, or would take the
+// search box away mid-word.
+function historyPaint() {
+  var el = document.getElementById('hlist');
+  if (el) el.innerHTML = historyList();
+  var n = document.getElementById('hcount');
+  if (n) n.innerHTML = historyCount();
+  var b = document.getElementById('hbooks');
+  if (b) b.innerHTML = theBooks();
+}
+function historySearch() { S.hq = val('cp_hq'); historyPaint(); }
+function historyDates() {
+  var f = document.getElementById('cp_from'), t = document.getElementById('cp_to');
+  S.hFrom = f ? f.value : ''; S.hTo = t ? t.value : '';
+  historyPaint();
+}
+function historyClear() { S.hq = ''; S.hFrom = ''; S.hTo = ''; render(); }
+// Only the id travels through the markup. Putting the game's name in there instead looked
+// tidier right up until "Texas Hold'em" - the apostrophe comes back out of the attribute as a
+// quote and ends the string early, taking the rest of the handler with it.
+function removeGame(id) {
+  var g = S.history.filter(function (x) { return x.id === id; })[0];
+  if (!g) return;
+  S.ask = {
+    title: 'Remove this game?',
+    detail: g.formatName + ' on ' + when(g.startedAt)
+      + ' goes from the records for everybody who played in it, along with its accounts and replays. This cannot be undone.',
+    yes: 'Yes, remove it',
+    go: "doRemoveGame('" + id + "')",
+  };
+  render();
+}
+function doRemoveGame(id) {
+  S.ask = null;
+  api('history-remove', { id: id }).then(function () { toast('Removed'); return refresh(); }).catch(fail);
+}
+
+function historyCount() {
+  var all = S.history.length, shown = historyShown().length;
+  if (!(S.hq || S.hFrom || S.hTo)) return '';
+  return '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">'
+    + '<div class="muted small">' + shown + ' of ' + all + ' game' + (all === 1 ? '' : 's') + '</div>'
+    + '<button class="rolechip" onclick="historyClear()">Clear</button></div>';
+}
 function historyTab() {
   if (!S.history.length) return '<div class="evc" style="margin-top:16px"><div class="muted small">No games on record yet. They appear here when a game ends.</div></div>';
-  var h = '<div class="h2">PAST GAMES</div>';
-  S.history.forEach(function (g) {
+  var h = '<div class="h2">PAST GAMES</div>'
+    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">'
+    + (S.me && S.me.isAdmin ? 'Every game in the portal. Search by game, by a player\u2019s name, or by the dates.'
+                            : 'The games you played in. Search by game, by who was at the table, or by the dates.')
+    + '</div>';
+  h += '<div class="evc"><div style="display:flex;gap:8px">'
+    + '<input id="cp_hq" placeholder="Texas, Omaha, a name&hellip;" value="' + esc(S.hq || '') + '" oninput="historySearch()" '
+    + 'style="flex:1;min-width:0;height:44px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit"></div>'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">'
+    + '<input id="cp_from" type="date" value="' + esc(S.hFrom || '') + '" onchange="historyDates()" style="flex:1;min-width:0;height:40px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:13px;padding:0 10px;font-family:inherit">'
+    + '<span class="muted small">to</span>'
+    + '<input id="cp_to" type="date" value="' + esc(S.hTo || '') + '" onchange="historyDates()" style="flex:1;min-width:0;height:40px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:13px;padding:0 10px;font-family:inherit"></div>'
+    + '<div id="hcount">' + historyCount() + '</div>'
+    + '</div>';
+  return h + '<div id="hbooks">' + theBooks() + '</div><div id="hlist">' + historyList() + '</div>';
+}
+
+// Everything the portal knows about who is up and who is down, over whatever the search is
+// currently showing - so the same date box that finds October's games also answers how October
+// went. The portal admin keeps the books, so this is his; a member's own standing is on his Me
+// screen, where it is about him rather than about everybody.
+function bookRows(games) {
+  var by = {};
+  games.forEach(function (g) {
+    (g.people || []).forEach(function (pl) {
+      var k = pl.memberId || pl.name;
+      var r = by[k] = by[k] || { id: k, name: pl.name, games: 0, inn: 0, out: 0, net: 0, best: 0, worst: 0, owed: 0, owes: 0 };
+      r.games += 1; r.inn += pl.invested || 0; r.out += pl.final || 0; r.net += pl.net || 0;
+      if ((pl.net || 0) > r.best) r.best = pl.net;
+      if ((pl.net || 0) < r.worst) r.worst = pl.net;
+    });
+    (g.transfers || []).forEach(function (x) {
+      if (x.confirmedAt) return;                       // settled; it is history, not an open book
+      if (by[x.from]) by[x.from].owes += x.amount;
+      if (by[x.to]) by[x.to].owed += x.amount;
+    });
+  });
+  return Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.net - a.net; });
+}
+
+function theBooks() {
+  if (!(S.me && S.me.isAdmin)) return '';
+  var games = historyShown();
+  if (!games.length) return '';
+  var rows = bookRows(games);
+  var hands = games.reduce(function (a, g) { return a + (g.hands || 0); }, 0);
+  var inn = rows.reduce(function (a, r) { return a + r.inn; }, 0);
+  var open = rows.reduce(function (a, r) { return a + r.owes; }, 0);
+  var h = '<div class="h2">THE BOOKS</div>'
+    + '<div class="evc"><div class="muted small" style="white-space:normal;margin-bottom:8px">'
+    + games.length + ' game' + (games.length === 1 ? '' : 's') + ' &middot; ' + fmt(hands) + ' hands dealt &middot; '
+    + fmt(inn) + ' chips bought in'
+    + (open ? ' &middot; <span style="color:#f0c674">' + fmt(open) + ' still to settle</span>' : ' &middot; all settled')
+    + '</div>';
+  rows.forEach(function (r) {
+    h += '<div class="row" style="min-height:44px"><div style="flex:1;min-width:0">'
+      + '<div style="font-size:14px;font-weight:600">' + esc(r.name)
+      + (r.owes ? ' <span class="pill2" style="background:#3a2f12;color:#f0c674">owes ' + fmt(r.owes) + '</span>' : '')
+      + '</div>'
+      + '<div class="muted small">' + r.games + ' game' + (r.games === 1 ? '' : 's')
+      + ' &middot; in ' + fmt(r.inn) + ' &middot; out ' + fmt(r.out)
+      + (r.games > 1 ? ' &middot; best ' + (r.best > 0 ? '+' : '') + fmt(r.best) + ', worst ' + fmt(r.worst) : '')
+      + '</div></div>'
+      + '<div style="text-align:right"><div style="font-weight:700;color:'
+      + (r.net > 0 ? '#7ddba0' : r.net < 0 ? '#f08a8f' : '#a3aba5') + '">'
+      + (r.net > 0 ? '+' : '') + fmt(r.net) + '</div>'
+      + (r.owed ? '<div class="muted small">due ' + fmt(r.owed) + '</div>' : '')
+      + '</div></div>';
+  });
+  // The one figure that proves the rest: chips are neither made nor destroyed, so every game's
+  // wins and losses have to cancel. If this is not zero something upstream is wrong, and seeing
+  // it beats trusting it.
+  var sum = rows.reduce(function (a, r) { return a + r.net; }, 0);
+  h += '<div class="muted small" style="margin-top:8px;border-top:1px solid #2a312d;padding-top:8px">'
+    + (sum === 0 ? 'Wins and losses cancel exactly, as they must.'
+                 : '<span style="color:#f08a8f">These games are out by ' + fmt(sum) + ' - tell Claude.</span>')
+    + '</div></div>';
+  return h;
+}
+
+// ---- drawing ----
+// Hand-rolled SVG rather than a charting library: two shapes are all this needs, and a library
+// would be larger than the rest of the app put together for the privilege.
+function lineChart(series, opts) {
+  opts = opts || {};
+  var W = 350, H = opts.height || 140, L = 34, B = 18, T = 8;
+  var pts = [];
+  series.forEach(function (s) { s.points.forEach(function (p) { pts.push(p); }); });
+  if (pts.length < 2) return '<div class="muted small">Not enough played to draw a line yet.</div>';
+  var xs = pts.map(function (p) { return p[0]; }), ys = pts.map(function (p) { return p[1]; });
+  var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+  var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+  if (opts.zero) { y0 = Math.min(0, y0); y1 = Math.max(0, y1); }
+  if (y1 === y0) { y1 = y0 + 1; }
+  var pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad;
+  var X = function (v) { return L + (x1 === x0 ? 0 : (v - x0) / (x1 - x0)) * (W - L - 6); };
+  var Y = function (v) { return T + (1 - (v - y0) / (y1 - y0)) * (H - T - B); };
+
+  var g = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" style="display:block">';
+  // a line at nothing, so up and down are obvious at a glance
+  if (y0 < 0 && y1 > 0) {
+    g += '<line x1="' + L + '" y1="' + Y(0).toFixed(1) + '" x2="' + (W - 6) + '" y2="' + Y(0).toFixed(1) + '" stroke="#3a443e" stroke-dasharray="3 3"/>';
+  }
+  g += '<text x="2" y="' + (Y(y1) + 9).toFixed(1) + '" fill="#a3aba5" font-size="9">' + kfmt(Math.round(y1)) + '</text>';
+  g += '<text x="2" y="' + Y(y0).toFixed(1) + '" fill="#a3aba5" font-size="9">' + kfmt(Math.round(y0)) + '</text>';
+  series.forEach(function (sr) {
+    var d = sr.points.map(function (pt, i) { return (i ? 'L' : 'M') + X(pt[0]).toFixed(1) + ' ' + Y(pt[1]).toFixed(1); }).join(' ');
+    g += '<path d="' + d + '" fill="none" stroke="' + sr.colour + '" stroke-width="' + (sr.thick ? 2.4 : 1.2) + '"'
+      + (sr.thick ? '' : ' opacity=".5"') + ' stroke-linejoin="round" stroke-linecap="round"/>';
+    if (sr.thick) {
+      var last = sr.points[sr.points.length - 1];
+      g += '<circle cx="' + X(last[0]).toFixed(1) + '" cy="' + Y(last[1]).toFixed(1) + '" r="3" fill="' + sr.colour + '"/>';
+    }
+  });
+  g += '</svg>';
+  if (opts.xlabel) g += '<div class="muted small" style="text-align:center;margin-top:2px">' + opts.xlabel + '</div>';
+  return g;
+}
+
+// how a night went for everybody, with your own line picked out
+function gameCurve(g) {
+  var curve = g.curve || {};
+  var meRow = (g.people || []).filter(function (p) { return p.memberId === (S.me && S.me.id); })[0];
+  var series = [];
+  (g.people || []).forEach(function (p) {
+    var line = curve[p.id];
+    if (!line || line.length < 2) return;
+    series.push({ points: line, colour: meRow && p.id === meRow.id ? '#d8b45c' : '#6f8a7b', thick: !!(meRow && p.id === meRow.id) });
+  });
+  if (!series.length) return '';
+  return '<div class="h2" style="margin:12px 0 4px">CHIPS THROUGH THE NIGHT</div>'
+    + lineChart(series, { xlabel: 'hand 1 to ' + g.hands + (meRow ? ' &middot; your line in gold' : '') });
+}
+
+// what the portal has done to you over the months
+function overallCurve() {
+  var meId = S.me && S.me.id;
+  var games = (S.history || []).slice().filter(function (g) {
+    return (g.people || []).some(function (p) { return p.memberId === meId; });
+  }).sort(function (a, b) { return a.at - b.at; });
+  if (games.length < 2) return '';
+  var run = 0, pts = [];
+  games.forEach(function (g, i) {
+    var mine = g.people.filter(function (p) { return p.memberId === meId; })[0];
+    run += mine ? mine.net : 0;
+    pts.push([i + 1, run]);
+  });
+  return '<div class="h2">WHERE YOU STAND</div>'
+    + '<div class="evc">' + lineChart([{ points: pts, colour: run >= 0 ? '#7ddba0' : '#f08a8f', thick: true }], { zero: true, xlabel: games.length + ' games &middot; running total' })
+    + '<div style="display:flex;justify-content:space-between;margin-top:8px">'
+    + '<div class="muted small">' + games.length + ' games played</div>'
+    + '<div style="font-weight:700;color:' + (run > 0 ? '#7ddba0' : run < 0 ? '#f08a8f' : '#a3aba5') + '">'
+    + (run > 0 ? '+' : '') + fmt(run) + '</div></div></div>';
+}
+
+function historyList() {
+  var shown = historyShown();
+  if (!shown.length) return '<div class="evc"><div class="muted small">Nothing matches that. Try a different word, or clear the dates.</div></div>';
+  var h = '';
+  shown.forEach(function (g) {
     var open = S.open[g.id];
     h += '<div class="evc"><div style="cursor:pointer" onclick="S.open[\'' + g.id + '\']=!S.open[\'' + g.id + '\'];render()">'
       + '<div style="display:flex;justify-content:space-between;gap:8px"><div style="min-width:0">'
@@ -563,31 +1067,276 @@ function historyTab() {
       h += '<div style="margin-top:10px">';
       g.people.slice().sort(function (a, b) { return b.net - a.net; }).forEach(function (p) {
         h += '<div class="row" style="margin-top:6px;min-height:40px"><div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">' + esc(p.name) + '</div>'
-          + '<div class="muted small">in ' + fmt(p.invested) + ' &middot; out ' + fmt(p.final) + '</div></div>'
-          + '<div style="font-weight:700;color:' + (p.net > 0 ? '#7ddba0' : p.net < 0 ? '#f08a8f' : '#a3aba5') + '">' + (p.net > 0 ? '+' : '') + fmt(p.net) + '</div></div>';
+          + '<div class="muted small">in ' + fmt(p.invested) + ' &middot; out ' + fmt(p.final)
+          + (p.rawFinal !== undefined && p.rawFinal !== p.final ? ' <span class="muted">(' + fmt(p.rawFinal) + ' rounded)</span>' : '')
+          + '</div></div>'
+          + '<div style="font-weight:700;color:' + (p.net > 0 ? '#7ddba0' : p.net < 0 ? '#f08a8f' : '#a3aba5') + '">' + (p.net > 0 ? '+' : '') + fmt(p.net) + '</div>'
+          + (S.me && S.me.isAdmin
+            ? '<a class="rolechip" style="text-decoration:none;display:flex;align-items:center" target="_blank" rel="noopener" href="/api/statement?token='
+              + encodeURIComponent(S.token) + '&id=' + g.id + '&who=' + encodeURIComponent(p.id) + '">PDF</a>'
+            : '')
+          + '</div>';
       });
       h += '</div>';
+      // your own account for the night, before the rest of the table's
+      var mine = g.people.filter(function (p) { return p.memberId === (S.me && S.me.id); })[0];
+      if (mine) {
+        h += '<div class="h2" style="margin:12px 0 4px">YOUR ACCOUNT</div>'
+          + '<div class="evc" style="margin:0">'
+          + acctRow('Bought in for', fmt(mine.invested))
+          + acctRow('Finished with', fmt(mine.final) + (mine.rawFinal !== undefined && mine.rawFinal !== mine.final ? ' <span class="muted small">(' + fmt(mine.rawFinal) + ' rounded)</span>' : ''))
+          + acctRow(mine.net >= 0 ? 'You are up' : 'You are down',
+              '<span style="color:' + (mine.net > 0 ? '#7ddba0' : mine.net < 0 ? '#f08a8f' : '#a3aba5') + '">' + (mine.net > 0 ? '+' : '') + fmt(mine.net) + '</span>')
+          + '</div>';
+      }
+      h += gameCurve(g);
+
       h += '<div class="h2" style="margin:12px 0 4px">WHO PAYS WHO</div>';
       if (g.transfers && g.transfers.length) {
-        g.transfers.forEach(function (x) {
-          h += '<div style="display:flex;justify-content:space-between;font-size:13px;margin-top:5px"><div>' + esc(x.fromName) + ' pays ' + esc(x.toName) + '</div><div class="gold" style="font-weight:700">' + fmt(x.amount) + '</div></div>';
-        });
+        g.transfers.forEach(function (x) { h += payRow(g, x); });
       } else {
         // it does happen: a night called off before a hand finished, or everyone exactly even
         h += '<div class="muted small" style="white-space:normal">Nobody owes anybody. Everyone finished on what they put in.</div>';
       }
       h += '<a class="btn ghost" style="margin-top:12px;display:flex;align-items:center;justify-content:center;text-decoration:none" target="_blank" rel="noopener" href="/api/statement?token=' + encodeURIComponent(S.token) + '&id=' + g.id + '">Statement (PDF)</a>';
       if (g.replays) h += '<button class="btn ghost" style="margin-top:8px" onclick="loadReplay(\'' + g.id + '\')">Best ' + g.replays + ' hands</button>';
+      // Trial games and games that went wrong should not sit in the records for ever. Only the
+      // portal admin can throw one away, and it goes for everybody who played in it.
+      if (S.me && S.me.isAdmin) {
+        h += '<button class="btn ghost" style="margin-top:8px;border-color:#6b2a2e;color:#d2454d" onclick="removeGame(\'' + g.id + '\')">Remove from the records</button>';
+      }
     }
     h += '</div>';
   });
   return h;
 }
+function acctRow(k, v) {
+  return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid #1d2420">'
+    + '<div class="muted small">' + k + '</div><div style="font-size:14px;font-weight:700">' + v + '</div></div>';
+}
+
+// One debt, and what can be done about it. The person paying can say he has paid; only the person
+// owed can say it arrived. The portal admin can enter that for somebody unreachable, and it says
+// so on the record afterwards rather than looking like he quietly settled it himself.
+function payRow(g, x) {
+  var meId = S.me && S.me.id;
+  var isPayer = x.from === meId, isPayee = x.to === meId, boss = S.me && S.me.isAdmin;
+  var done = !!x.confirmedAt;
+  var h = '<div class="evc" style="margin:6px 0 0;padding:10px">'
+    + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
+    + '<div style="font-size:13px">' + esc(x.fromName) + ' pays ' + esc(x.toName) + '</div>'
+    + '<div class="gold" style="font-weight:700">' + fmt(x.amount) + '</div></div>';
+  if (done) {
+    h += '<div class="muted small" style="margin-top:4px">Settled ' + when(x.confirmedAt)
+      + (x.onBehalf ? ' &middot; entered by ' + esc(x.confirmedByName || 'the portal admin') + ' on ' + esc(x.toName) + '\u2019s behalf' : '')
+      + '</div>';
+    return h + '</div>';
+  }
+  var hrs = Math.floor((Date.now() - g.at) / 3600e3);
+  h += '<div class="muted small" style="margin-top:4px">'
+    + (x.paidAt ? esc(x.fromName) + ' says this was paid ' + when(x.paidAt) + ' &mdash; waiting on ' + esc(x.toName) + ' to confirm'
+                : 'Not settled' + (hrs >= 1 ? ' &middot; ' + hrs + ' hours since the statement' : ''))
+    + '</div>';
+  if (isPayee || (boss && !isPayer)) {
+    h += '<button class="btn" style="margin-top:8px;height:40px;font-size:14px" onclick="confirmPay(\'' + g.id + '\',\'' + x.from + '\',\'' + x.to + '\')">'
+      + (isPayee ? 'I have been paid' : 'Enter receipt for ' + esc(x.toName)) + '</button>';
+  }
+  if (isPayer && !x.paidAt) {
+    h += '<button class="btn ghost" style="margin-top:8px;height:40px;font-size:14px" onclick="markPaid(\'' + g.id + '\',\'' + x.from + '\',\'' + x.to + '\')">I have paid this</button>';
+  }
+  if (isPayer && x.paidAt) {
+    h += '<div class="muted small" style="margin-top:6px;white-space:normal">You have marked it paid. It only clears when '
+      + esc(x.toName) + ' confirms &mdash; give him a nudge if it is holding you up.</div>';
+  }
+  return h + '</div>';
+}
+function markPaid(id, from, to) {
+  api('pay-mark', { id: id, from: from, to: to })
+    .then(function () { toast('Marked as paid'); return refresh(); }).catch(fail);
+}
+function confirmPay(id, from, to) {
+  api('pay-confirm', { id: id, from: from, to: to })
+    .then(function (j) { toast(j.onBehalf ? 'Entered on their behalf' : 'Settled'); return refresh(); }).catch(fail);
+}
+
 function loadReplay(id) { api('replay', { id: id }).then(function (j) { S.replay = { id: id, rounds: j.rounds, i: 0 }; render(); }).catch(fail); }
 
 // ---------------------------------------------------------------- me / portal
+// What is outstanding, put where it cannot be missed. A debt nobody is reminded of is a debt that
+// turns into a flag, and a flag at this table stops somebody playing - so being told plainly is
+// the kindest part of the whole arrangement.
+function owedBox() {
+  var f = (S.flags || {}), pay = S.toPay || [], get = S.toGet || [];
+  var h = '';
+  if (f.red) {
+    h += '<div class="evc" style="margin-top:16px;border-color:#d2454d">'
+      + '<div style="font-weight:700;color:#f08a8f">You have a red flag</div>'
+      + '<div class="muted small" style="white-space:normal;margin-top:3px">' + esc(f.redWhy || '') + '. '
+      + 'You cannot sit at a table until the portal admin lifts it. Settle up first, then ask him.</div></div>';
+  } else if (f.yellow) {
+    h += '<div class="evc" style="margin-top:16px;border-color:#d8b45c">'
+      + '<div class="gold" style="font-weight:700">' + f.yellow + ' unsettled ' + (f.yellow === 1 ? 'debt' : 'debts') + '</div>'
+      + '<div class="muted small" style="white-space:normal;margin-top:3px">You can still play, but whoever runs the table has to let you in. '
+      + 'It clears the moment each one is confirmed received.</div></div>';
+  }
+  if (pay.length) {
+    h += '<div class="h2">YOU OWE</div>';
+    pay.forEach(function (d) {
+      h += '<div class="evc" style="margin:6px 0 0;padding:10px"><div style="display:flex;justify-content:space-between;gap:8px">'
+        + '<div style="font-size:14px">' + esc(d.toName) + '</div>'
+        + '<div class="gold" style="font-weight:700">' + fmt(d.amount) + '</div></div>'
+        + '<div class="muted small" style="margin-top:3px">' + esc(d.title || 'a game') + ' &middot; ' + when(d.when)
+        + (d.paidAt ? ' &middot; you marked it paid' : '') + '</div>'
+        + (d.paidAt ? '<div class="muted small" style="margin-top:6px;white-space:normal">Waiting on ' + esc(d.toName)
+            + ' to confirm. If it is holding you up, give him a nudge &mdash; only he can clear it.</div>'
+          : '<button class="btn ghost" style="margin-top:8px;height:38px;font-size:13px" onclick="markPaid(\'' + d.gameId + '\',\'' + d.from + '\',\'' + d.to + '\')">I have paid this</button>')
+        + '</div>';
+    });
+  }
+  if (get.length) {
+    h += '<div class="h2">COMING TO YOU</div>';
+    get.forEach(function (d) {
+      h += '<div class="evc" style="margin:6px 0 0;padding:10px"><div style="display:flex;justify-content:space-between;gap:8px">'
+        + '<div style="font-size:14px">' + esc(d.fromName) + '</div>'
+        + '<div class="gold" style="font-weight:700">' + fmt(d.amount) + '</div></div>'
+        + '<div class="muted small" style="margin-top:3px">' + esc(d.title || 'a game') + ' &middot; ' + when(d.when)
+        + (d.paidAt ? ' &middot; he says he has paid' : '') + '</div>'
+        + '<button class="btn" style="margin-top:8px;height:38px;font-size:13px" onclick="confirmPay(\'' + d.gameId + '\',\'' + d.from + '\',\'' + d.to + '\')">I have been paid</button>'
+        + '</div>';
+    });
+  }
+  // and the portal admin sees who is barred, and can lift it
+  if (S.me && S.me.isAdmin && (S.flagged || []).length) {
+    h += '<div class="h2">RED FLAGS</div>';
+    S.flagged.forEach(function (x) {
+      h += '<div class="evc" style="margin:6px 0 0;padding:10px;border-color:#6b2a2e">'
+        + '<div style="font-size:14px;font-weight:600">' + esc(x.name) + '</div>'
+        + '<div class="muted small" style="margin-top:3px">' + esc(x.why) + ' &middot; since ' + when(x.at) + '</div>'
+        + '<button class="btn ghost" style="margin-top:8px;height:38px;font-size:13px" onclick="clearFlag(\'' + x.id + '\')">Lift the red flag</button></div>';
+    });
+  }
+  return h;
+}
+function clearFlag(id) {
+  api('flag-clear', { memberId: id }).then(function () { toast('Lifted'); return refresh(); }).catch(fail);
+}
+
+// ---- the books, across every game ----
+// The portal admin is the only person who sees all of this. A member's own history answers how
+// his nights have gone; this answers how the group is going, which is a different question and
+// the one somebody settling arguments actually needs.
+function allStats() {
+  var per = {}, hands = 0, moved = 0, first = 0;
+  (S.history || []).forEach(function (g) {
+    hands += g.hands || 0;
+    var at = g.startedAt || g.at;
+    if (at && (!first || at < first)) first = at;
+    (g.transfers || []).forEach(function (x) { moved += x.amount; });
+    (g.people || []).forEach(function (pl) {
+      var k = pl.memberId || pl.name;
+      var r = per[k] = per[k] || { id: pl.memberId, name: pl.name, games: 0, invested: 0, final: 0, net: 0, best: null, worst: null };
+      r.games += 1; r.invested += pl.invested || 0; r.final += pl.final || 0; r.net += pl.net || 0;
+      if (r.best === null || pl.net > r.best) r.best = pl.net;
+      if (r.worst === null || pl.net < r.worst) r.worst = pl.net;
+    });
+  });
+  var rows = [];
+  for (var k in per) if (per.hasOwnProperty(k)) rows.push(per[k]);
+  rows.sort(function (a, b) { return b.net - a.net; });
+  return { rows: rows, hands: hands, moved: moved, first: first, games: (S.history || []).length };
+}
+
+// Every debt in the portal that nobody has confirmed, oldest first - which is the order they
+// turn yellow and then red in, so it is the order worth chasing them in.
+function debtsOutstanding() {
+  var out = [];
+  (S.history || []).forEach(function (g) {
+    (g.transfers || []).forEach(function (x) {
+      if (!x.confirmedAt) out.push({ g: g, x: x });
+    });
+  });
+  return out.sort(function (a, b) { return (a.g.at || 0) - (b.g.at || 0); });
+}
+
+function flagPill(m) {
+  if (!m || !m.flags) return '';
+  if (m.flags.red) return '<span class="pill2" style="background:#3a1418;color:#f08a8f;border-color:#6b2a2e">RED</span>';
+  if (m.flags.yellow) return '<span class="pill2" style="background:#332a12;color:#d8b45c;border-color:#5c4a1e">YELLOW</span>';
+  return '';
+}
+
+function statsBlock() {
+  var st = allStats();
+  var h = '<div class="h2">THE PORTAL SO FAR</div>';
+  if (!st.games) {
+    return h + '<div class="evc"><div class="muted small" style="white-space:normal">No games on record yet. '
+      + 'Everything here fills in as soon as a game ends.</div></div>';
+  }
+  h += '<div class="evc">'
+    + acctRow('Games on record', fmt(st.games))
+    + acctRow('Hands dealt', fmt(st.hands))
+    + acctRow('Chips changing hands', fmt(st.moved))
+    + (st.first ? acctRow('First game', when(st.first)) : '')
+    + '</div>';
+
+  h += '<div class="h2">WHERE EVERYBODY STANDS</div>'
+    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">Every game in the portal, '
+    + 'added up. Tap a night under History for the detail.</div>';
+  var byId = {};
+  (S.members || []).forEach(function (m) { byId[m.id] = m; });
+  st.rows.forEach(function (r) {
+    var m = byId[r.id];
+    h += '<div class="row" style="margin-top:6px;min-height:46px"><div style="flex:1;min-width:0">'
+      + '<div style="font-size:14px;font-weight:600">' + esc(r.name) + ' ' + flagPill(m) + '</div>'
+      + '<div class="muted small">' + r.games + (r.games === 1 ? ' game' : ' games')
+      + ' &middot; in ' + fmt(r.invested) + ' &middot; out ' + fmt(r.final)
+      + (r.best !== null ? ' &middot; best ' + (r.best > 0 ? '+' : '') + fmt(r.best) : '')
+      + (r.worst !== null ? ' &middot; worst ' + fmt(r.worst) : '')
+      + '</div></div>'
+      + '<div style="font-weight:700;color:' + (r.net > 0 ? '#7ddba0' : r.net < 0 ? '#f08a8f' : '#a3aba5') + '">'
+      + (r.net > 0 ? '+' : '') + fmt(r.net) + '</div></div>';
+  });
+
+  var owed = debtsOutstanding();
+  h += '<div class="h2">MONEY STILL OUT</div>';
+  if (!owed.length) {
+    h += '<div class="evc"><div class="muted small">Everything is settled. Nobody owes anybody.</div></div>';
+  } else {
+    h += '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">Oldest first, which is the '
+      + 'order they go yellow and then red in. You can enter a receipt for somebody unreachable from the '
+      + 'game itself, under History.</div>';
+    owed.forEach(function (d) {
+      var hrs = Math.floor((Date.now() - d.g.at) / 3600e3);
+      h += '<div class="row" style="margin-top:6px;min-height:44px"><div style="flex:1;min-width:0">'
+        + '<div style="font-size:14px">' + esc(d.x.fromName) + ' &rarr; ' + esc(d.x.toName) + '</div>'
+        + '<div class="muted small">' + esc(d.g.formatName) + ' &middot; ' + when(d.g.at)
+        + ' &middot; ' + hrs + (hrs === 1 ? ' hour' : ' hours') + ' ago'
+        + (d.x.paidAt ? ' &middot; ' + esc(d.x.fromName) + ' says it is paid' : '') + '</div></div>'
+        + '<div class="gold" style="font-weight:700">' + fmt(d.x.amount) + '</div></div>';
+    });
+  }
+
+  // Lifting a red flag is the one thing only he can do, so it belongs where he can see who has one
+  // rather than buried in a game from four days ago.
+  var red = (S.members || []).filter(function (m) { return m.flags && m.flags.red; });
+  if (red.length) {
+    h += '<div class="h2">RED FLAGS</div>'
+      + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">A red flag stays until you '
+      + 'lift it, even once the money has arrived. Nobody red-flagged can sit at a table or watch one.</div>';
+    red.forEach(function (m) {
+      h += '<div class="row" style="margin-top:6px;min-height:44px"><div style="flex:1;min-width:0">'
+        + '<div style="font-size:14px;font-weight:600">' + esc(m.name) + '</div>'
+        + '<div class="muted small" style="white-space:normal">' + esc(m.flags.redWhy || '')
+        + (m.flags.redAt ? ' &middot; since ' + when(m.flags.redAt) : '') + '</div></div>'
+        + '<button class="rolechip on" onclick="clearFlag(\'' + m.id + '\')">Lift it</button></div>';
+    });
+  }
+  return h;
+}
+
 function meTab() {
-  var h = '<div class="evc" style="margin-top:16px"><div class="muted small">SIGNED IN AS</div>'
+  var h = owedBox() + overallCurve();
+  h += '<div class="evc" style="margin-top:16px"><div class="muted small">SIGNED IN AS</div>'
     + '<div class="disp" style="font-size:26px">' + esc(S.me.name) + '</div>'
     + '<div class="muted small">' + esc(S.me.phone) + '</div>'
     + (S.me.nick ? '<div class="muted small" style="margin-top:2px">goes by <b>' + esc(S.me.nick) + '</b> at the table</div>' : '')
@@ -631,17 +1380,24 @@ function meTab() {
 
   if (!S.me.isAdmin) return h;
 
+  h += statsBlock();
+
   h += '<div class="h2">MEMBERS (' + S.members.length + ')</div>'
-    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">Add somebody with their name and mobile number. They sign in with that number and set their own passcode the first time.</div>'
+    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">Add somebody with their name and mobile number. They sign in with that number and set their own passcode the first time. '
+    + 'Everybody plays; only a <span class="gold">primary</span> member can start a table. New members come in as secondary \u2014 tap the chip beside a name to change it.</div>'
     + '<div class="evc"><div style="display:flex;gap:8px">'
     + '<input id="am_name" placeholder="Name" maxlength="18" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit">'
     + '<input id="am_phone" placeholder="Mobile" inputmode="tel" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit"></div>'
     + '<button class="btn" style="margin-top:8px;height:46px" onclick="addMember()">Add member</button></div>';
+  h += '<button class="btn ghost" style="margin-top:8px" onclick="portalInvite()">Share the portal with the group</button>';
   S.members.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (m) {
     h += '<div class="row" style="margin-top:8px"><div style="flex:1;min-width:0">'
       + '<div style="font-size:14px;font-weight:600">' + esc(m.name) + (m.isAdmin ? ' <span class="gold" style="font-size:10px">ADMIN</span>' : '') + '</div>'
-      + '<div class="muted small">' + esc(m.phone) + ' &middot; ' + (m.hasPin ? 'signed in before' : 'has not signed in yet') + '</div></div>'
-      + (m.isAdmin ? '' : '<button class="rolechip on" onclick="memberLink(\'' + m.id + '\')">Send link</button>'
+      + '<div class="muted small">' + esc(m.phone) + ' &middot; ' + (m.hasPin ? 'signed in before' : 'has not signed in yet')
+      + ' &middot; ' + (m.canOpen ? '<span class="gold">can start a game</span>' : 'plays only') + '</div></div>'
+      + (m.isAdmin ? '' : '<button class="rolechip' + (m.tier === 'primary' ? ' on' : '') + '" onclick="setTier(\'' + m.id + '\',\'' + (m.tier === 'primary' ? 'secondary' : 'primary') + '\')">'
+        + (m.tier === 'primary' ? 'Primary' : 'Secondary') + '</button>'
+        + '<button class="rolechip on" onclick="memberLink(\'' + m.id + '\')">Send link</button>'
         + '<button class="rolechip" onclick="resetMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Reset passcode</button>'
         + '<button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="removeMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Remove</button>') + '</div>';
   });
@@ -672,6 +1428,15 @@ function memberLink(id) {
   S.invite = { code: '', text: text, who: m.name };
   render();
 }
+// The message that opens the portal to the group. The portal writes it, names and all, so the
+// people who can start a game are whoever is set to primary right now.
+function portalInvite() {
+  api('portal-invite', {}).then(function (j) {
+    S.invite = { code: '', text: j.text, group: true };
+    render();
+  }).catch(fail);
+}
+function setTier(id, tier) { api('member-tier', { memberId: id, tier: tier }).then(refresh).catch(fail); }
 function removeMember(id, name) { if (!confirm('Remove ' + name + '?')) return; api('member-remove', { memberId: id }).then(refresh).catch(fail); }
 function resetMember(id, name) { if (!confirm('Forget ' + name + "'s passcode? They set a new one next time they sign in.")) return; api('member-reset', { memberId: id }).then(function () { toast('Done'); refresh(); }).catch(fail); }
 // ---------------------------------------------------------------- the table
@@ -821,11 +1586,35 @@ function fxIngest(v) {
     S.fxMax = f.id;
     var age = (v.now || Date.now()) - f.at;
     if (age > 4000) return;
+    // a hand worth a noise: fireworks over the table rather than a bubble over one seat
+    if (f.kind === 'sky') {
+      if (S.screen === 'table') celebrateSky(f.level || 1, f.title || '', f.who || '');
+      return;
+    }
     S.fxLive.push({ id: f.id, k: f.k, icon: f.icon, hit: f.hit, from: f.from, to: f.to, t0: Date.now() - Math.max(0, age) });
     if (f.to && S.v && S.v.me && f.to === S.v.me.id && navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
   });
   if (S.fxLive.length) { clearTimeout(S.fxTimer); S.fxTimer = setTimeout(function () { if (S.screen === 'table') render(); }, 3400); }
 }
+// The pot sits in the middle of the felt; chips fly from whoever paid them to there.
+var POT_AT = { x: 195, y: 176 };
+function chipHtml(A) {
+  var live = S.chips || [];
+  if (!live.length) return '';
+  var now = Date.now(), h = '';
+  live.forEach(function (c) {
+    var age = now - c.t0;
+    if (age > 1200) return;
+    var from = fxPos(A, c.id);
+    if (!from) return;
+    h += '<div class="chipfly" style="left:' + from.x + 'px;top:' + from.y + 'px;'
+      + '--dx:' + Math.round(POT_AT.x - from.x) + 'px;--dy:' + Math.round(POT_AT.y - from.y) + 'px;'
+      + 'animation:chipin 1.1s cubic-bezier(.3,.1,.3,1) both;animation-delay:-' + age + 'ms">'
+      + '<i></i><b>' + kfmt(c.amount) + '</b></div>';
+  });
+  return h;
+}
+
 function fxHtml(A) {
   var live = S.fxLive || [];
   if (!live.length) return '';
@@ -892,7 +1681,7 @@ function plaque(A, st, x, y, w, rel, hand, RES, n, up) {
     + line2 + '<div class="sstack">' + fmt(st.stack) + '</div>'
     + (n >= 7 && (rel === 1 || rel === n - 1) ? '' : behindTag(st))
     + (st.bet > 0 ? '<div class="betchip"><i></i>' + fmt(st.bet) + '</div>' : '')
-    + (cards ? '<div class="showc">' + cards.map(function (c) { return card(c, 'sm'); }).join('') + '</div>' : '')
+    + (cards ? '<div class="showc">' + cards.map(function (c) { return card(c, 'md'); }).join('') + '</div>' : '')
     + '</div>';
 }
 
@@ -929,13 +1718,21 @@ function tableScreen() {
 
   var h = '<div class="abs" style="inset:0;background:#0a0c0b">';
   // the strip across the top
-  h += '<div class="abs" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 12px;display:flex;align-items:center;gap:10px">'
+  h += '<div class="abs tbar" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 12px;display:flex;align-items:center;gap:10px">'
     + '<button class="rolechip" style="height:28px;flex:none" onclick="leaveTable()">&#8592;</button>'
     + '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM ' + esc(v.code) + '</div>'
     + '<div class="muted" style="margin-top:2px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-    + (v.handNo ? 'Hand ' + v.handNo : 'Not started') + ' &middot; ' + esc(v.formatName) + '</div></div>'
+    + (v.handNo ? 'Hand ' + v.handNo : 'Not started') + ' &middot; ' + esc(v.formatName)
+    + (v.lastHands ? ' &middot; <span class="gold">' + v.lastHands + ' to go</span>'
+       : v.endAt ? ' &middot; <span class="gold">till ' + clock(v.endAt) + '</span>' : '')
+    + '</div></div>'
     + '<div style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #2a312d;background:#141917;font-size:13px;font-weight:600;display:flex;align-items:center;flex:none">'
     + fmt(v.blinds.sb) + ' / ' + fmt(v.blinds.bb) + '</div>'
+    // Sound is the one setting you reach for mid-hand - the room got loud, or somebody is asleep
+    // next door - so it sits on the table itself rather than behind the menu.
+    + '<button class="rolechip" style="height:30px;flex:none;width:34px;padding:0;font-size:15px'
+    + (LOUD ? '' : ';opacity:.45') + '" title="' + (LOUD ? 'Sound on' : 'Sound off') + '" onclick="toggleSound()">'
+    + (LOUD ? '&#128266;' : '&#128263;') + '</button>'
     + '<button class="rolechip" style="height:30px;flex:none" onclick="S.menu=!S.menu;render()">&#9776;</button></div>';
 
   // the felt, and your own half below it
@@ -980,7 +1777,14 @@ function tableScreen() {
     status = Object.keys(RES.won || {}).map(function (id) {
       var st = A.seats.filter(function (x) { return x && x.id === id; })[0];
       var r = RES.reveal && RES.reveal[id];
-      return (st ? esc(st.name) : 'Somebody') + ' wins ' + fmt(RES.won[id]) + (r && r.handName ? ' &middot; ' + esc(r.handName) : '');
+      // on three flops the pot is won on points, so say what the boards came to - otherwise
+      // the one line everybody reads does not explain why the chips went where they did
+      var pts = RES.points && RES.points[id];
+      var tally = RES.points
+        ? ' &middot; ' + (pts === Math.round(pts) ? pts : pts.toFixed(1).replace(/\.0$/, ''))
+          + ' of ' + RES.boardsPlayed + ' boards'
+        : (r && r.handName ? ' &middot; ' + esc(r.handName) : '');
+      return (st ? esc(st.name) : 'Somebody') + ' wins ' + fmt(RES.won[id]) + tally;
     }).join('<br>');
   } else if (hand && !hand.finished) {
     status = (hand.runit ? 'RUN IT? VOTE' : (hand.street || '').toUpperCase())
@@ -1034,6 +1838,8 @@ function tableScreen() {
 
   h += actionPanel(v, A, RES);
   h += fxTray(A);
+  h += sayBar();
+  h += chipHtml(A);
   h += fxHtml(A);
   if (S.menu) h += tableMenu(v);
   return h + '</div>';
@@ -1048,6 +1854,16 @@ function actionPanel(v, A, RES) {
 
 function controls(v, A, RES) {
   if (v.status === 'ended') return '<div style="padding-top:18px"><button class="btn" onclick="leaveTable()">Back to the tables</button></div>';
+  // Paused: the clock is off and no hand is coming until whoever runs it says so. Say that plainly
+  // rather than leaving people looking at buttons that will not work.
+  if (v.paused) {
+    return '<div style="padding-top:14px"><div class="evc" style="margin:0;border-color:#d8b45c">'
+      + '<div style="font-weight:600;font-size:15px" class="gold">The game is paused</div>'
+      + '<div class="muted small" style="white-space:normal;margin-top:3px">Nobody is on the clock and no hand will be dealt. '
+      + esc(v.admin) + ' can start it again.</div></div>'
+      + (v.iRunIt ? '<button class="btn" style="margin-top:10px" onclick="pauseGame(false)">Start the game again</button>' : '')
+      + '</div>';
+  }
   // Somebody who walked in to look rather than to play. Without this he falls through to the
   // betting controls and is told to wait for the others, which he is not doing at all - he has no
   // seat and no chips in this game.
@@ -1067,7 +1883,7 @@ function controls(v, A, RES) {
   }
   if (v.status !== 'playing' || !v.hand) {
     var w = '<div style="padding-top:18px">';
-    if (v.iRunIt) w += '<button class="btn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">' + (v.waiting ? esc(v.waiting) : 'Start the game') + '</button>';
+    if (v.iRunIt) w += '<button class="btn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">' + (v.waiting ? esc(v.waiting) : 'Start now') + '</button>';
     else w += '<div class="evc" style="margin:0"><div class="muted small">' + (v.waiting ? esc(v.waiting) : 'Waiting for ' + esc(v.admin) + ' to start') + '</div></div>';
     return w + '</div>';
   }
@@ -1098,11 +1914,20 @@ function controls(v, A, RES) {
       + '<span class="disp" id="rv" style="font-size:26px">' + fmt(cur) + '</span></div>' : '') + '</div>';
   if (L.canRaise) {
     h += '<input type="range" style="margin-top:8px" min="' + min + '" max="' + max + '" step="1" value="' + cur + '" oninput="onRange(this.value)">';
+    // A pot-sized raise is not the pot. You call first, and then raise by the pot as it stands
+    // after that call - so with 300 in the middle and 200 to call, a pot raise is to 700, not 300.
+    // Taking the raw pot figure put every one of these buttons below the minimum raise, where they
+    // all collapsed onto the same number and the sizing did nothing at all.
+    var potTo = function (f) {
+      var after = L.pot + L.toCall;
+      return Math.min(max, Math.max(min, Math.round(L.myBet + L.toCall + f * after)));
+    };
     h += '<div style="display:flex;gap:6px;margin-top:8px">'
-      + quick('½ pot', Math.min(max, Math.max(min, Math.round(L.pot / 2))))
-      + quick('¾ pot', Math.min(max, Math.max(min, Math.round(L.pot * 0.75))))
-      + quick('Pot', Math.min(max, Math.max(min, L.pot)))
-      + quick('All in', max) + '</div>';
+      + quick('½ pot', potTo(0.5))
+      + quick('¾ pot', potTo(0.75))
+      + quick('Pot', potTo(1))
+      // in pot-limit the pot IS the ceiling, so an "all in" button would be the same button twice
+      + (L.potLimit ? '' : quick('All in', max)) + '</div>';
   }
   h += '<div style="display:flex;gap:8px;margin-top:10px">'
     + '<button class="act" style="flex:1;background:#2a1e20" onclick="act(\'fold\')">Fold</button>'
@@ -1172,6 +1997,7 @@ function tableMenu(v) {
     + '<button class="rolechip" onclick="S.menu=false;render()">Close</button></div>'
     + '<div class="muted small">Table ' + esc(v.code) + ' &middot; run by ' + esc(v.admin) + (v.variantName ? ' &middot; ' + esc(v.variantName) : '') + '</div>';
 
+  h += '<button class="btn ghost" style="margin-top:12px" onclick="S.menu=false;S.rules=\'' + v.code + '\';render()">House rules</button>';
   if (v.nextVariant) h += '<div class="pass" style="margin-top:12px"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.14em">NEXT HAND</div><div style="font-size:15px;margin-top:2px">' + esc(v.nextVariant) + '</div></div>';
 
   // what a player can do
@@ -1180,10 +2006,54 @@ function tableMenu(v) {
     if (v.format !== 'tournament') {
       h += '<div style="display:flex;gap:8px"><input id="bi_amt" inputmode="numeric" placeholder="' + fmt(v.settings.minBuyin) + '" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit">'
         + '<button class="rolechip on" style="height:46px" onclick="doBuyin()">Buy in</button></div>';
+      if (v.me.topUp) {
+        h += '<div class="muted small" style="margin-top:6px;white-space:normal"><span class="gold">' + fmt(v.me.topUp)
+          + '</span> goes on at the end of this hand.</div>';
+      } else if (v.me.inPlay) {
+        h += '<div class="muted small" style="margin-top:6px;white-space:normal">You are in a hand, so chips you buy now go on when it ends.</div>';
+      }
+      // topping up without having to ask each time
+      h += '<div style="margin-top:10px">'
+        + (v.me.auto
+          ? '<div class="evc" style="margin:0;border-color:#d8b45c"><div class="gold" style="font-weight:600">Buying back in for ' + fmt(v.settings.minBuyin) + '</div>'
+            + '<div class="muted small" style="white-space:normal;margin-top:3px">If your chips run out it goes on at the end of that hand, so you are dealt into the next one.</div></div>'
+            + '<button class="btn ghost" style="margin-top:8px" onclick="autoBuyin(false)">Stop buying me back in</button>'
+          : '<button class="btn ghost" onclick="autoBuyin(true)">Buy me back in if I run out</button>'
+            + '<div class="muted small" style="margin-top:6px;white-space:normal">The buy-in this game was opened with: ' + fmt(v.settings.minBuyin) + '. Until you have chips you are dealt out.</div>')
+        + '</div>';
     }
     h += '<button class="btn ghost" style="margin-top:8px" onclick="setAway(' + (v.me.away ? 'false' : 'true') + ')">' + (v.me.away ? 'Sit back in' : 'Sit out of the next hand') + '</button>';
-    if (!v.iRunIt) h += '<button class="btn ghost" style="margin-top:8px" onclick="askLeave()">Ask to leave early</button>';
+    if (!v.iRunIt) {
+      // what leaving actually costs you, before you tap it
+      if (v.me.forfeit) {
+        h += '<div class="evc" style="margin:10px 0 0;border-color:#6b2a2e"><div style="font-weight:600;color:#f08a8f">Paying your blinds out</div>'
+          + '<div class="muted small" style="white-space:normal;margin-top:3px">You are not being dealt in. Your blinds go in without you until '
+          + clock(v.me.freeAt) + ', and then you leave with what is left.</div></div>';
+      } else if (v.me.canLeave) {
+        h += '<button class="btn ghost" style="margin-top:8px" onclick="askLeave()">'
+          + (v.me.stack <= 0 ? 'Leave the table' : 'Leave the table') + '</button>'
+          + '<div class="muted small" style="margin-top:6px;white-space:normal">'
+          + (v.me.stack <= 0 ? 'You have no chips left, so you are free to go.' : 'You have stayed the time, so you may go whenever you like.')
+          + '</div>';
+      } else if (v.me.asked) {
+        h += '<div class="muted small" style="margin-top:8px;white-space:normal">You have asked ' + esc(v.admin) + ' if you can go early. Waiting on him.</div>';
+      } else {
+        h += '<button class="btn ghost" style="margin-top:8px" onclick="askLeave()">Ask to leave early</button>'
+          + '<div class="muted small" style="margin-top:6px;white-space:normal">Everybody said they would stay until '
+          + clock(v.me.freeAt) + '. Ask and ' + esc(v.admin) + ' decides; if he says no, your blinds keep going in without you until then.</div>';
+      }
+    }
   }
+
+  h += '<div class="h2">THE TABLE</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap">';
+  FELTS.forEach(function (f) {
+    h += '<button class="rolechip' + ((S.felt || '') === f.id ? ' on' : '') + '" style="display:flex;align-items:center;gap:6px"'
+      + ' onclick="setFelt(\'' + f.id + '\')">'
+      + '<span style="width:12px;height:12px;border-radius:7px;background:' + f.dot + ';border:1px solid rgba(255,255,255,.25);display:inline-block"></span>'
+      + f.name + '</button>';
+  });
+  h += '</div><div class="muted small" style="margin-top:6px;white-space:normal">Your own choice, on your own phone. Nobody else at the table sees it.</div>';
 
   h += '<div class="h2">SOUND</div>'
     + '<button class="btn ghost" onclick="toggleSound()">' + (LOUD ? 'Sound is on &mdash; turn it off' : 'Sound is off &mdash; turn it on') + '</button>'
@@ -1208,7 +2078,40 @@ function tableMenu(v) {
     }
     if (!v.requests.length && !v.leaveAsks.length) h += '<div class="muted small">Nothing waiting on you.</div>';
     h += '<button class="btn ghost" style="margin-top:10px" onclick="getInvite(\'' + v.code + '\')">Invite message for the group</button>';
-    h += '<button class="btn ghost" style="margin-top:8px;border-color:#6b2a2e;color:#d2454d" onclick="endGame()">End the game</button>';
+    h += '<button class="btn" style="margin-top:8px" onclick="pauseGame(' + (v.paused ? 'false' : 'true') + ')">'
+      + (v.paused ? 'Start the game again' : 'Pause the game') + '</button>';
+    h += '<div class="muted small" style="margin-top:6px;white-space:normal">'
+      + (v.paused ? 'Nobody is on the clock and no hand will be dealt until you start it again.'
+                  : 'Stops the clock and holds the next hand, so everyone can take a break. Nobody gets folded for being slow while it is paused.')
+      + '</div>';
+    h += '<div class="h2">WRAPPING UP</div>';
+    if (v.lastHands) {
+      h += '<div class="evc" style="margin:0;border-color:#d8b45c"><div class="gold" style="font-weight:600">'
+        + v.lastHands + ' more hand' + (v.lastHands === 1 ? '' : 's') + ' to go</div>'
+        + '<div class="muted small" style="white-space:normal;margin-top:3px">The game closes itself and works out the accounts when they are done.</div></div>'
+        + '<button class="btn ghost" style="margin-top:8px" onclick="lastHands(0)">Carry on playing instead</button>';
+    } else {
+      h += '<div class="muted small" style="white-space:normal">Tell the table how many hands are left, so everybody knows where they stand before the night ends.</div>'
+        + '<div style="display:flex;gap:8px;margin-top:8px">'
+        + '<button class="rolechip" style="flex:1;height:42px" onclick="lastHands(5)">Last 5 hands</button>'
+        + '<button class="rolechip" style="flex:1;height:42px" onclick="lastHands(10)">Last 10 hands</button></div>';
+    }
+    // or a time to finish, which does the same thing when it comes round
+    if (v.endAt) {
+      h += '<div class="evc" style="margin:10px 0 0;border-color:#d8b45c"><div class="gold" style="font-weight:600">Finishing at ' + clock(v.endAt) + '</div>'
+        + '<div class="muted small" style="white-space:normal;margin-top:3px">The hand being played then is played out before the game closes.</div></div>'
+        + '<button class="btn ghost" style="margin-top:8px" onclick="setEndAt(0)">No finishing time</button>';
+    } else {
+      h += '<div class="muted small" style="margin-top:10px;white-space:normal">Or say when the game finishes.</div>'
+        + '<div style="display:flex;gap:8px;margin-top:8px">'
+        + '<input id="nt_end" type="time" style="flex:1;min-width:0;height:44px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 10px;font-family:inherit">'
+        + '<button class="rolechip on" style="height:44px" onclick="setEndAt()">Set</button></div>'
+        + '<div style="display:flex;gap:8px;margin-top:8px">'
+        + '<button class="rolechip" style="flex:1;height:38px;font-size:12px" onclick="setEndAt(Date.now()+30*60000)">+30 min</button>'
+        + '<button class="rolechip" style="flex:1;height:38px;font-size:12px" onclick="setEndAt(Date.now()+60*60000)">+1 hour</button>'
+        + '<button class="rolechip" style="flex:1;height:38px;font-size:12px" onclick="setEndAt(Date.now()+120*60000)">+2 hours</button></div>';
+    }
+    h += '<button class="btn ghost" style="margin-top:10px;border-color:#6b2a2e;color:#d2454d" onclick="endGame()">End the game</button>';
     h += '<div class="muted small" style="margin-top:6px;white-space:normal">Ending works out everyone’s account, says who pays who, and puts it in History.</div>';
   }
 
@@ -1218,19 +2121,95 @@ function tableMenu(v) {
       h += '<div class="row" style="margin-top:6px"><div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">' + esc(nt.name) + '</div><div class="muted small">' + esc(nt.text) + '</div></div><div class="muted small">' + clock(nt.at) + '</div></div>';
     });
   }
-  h += '<div class="h2">SAY SOMETHING</div><div style="display:flex;gap:8px">'
-    + '<input id="nt_text" maxlength="140" placeholder="Back in five minutes" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit">'
-    + '<button class="rolechip" style="height:46px" onclick="sendNote()">Send</button></div>';
+  h += '<div class="h2">SAY SOMETHING</div>';
+  var list = (v.iRunIt ? ADMIN_SAYINGS.concat(SAYINGS) : SAYINGS);
+  h += '<div style="display:flex;flex-direction:column;gap:6px">';
+  list.forEach(function (sg) {
+    h += '<button class="btn ghost" style="height:40px;font-size:13px;text-align:left;padding:0 12px"'
+      + ' onclick="saySomething(\'' + sg.id + '\')">' + esc(sg.text) + (sg.acts ? ' <span class="gold">&bull;</span>' : '') + '</button>';
+  });
+  h += '</div><div class="muted small" style="margin-top:6px;white-space:normal">The ones marked <span class="gold">&bull;</span> do the thing as well as say it.</div>';
 
   h += '<div class="h2">WHAT HAPPENED</div><div class="muted small" style="line-height:1.7">'
     + v.log.slice().reverse().slice(0, 25).map(function (l) { return clock(l.at) + ' &middot; ' + esc(l.text); }).join('<br>') + '</div>';
   return h + '</div>';
 }
-function doBuyin() { blurField(); var a = Number(val('bi_amt')) || S.v.settings.minBuyin; api('buyin', { code: S.code, amount: a }).then(function () { toast('Bought in for ' + fmt(a)); }).catch(fail); }
-function askLeave() { api('leave-ask', { code: S.code }).then(function () { toast('Asked. ' + S.v.admin + ' will decide.'); }).catch(fail); }
+function doBuyin() {
+  blurField();
+  var a = Number(val('bi_amt')) || S.v.settings.minBuyin;
+  api('buyin', { code: S.code, amount: a })
+    .then(function (j) { toast(j.waiting ? fmt(a) + ' goes on at the end of this hand' : 'Bought in for ' + fmt(a)); return refresh(); })
+    .catch(fail);
+}
+function askLeave() {
+  api('leave-ask', { code: S.code })
+    .then(function (j) { toast(j.leaving ? 'You are out at the end of this hand' : 'Asked. ' + S.v.admin + ' will decide.'); return refresh(); })
+    .catch(fail);
+}
 function decideLeave(pid, ok) { api('leave-decide', { code: S.code, playerId: pid, ok: ok }).then(function () { toast(ok ? 'They may go' : 'Asked to stay'); }).catch(fail); }
-function sendNote() { blurField(); api('note', { code: S.code, text: val('nt_text') }).then(function () { var el = document.getElementById('nt_text'); if (el) el.value = ''; toast('Sent'); }).catch(fail); }
-function endGame() { if (!confirm('End the game and work out the accounts?')) return; api('table-end', { code: S.code }).then(function () { S.menu = false; toast('Game ended'); refresh(); }).catch(fail); }
+function lastHands(n) {
+  api('table-last', { code: S.code, hands: n })
+    .then(function (j) { S.menu = false; toast(j.lastHands ? 'Last ' + j.lastHands + ' hands' : 'Carrying on'); render(); })
+    .catch(fail);
+}
+// A time typed as 1:15 on a poker night nearly always means tomorrow morning, so a time that has
+// already gone today is taken as the small hours rather than refused.
+function setEndAt(at) {
+  if (at === undefined) {
+    var el = document.getElementById('nt_end');
+    var v = el && el.value;
+    if (!v) { toast('Pick a time first'); return; }
+    var bits = v.split(':');
+    var d = new Date();
+    d.setHours(Number(bits[0]), Number(bits[1]), 0, 0);
+    if (d.getTime() < Date.now() + 30000) d.setDate(d.getDate() + 1);
+    at = d.getTime();
+  }
+  api('table-endat', { code: S.code, at: at })
+    .then(function (j) { S.menu = false; toast(j.endAt ? 'Finishing at ' + clock(j.endAt) : 'No finishing time'); render(); })
+    .catch(fail);
+}
+function autoBuyin(on) {
+  api('auto-buyin', { code: S.code, on: on })
+    .then(function (j) { toast(j.auto ? 'Buying you back in for ' + fmt(j.amount) : 'Not buying back in'); return refresh(); })
+    .catch(fail);
+}
+function pauseGame(on) {
+  api('table-pause', { code: S.code, on: on })
+    .then(function (j) { S.menu = false; toast(j.paused ? 'Paused' : 'Away we go'); render(); })
+    .catch(fail);
+}
+// Closing a game cannot be undone, so it asks first - and says what will actually happen, which
+// depends on whether anybody played. The browser's own confirm() box did ask, but it looks nothing
+// like the portal, and on a phone it is small enough to tap past without reading.
+function endGame() {
+  var v = S.v || {};
+  S.ask = {
+    title: 'Close this game?',
+    detail: !v.handNo
+      ? 'No hand was dealt, so there is nothing to settle and nothing goes into History. Everyone keeps what they bought in with.'
+      : (v.hand && !v.hand.finished && !v.paused)
+        ? 'Hand ' + v.handNo + ' is still being played, so it will be played out first and the game closes when it ends. Nobody is cut off mid-hand. The accounts are then worked out and it goes into History.'
+        : 'Hand ' + v.handNo + ' is as far as you got. Everyone\u2019s account is worked out, the portal says who pays who, and it goes into History. This cannot be undone.',
+    yes: 'Yes, close it',
+    go: 'doEndGame()',
+  };
+  S.menu = false;
+  render();
+}
+function doEndGame() {
+  S.ask = null;
+  api('table-end', { code: S.code })
+    .then(function (j) { toast(j.afterHand ? 'Closing when this hand ends' : 'Game closed'); refresh(); })
+    .catch(fail);
+}
+function askSheet() {
+  var a = S.ask;
+  return '<div class="sheet" style="z-index:60"><div class="disp" style="font-size:26px">' + esc(a.title) + '</div>'
+    + '<div class="muted small" style="margin-top:8px;white-space:normal">' + esc(a.detail) + '</div>'
+    + '<button class="btn" style="margin-top:16px;background:#d2454d;color:#fff" onclick="' + a.go + '">' + esc(a.yes) + '</button>'
+    + '<button class="btn ghost" style="margin-top:8px" onclick="S.ask=null;render()">Cancel</button></div>';
+}
 
 
 // ---------------------------------------------------------------- draw
@@ -1238,6 +2217,9 @@ function endGame() { if (!confirm('End the game and work out the accounts?')) re
 // case whatever you had scrolled to is still what you want to be looking at.
 function screenKey() {
   if (!S.token || !S.me) return 'signin';
+  if (S.ask) return 'ask';
+  if (S.book) return 'book';
+  if (S.rules) return 'rules:' + S.rules;
   if (S.replay) return 'replay:' + S.replay.i;
   if (S.invite) return 'invite';
   if (S.screen === 'table') return 'table:' + S.code + (S.menu ? ':menu' : '');
@@ -1253,6 +2235,10 @@ function render() {
     if (document.getElementById(keep.id)) return;
   }
   var html = !S.token || !S.me ? signInScreen()
+    : S.ask ? askSheet()
+    : S.book === 'portal' ? generalBook()
+    : S.book ? gameBook()
+    : S.rules ? rulesSheet()
     : S.replay ? replaySheet()
     : S.invite ? inviteSheet()
     : S.screen === 'table' ? tableScreen()
@@ -1266,6 +2252,7 @@ function render() {
   var key = screenKey();
   var was = [].map.call(stage.querySelectorAll('.sheet'), function (el) { return el.scrollTop; });
   stage.innerHTML = html;
+  applyFelt();
   if (key === render.key) {
     var panes = stage.querySelectorAll('.sheet');
     if (panes.length === was.length) for (var i = 0; i < panes.length; i++) if (was[i]) panes[i].scrollTop = was[i];
@@ -1309,6 +2296,108 @@ window.addEventListener('resize', fit);
 window.addEventListener('orientationchange', function () { setTimeout(fit, 120); });
 
 // ---------------------------------------------------------------- go
+// ---- the celebration ----
+// A hand worth looking up from your phone for gets the sky. Particles on a canvas rather than a
+// pile of DOM nodes: a few hundred specks at sixty frames a second would bring a phone to its
+// knees as elements, and the canvas sits outside the part of the page that redraws every time
+// somebody acts, so a bet landing mid-burst does not wipe it away.
+var SKY = { on: false, parts: [], until: 0, raf: 0 };
+var SKY_COLOURS = ['#f7d774', '#ff8f6b', '#8fd9ff', '#c7a6ff', '#9bf0b0', '#ffffff'];
+
+function burst(x, y, n, power) {
+  var colour = SKY_COLOURS[Math.floor(Math.random() * SKY_COLOURS.length)];
+  for (var i = 0; i < n; i++) {
+    var a = Math.random() * Math.PI * 2, sp = (0.35 + Math.random()) * power;
+    SKY.parts.push({
+      x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: 900 + Math.random() * 700, age: 0,
+      c: Math.random() < 0.18 ? '#ffffff' : colour, r: 1.3 + Math.random() * 1.9,
+    });
+  }
+}
+
+function skyFrame(last) {
+  var cv = document.getElementById('sky');
+  if (!cv) { SKY.on = false; return; }
+  var g = cv.getContext('2d'), now = Date.now(), dt = Math.min(48, now - last);
+  g.clearRect(0, 0, 390, 844);
+  var alive = [];
+  for (var i = 0; i < SKY.parts.length; i++) {
+    var p = SKY.parts[i];
+    p.age += dt;
+    if (p.age >= p.life) continue;
+    p.x += p.vx * dt * 0.06;
+    p.y += p.vy * dt * 0.06;
+    p.vy += dt * 0.0022;                    // gravity, so they arc and fall like real ones
+    p.vx *= 0.995; p.vy *= 0.995;
+    var fade = 1 - p.age / p.life;
+    g.globalAlpha = fade;
+    g.fillStyle = p.c;
+    g.beginPath(); g.arc(p.x, p.y, p.r * fade + 0.4, 0, 6.3); g.fill();
+    alive.push(p);
+  }
+  g.globalAlpha = 1;
+  SKY.parts = alive;
+  if (!alive.length && now > SKY.until) {
+    cv.style.display = 'none';
+    var sh = document.getElementById('shout');
+    if (sh) { sh.style.display = 'none'; sh.innerHTML = ''; }
+    SKY.on = false;
+    return;
+  }
+  SKY.raf = requestAnimationFrame(function () { skyFrame(now); });
+}
+
+// how big a moment it is: 1 a good pot, 2 a monster
+function celebrateSky(level, title, who) {
+  var cv = document.getElementById('sky');
+  if (!cv) return;
+  cv.style.display = 'block';
+  var sh = document.getElementById('shout');
+  if (sh && title) {
+    // FOUR OF A KIND is more than twice as wide as QUADS and the banner has 362px to live in, so
+    // the lettering is cut to fit rather than running off both edges of the phone.
+    var size = title.length > 13 ? 30 : title.length > 10 ? 36 : title.length > 7 ? 42 : 46;
+    sh.innerHTML = '<span class="big" style="font-size:' + size + 'px">' + esc(title) + '</span>'
+      + (who ? '<span class="who">' + esc(who) + '</span>' : '');
+    sh.style.display = 'block';
+  }
+  var shots = level > 1 ? 5 : 3;
+  for (var i = 0; i < shots; i++) {
+    (function (k) {
+      setTimeout(function () {
+        if (!SKY.on) return;
+        burst(60 + Math.random() * 270, 120 + Math.random() * 260, level > 1 ? 70 : 46, level > 1 ? 2.3 : 1.8);
+        sfx('bang');
+      }, k * (level > 1 ? 280 : 340));
+    }(i));
+  }
+  SKY.until = Date.now() + shots * 340 + 900;
+  if (!SKY.on) { SKY.on = true; skyFrame(Date.now()); }
+}
+
+// ---- how the table is dressed ----
+// One person's choice, kept on their own phone: two people at the same table can be looking at
+// different cloth and neither is wrong. It is set on the stage rather than written into the table
+// so a redraw cannot lose it.
+var FELTS = [
+  { id: '', name: 'Emerald', dot: '#1a6a4d' },
+  { id: 'midnight', name: 'Midnight', dot: '#24507f' },
+  { id: 'claret', name: 'Claret', dot: '#7a2634' },
+];
+try { S.felt = localStorage.getItem('sb-felt') || ''; } catch (e) { S.felt = ''; }
+function applyFelt() {
+  var st = document.getElementById('stage');
+  if (!st) return;
+  if (S.felt) st.setAttribute('data-felt', S.felt); else st.removeAttribute('data-felt');
+}
+function setFelt(id) {
+  S.felt = id || '';
+  try { localStorage.setItem('sb-felt', S.felt); } catch (e) {}
+  applyFelt();
+  render();
+}
+
 // ---- sound ----
 // Made on the phone rather than fetched: a few short tones weigh nothing, load instantly and
 // cannot fail halfway. A phone will not make a sound until the person has touched the screen, so
@@ -1341,6 +2430,7 @@ function sfx(kind) {
   else if (kind === 'pass') tone(430, 0.07, 0.07, 'triangle');                             // it has moved on to somebody else
   else if (kind === 'chip') tone(1150, 0.05, 0.07, 'square');                              // chips going in
   else if (kind === 'over') { tone(660, 0.13, 0.15); tone(520, 0.20, 0.12, 'sine', 0.11); }
+  else if (kind === 'bang') { tone(150, 0.26, 0.20, 'triangle'); tone(90, 0.34, 0.16, 'sine', 0.02); }
 }
 function toggleSound() {
   LOUD = !LOUD;
@@ -1364,6 +2454,79 @@ function watchTurn() {
   sfx(S.v.me && id === S.v.me.id ? 'mine' : 'pass');
 }
 
+// ---- what people say to each other ----
+// A short list, no typing. Sending one is a tap, and what arrives sits across the bottom of the
+// table for a few seconds and then goes. Anything older lives in the menu for whoever wants it.
+var SAYINGS = [
+  { id: 'five', text: 'Back in five minutes' },
+  { id: 'deal', text: 'Deal me out a hand or two' },
+  { id: 'backin', text: "I'm back - deal me in" },
+  { id: 'slow', text: 'My connection is poor' },
+  { id: 'oneorbit', text: 'One more orbit and I am done' },
+  { id: 'nice', text: 'Nice hand' },
+  { id: 'pausepls', text: 'Can we take a short break?' },
+  { id: 'leave', text: 'I need to leave early', acts: true },
+  { id: 'topup', text: 'Buy me back in if I run out', acts: true },
+];
+var ADMIN_SAYINGS = [
+  { id: 'soon', text: 'Starting in a minute' },
+  { id: 'yours', text: 'Your turn - are you there?' },
+  { id: 'brk', text: 'Taking a short break' },
+  { id: 'wrap', text: 'We are wrapping up soon' },
+  { id: 'paypls', text: 'Please settle up when you can' },
+];
+var SAY_FOR_MS = 5000;
+
+function saySomething(id) {
+  api('say', { code: S.code, id: id })
+    .then(function (j) { S.menu = false; toast(j.said || 'Sent'); return refresh(); })
+    .catch(fail);
+}
+
+// Anything that arrived since last time, shown once. The seen mark is what stops a message
+// reappearing on every redraw for as long as it is in the last ten.
+function watchSaid() {
+  var notes = (S.v && S.v.notes) || [];
+  // Opening the table is not everybody talking to you at once. Whatever was said before you got
+  // here is already in the menu; only what arrives from now on comes across the bottom.
+  if (!S.saidSeen) {
+    S.saidSeen = {};
+    notes.forEach(function (n) { S.saidSeen[n.id] = 1; });
+    return;
+  }
+  if (!notes.length) return;
+  // Messages are addressed to a member, not to a seat: the same person has a different seat id at
+  // every table, and whoever runs a table may not be sitting at it at all.
+  var me = S.v.me || {};
+  var fresh = notes.filter(function (n) {
+    if ((S.saidSeen || {})[n.id]) return false;
+    if (n.from === (S.me && S.me.id)) return false;      // not your own words back at you
+    if (!n.to) return true;                              // said to the table
+    return n.to === (S.me && S.me.id) || n.to === me.memberId;
+  });
+  S.saidSeen = S.saidSeen || {};
+  notes.forEach(function (n) { S.saidSeen[n.id] = 1; });
+  if (!fresh.length) return;
+  S.sayQ = (S.sayQ || []).concat(fresh);
+  if (!S.sayShow) nextSaid();
+}
+// one at a time, in the order they arrived, so two together do not sit on top of each other
+function nextSaid() {
+  var q = S.sayQ || [];
+  if (!q.length) { S.sayShow = null; if (S.screen === 'table') render(); return; }
+  S.sayShow = q.shift();
+  S.sayQ = q;
+  if (S.screen === 'table') render();
+  clearTimeout(nextSaid.t);
+  nextSaid.t = setTimeout(nextSaid, SAY_FOR_MS);
+}
+function sayBar() {
+  var m = S.sayShow;
+  if (!m) return '';
+  return '<div class="saybar"><div class="who">' + esc(m.fromName || '') + '</div>'
+    + '<div class="what">' + esc(m.text) + '</div></div>';
+}
+
 // ---- the move just made ----
 // Every view carries the last move and a running count of moves. When the count moves on, that is
 // somebody acting: say so on their seat for a second. Folding is not flashed - the seat already
@@ -1377,9 +2540,25 @@ function watchActs() {
   S.actSeen = la.n;
   if (first) return;                         // arriving mid-hand is not somebody acting now
   var word = ACT_WORD[la.k];
-  if (!word) return;                         // posts, antes and folds speak for themselves
+  if (!word) {
+    // a blind or an ante is nobody acting, but the chips still travel
+    if ((la.k === 'sb' || la.k === 'bb' || la.k === 'post' || la.k === 'ante') && la.a > 0) {
+      S.chips = (S.chips || []).filter(function (c) { return Date.now() - c.t0 < 1200; });
+      S.chips.push({ n: la.n, id: la.id, amount: la.a, t0: Date.now() });
+      clearTimeout(watchActs.c);
+      watchActs.c = setTimeout(function () { S.chips = []; if (S.screen === 'table') render(); }, 1250);
+    }
+    return;
+  }
   S.flash = { id: la.id, word: word, until: Date.now() + 1100 };
   if (la.k !== 'check') sfx('chip');
+  // chips leaving the player and landing on the pot
+  if (la.a > 0) {
+    S.chips = (S.chips || []).filter(function (c) { return Date.now() - c.t0 < 1200; });
+    S.chips.push({ n: la.n, id: la.id, amount: la.a, t0: Date.now() });
+    clearTimeout(watchActs.c);
+    watchActs.c = setTimeout(function () { S.chips = []; if (S.screen === 'table') render(); }, 1250);
+  }
   clearTimeout(watchActs.t);
   watchActs.t = setTimeout(function () { S.flash = null; if (S.screen === 'table') render(); }, 1150);
 }
@@ -1438,13 +2617,16 @@ function replaySheet() {
   var h = '<div class="sheet" style="z-index:50">';
   h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
     + '<div><div class="disp" style="font-size:26px;line-height:1.1">Hand ' + g.no + '</div>'
-    + '<div class="muted small">' + esc(VARIANT_NAME(g.variant)) + ' &middot; ' + fmt(g.pot) + ' in the pot</div></div>'
+    + '<div class="muted small">' + esc(VARIANT_NAME(g.variant)) + ' &middot; ' + fmt(g.pot) + ' in the pot'
+    + (g.label ? ' &middot; <span class="gold">' + esc(g.label) + '</span>' : '') + '</div></div>'
     + '<button class="rolechip" onclick="S.replay=null;render()">Close</button></div>';
 
   // which of the kept hands
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">';
   rounds.forEach(function (x, i) {
-    h += '<button class="rolechip' + (i === r.i ? ' on' : '') + '" onclick="S.replay.i=' + i + ';S.replay.step=undefined;render()">' + fmt(x.pot) + '</button>';
+    // a hand kept for what it was rather than what it won says so, so it is worth tapping
+    h += '<button class="rolechip' + (i === r.i ? ' on' : '') + '" onclick="S.replay.i=' + i + ';S.replay.step=undefined;render()">'
+      + (x.tier ? (x.tier > 1 ? '\u2605 ' : '\u2666 ') : '') + fmt(x.pot) + '</button>';
   });
   h += '</div>';
 

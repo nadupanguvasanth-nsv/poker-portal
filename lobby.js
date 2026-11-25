@@ -5,6 +5,7 @@
 // and do everything, everywhere. Nobody else can touch a table they do not run.
 
 const { Table, FORMATS, PICKABLE, SEATS, TOURNEY, cleanSettings } = require('./games');
+const HOUSE = require('./house');
 
 function makeLobby(ctx) {
   const { state, changed, httpErr, people, broadcast } = ctx;
@@ -30,7 +31,20 @@ function makeLobby(ctx) {
       code: t.code, format: t.format, formatName: fmt.name, variant: t.variant,
       variantName: t.variant ? require('./engine').VARIANTS[t.variant].name : '',
       admin: t.adminName, adminId: t.adminId, iRunIt: runs(t, m),
-      status: t.status, players: t.seated().length, seats: SEATS, free: t.freeSeats(),
+      status: t.status, paused: !!t.paused, players: t.seated().length, seats: SEATS, free: t.freeSeats(),
+      minMinutes: t.settings.minMinutes || 0,
+      // everything the rules sheet states, taken from the table itself so it cannot drift
+      maxBuyin: t.settings.maxBuyin, turnSeconds: t.settings.turnSeconds,
+      minPlayers: t.settings.minPlayers, bombAnteBB: t.settings.bombAnteBB,
+      lastHands: t.lastHands || 0, endAt: t.endAt || 0,
+      // the portal's own figures, so the rules sheet states what the server actually enforces
+      house: {
+        graceSeconds: Math.round(HOUSE.START_GRACE_MS / 1000),
+        roundTo: HOUSE.ROUND_TO,
+        yellowHours: Math.round(HOUSE.YELLOW_AFTER_MS / 3600e3),
+        redHours: Math.round(HOUSE.RED_AFTER_MS / 3600e3),
+        redAtDebts: HOUSE.RED_AT_DEBTS,
+      },
       blinds: t.blinds(), minBuyin: t.settings.minBuyin, startedAt: t.startedAt, createdAt: t.createdAt,
       handNo: t.handNo, level: t.format === 'tournament' ? t.level : 0,
       iAmIn: !!mine, asked: t.requests.some((r) => r.memberId === m.id),
@@ -123,14 +137,24 @@ function makeLobby(ctx) {
     // ---- leaving ----
     // Leaving early normally costs you your blinds until the game ends. The game admin can waive
     // that, and it is his call.
+    // Leaving. Whoever opens a table can ask people to stay a while, so that a game does not fall
+    // apart the moment somebody is ahead. Three ways out before that time is up: you have lost the
+    // lot and have nothing to stay for, the game admin lets you go, or you sit there paying your
+    // blinds until your time is up. Once the time has been served nobody has to ask anybody.
     askLeave(m, b) {
       const t = need(b.code);
       const p = t.byMember(m.id);
       if (!p) throw httpErr(400, 'You are not at this table');
+      if (t.servedTime(p)) {
+        p.leaveOk = true;
+        t.say(p.stack <= 0 ? `${p.name} is out of chips and is leaving` : `${p.name} has stayed the time and is leaving`);
+        changed(); broadcast(t);
+        return { asked: false, leaving: true };
+      }
       p.leaveAsk = Date.now();
       t.say(`${p.name} asked to leave early`);
       changed(); broadcast(t);
-      return { asked: true };
+      return { asked: true, leaving: false };
     },
     decideLeave(m, b) {
       const t = mustRun(need(b.code), m);
@@ -141,7 +165,10 @@ function makeLobby(ctx) {
         t.say(`${p.name} may leave with their chips`);
       } else {
         p.leaveAsk = 0;
-        t.say(`${p.name} was asked to stay`);
+        p.forfeit = true;
+        const left = Math.max(0, Math.ceil(((p.joinedAt || t.createdAt) + (t.settings.minMinutes || 0) * 60000 - Date.now()) / 60000));
+        t.say(`${p.name} was asked to stay. His blinds go in without him until his time is up`
+          + (left ? ` - about ${left} more minute${left === 1 ? '' : 's'}` : ''));
       }
       changed(); broadcast(t);
       return { ok: true };

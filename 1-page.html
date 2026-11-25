@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#0a0c0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Smart Buddies">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta property="og:title" content="Smart Buddies &middot; Private Poker Party">
+<meta property="og:description" content="Our own poker table. Chips only, settle up between ourselves.">
+<meta property="og:image" content="{{BASE}}/poster.jpg">
+<meta property="og:url" content="{{BASE}}/">
+<meta property="og:type" content="website">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>Smart Buddies</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#0a0c0b;overflow:hidden;font-family:'Inter',system-ui,sans-serif;color:#f2efe6;-webkit-text-size-adjust:100%;overscroll-behavior:none}
+#wrap{position:absolute;left:0;top:0;transform-origin:top left}
+/* Reads the phone's safe area - the notch, the Dynamic Island, the home bar - so fit() can keep
+   the portal clear of them. Measured off this rather than guessed. */
+#safe{position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;
+padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+/* A phone held sideways leaves so little height that everything shrinks past reading size. Better
+   to ask for it the right way up than to show a table nobody can read. */
+#turn{display:none;position:fixed;inset:0;z-index:999;background:#0a0c0b;color:#f2efe6;
+align-items:center;justify-content:center;text-align:center;padding:24px}
+#stage{position:relative;width:390px;height:844px;overflow:hidden;background:#0a0c0b;
+  --f1:#1a6a4d;--f2:#13543e;--f3:#0d3326;--rail:#2b2017;--deep:#16201b;--av:#1b2a22}
+/* The table can be dressed differently without touching anything that has to stay readable: the
+   cards keep their white, the chips their gold, the names their contrast. Only the cloth, the
+   rail and the dark backing behind the card backs and the faces change. */
+#stage[data-felt="midnight"]{--f1:#24507f;--f2:#1a3a5e;--f3:#0e1f35;--rail:#1b2433;--deep:#141c28;--av:#1a2534}
+#stage[data-felt="claret"]{--f1:#7a2634;--f2:#5c1b26;--f3:#330f16;--rail:#2a1a16;--deep:#1f1216;--av:#2a181d}
+button{font-family:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offset:2px}
+.disp{font-family:'Bebas Neue',sans-serif;letter-spacing:.03em}
+.muted{color:#a3aba5}.gold{color:#d8b45c}
+.abs{position:absolute}
+.btn{height:52px;border:0;border-radius:12px;background:#d8b45c;color:#14110a;font-size:16px;font-weight:700;letter-spacing:.04em;width:100%}
+.btn.ghost{background:transparent;border:1px solid #2a312d;color:#f2efe6;font-size:14px;font-weight:600;height:48px}
+.btn:disabled{opacity:.4}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:12px;font-weight:600;letter-spacing:.08em;color:#a3aba5}
+.field input{height:48px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;padding:0 14px;font-family:inherit;width:100%}
+.card{position:relative;width:38px;height:54px;border-radius:5px;background:#faf8f2;color:#14110a;font-weight:700;font-size:14px;line-height:1;flex:none;overflow:hidden;font-family:Georgia,'Times New Roman',serif}
+.cf{position:absolute;left:0;top:0;width:100%;height:100%;fill:currentColor}
+.card.red{color:#b3262e}
+.card.back{background:repeating-linear-gradient(45deg,rgba(216,180,92,.16) 0 2px,transparent 2px 7px),repeating-linear-gradient(-45deg,rgba(216,180,92,.16) 0 2px,transparent 2px 7px),var(--deep);border:1px solid #d8b45c;box-shadow:inset 0 0 0 3px var(--deep),inset 0 0 0 4px rgba(216,180,92,.5)}
+.card.empty{background:transparent;border:1px dashed rgba(191,224,207,.3)}
+.card.sm{width:24px;height:34px;font-size:13px;border-radius:3px}
+/* The sizes below are never written as a literal class anywhere - card(c, 'xl') builds them at
+   run time - so searching the page for class="xl" finds nothing and they look unused. They are
+   not. cardsizetest.js checks every size the code asks for has a rule here. */
+.card.md{width:36px;height:50px;font-size:17px;border-radius:5px}
+.card.xl{width:86px;height:120px;font-size:32px;border-radius:9px;box-shadow:0 8px 18px rgba(0,0,0,.55)}
+.hc{position:relative;width:70px;height:98px;transition:transform .14s ease,filter .14s}
+.hc .hf{position:absolute;left:0;top:0;display:none}
+#hero{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;cursor:pointer}
+#hero.up .hf{display:block}
+#hero.up .hb{visibility:hidden}
+#hero.up .hc{transform:translateY(-14px) scale(1.04);filter:drop-shadow(0 10px 12px rgba(0,0,0,.55))}
+.card.win{box-shadow:0 0 0 2px #d8b45c,0 0 14px 3px rgba(216,180,92,.8);animation:wglow 1.3s ease-in-out infinite alternate;position:relative;z-index:2}
+.card.dim{opacity:.35}
+@keyframes wglow{to{box-shadow:0 0 0 2px #f3d27a,0 0 24px 7px rgba(243,210,122,1)}}
+.felt{border-radius:167px/128px;background:radial-gradient(ellipse at 50% 42%,var(--f1) 0%,var(--f2) 60%,var(--f3) 100%);border:7px solid var(--rail);box-shadow:inset 0 0 0 2px rgba(216,180,92,.3),inset 0 14px 30px rgba(0,0,0,.35),0 18px 44px rgba(0,0,0,.55)}
+.pmini{position:relative;width:28px;height:28px;border-radius:14px;background:#1b2a22;border:1px solid #2a312d;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:13px;flex:none}
+.betchip{display:inline-flex;align-items:center;gap:4px;margin-top:2px;padding:1px 7px 1px 4px;border-radius:9px;background:rgba(10,14,12,.72);border:1px solid #4a4a3a;font-size:11px;font-weight:700;color:#f3e9cf;white-space:nowrap}
+
+.betchip i{width:11px;height:11px;border-radius:7px;background:radial-gradient(circle at 35% 30%,#f0d089,#c69b3c);border:1px solid #8c6a22;display:block;flex:none}
+.seat{position:absolute;width:64px;display:flex;flex-direction:column;align-items:center;text-align:center;pointer-events:none}
+/* Out of the flow on purpose: in the flow they pushed the whole seat down, so a player holding
+   cards sat lower than the empty seat beside them and names drifted onto the board. */
+/* The cards a player turns over sit outside the ring, away from the board, and out of the
+   layout so they cannot push the seat off the felt. */
+.tbar{z-index:8}
+.seat .showc{position:absolute;left:50%;display:flex;transform:translateX(-50%) scale(1)}
+/* As big as each seat can take. The seats along the top have only the gap between them and
+   the bar at the top to fan into, so theirs are smaller; the ones lower down have the whole
+   felt below them and can be read from across the room. */
+.seat.up .showc{transform:translateX(-50%) scale(.72)}
+.seat.low .showc{transform:translateX(-50%) scale(1.15)}
+.seat.up .showc{bottom:100%;margin-bottom:-2px;transform-origin:bottom center}
+.seat.low .showc{top:100%;margin-top:-2px;transform-origin:top center}
+.seat .showc .card+.card{margin-left:-7px}
+/* Turned-over cards have to read against a dark green felt from across the room: a little more
+   white than a card in the hand, a hard dark edge so they do not bleed into the felt, and a
+   shadow underneath so they sit on top of it rather than in it. */
+.seat .showc .card{background:#fffdf6;box-shadow:0 0 0 1.5px rgba(8,11,9,.92),0 4px 10px rgba(0,0,0,.7)}
+.seat .showc .card.red{color:#c8232c}
+.seat .showc{filter:saturate(1.06) contrast(1.05)}
+/* fanned rather than side by side: narrower, so a neighbour's name stays clear, and it reads
+   more like cards held in a hand - which matters most in Omaha, where there are four or five */
+.bull{position:absolute;left:0;top:0;width:100%;height:100%;border-radius:50%;cursor:pointer;pointer-events:auto}
+.fx{position:absolute;pointer-events:none;z-index:40;font-size:28px;line-height:1;margin:-14px 0 0 -14px}
+@keyframes fxfly{0%{transform:translate(0,0) scale(.6) rotate(0);opacity:1}85%{opacity:1}100%{transform:translate(var(--dx),var(--dy)) scale(1.15) rotate(540deg);opacity:0}}
+@keyframes fxpop{0%{transform:scale(.2);opacity:0}15%{opacity:1}35%{transform:scale(1.9);opacity:1}100%{transform:scale(1.2) translateY(-16px);opacity:0}}
+@keyframes fxbub{0%{transform:translateY(8px) scale(.4);opacity:0}10%{transform:translateY(0) scale(1.15);opacity:1}15%{transform:scale(1)}85%{opacity:1}100%{transform:translateY(-14px) scale(1);opacity:0}}
+/* chips going in: a small stack leaves the player and lands on the pot. Same trick as the thrown
+   bombs - the flight is a CSS animation with a negative delay, so a redraw mid-flight picks it up
+   where it had got to instead of starting it again from the seat. */
+.chipfly{position:absolute;pointer-events:none;z-index:6;margin:-9px 0 0 -9px;width:18px;height:18px}
+.chipfly i{display:block;width:18px;height:18px;border-radius:9px;
+  background:radial-gradient(circle at 35% 30%,#f3d58f,#c69b3c);
+  border:2px solid #8c6a22;box-shadow:0 2px 5px rgba(0,0,0,.55)}
+.chipfly b{position:absolute;left:50%;top:20px;transform:translateX(-50%);font-family:'Inter',sans-serif;
+  font-size:10px;font-weight:700;color:#f3e9cf;text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap}
+@keyframes chipin{0%{transform:translate(0,0) scale(.5);opacity:0}
+  12%{transform:translate(calc(var(--dx)*.12),calc(var(--dy)*.12 - 10px)) scale(1);opacity:1}
+  80%{opacity:1}
+  100%{transform:translate(var(--dx),var(--dy)) scale(.72);opacity:0}}
+.fxbub{background:#141917;border:1px solid #2a312d;border-radius:20px;padding:4px 8px;font-size:30px;margin:-22px 0 0 -26px}
+.fxbtn{width:34px;height:34px;border-radius:17px;border:1px solid #2a312d;background:#1b2a22;font-size:20px;line-height:1;padding:0;flex:none}
+.av{position:relative;width:52px;height:52px;border-radius:26px;background:var(--av);border:2px solid #2a312d;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:20px}
+.seat.turn .av{border-color:#d8b45c;box-shadow:0 0 0 4px rgba(216,180,92,.25)}
+/* A player who has folded or gone is dimmed - but not the cards he chose to turn over. Dimming
+   the whole seat dimmed those too, and a child cannot be brighter than the parent it sits in, so
+   the one thing everybody is leaning in to look at was the faintest thing on the table. */
+.seat.out .av,.seat.out .sname,.seat.out .sstack,.seat.out .sbh,.seat.out .betchip{opacity:.45}
+.seat.allin .av{border-color:#d2454d}
+.badge{position:absolute;left:-12px;top:-4px;width:22px;height:22px;border-radius:11px;background:#d8b45c;color:#14110a;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.sname{margin-top:3px;font-size:11px;color:#bfe0cf;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sbh{font-size:9.5px;font-weight:700;line-height:1.2;margin-top:1px}
+.sstack{font-size:12px;font-weight:600}
+/* the player to act has his circle run down, so the whole table can see the time going */
+.seat .tring{position:absolute;left:-6px;top:-6px;width:64px;height:64px;border-radius:32px;pointer-events:none;
+  background:conic-gradient(#d8b45c calc(var(--left,1) * 360deg),rgba(216,180,92,.13) 0);
+  -webkit-mask:radial-gradient(circle at center,transparent 27px,#000 28px);
+          mask:radial-gradient(circle at center,transparent 27px,#000 28px)}
+.seat .tring.hot{background:conic-gradient(#d2454d calc(var(--left,1) * 360deg),rgba(210,69,77,.16) 0)}
+/* the move just made, sitting above the player's circle for a moment */
+/* Something somebody said, across the bottom of the table. It sits above the buttons rather than
+   over them: a message covering Fold while your clock runs is the one time it costs real money. */
+.saybar{position:absolute;left:12px;right:12px;bottom:8px;z-index:40;pointer-events:none;
+  background:#1b2a22;border:1px solid #d8b45c;border-radius:12px;padding:9px 12px;
+  box-shadow:0 8px 22px rgba(0,0,0,.6);animation:sayin .22s ease-out}
+.saybar .who{font-family:'Inter',sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;color:#d8b45c}
+.saybar .what{font-size:14px;color:#f2efe6;margin-top:2px;white-space:normal}
+@keyframes sayin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.actflash{position:absolute;left:50%;bottom:100%;margin-bottom:2px;transform:translateX(-50%);
+  padding:2px 8px;border-radius:9px;background:#d8b45c;color:#14110a;font-family:'Inter',sans-serif;
+  font-size:11px;font-weight:800;letter-spacing:.06em;white-space:nowrap;z-index:6;
+  animation:actpop .22s ease-out}
+.av.acted{border-color:#d8b45c!important;box-shadow:0 0 0 5px rgba(216,180,92,.35)!important}
+@keyframes actpop{from{opacity:0;transform:translateX(-50%) translateY(4px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+/* The celebration: fireworks over the whole table for a hand worth looking up from your phone
+   for. Both sit inside #wrap so they scale with everything else, and outside #stage so a redraw
+   in the middle of a betting round does not wipe them off. */
+#sky{position:absolute;left:0;top:0;width:390px;height:844px;pointer-events:none;z-index:70;display:none}
+#shout{position:absolute;left:0;top:286px;width:390px;padding:0 14px;text-align:center;pointer-events:none;z-index:71;display:none}
+#shout .big{display:inline-block;max-width:362px;font-family:'Bebas Neue',sans-serif;font-size:46px;line-height:1;
+  color:#f7e7bd;letter-spacing:.03em;text-shadow:0 2px 0 #7a5a16,0 0 22px rgba(216,180,92,.85);
+  animation:shoutin .5s cubic-bezier(.2,1.5,.4,1) both}
+#shout .who{display:block;margin-top:6px;font-family:'Inter',sans-serif;font-size:15px;font-weight:700;
+  color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.9);animation:shoutin .5s .08s cubic-bezier(.2,1.5,.4,1) both}
+@keyframes shoutin{from{opacity:0;transform:scale(.4) translateY(14px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.seat .tsec{position:absolute;right:-8px;top:-6px;min-width:20px;height:20px;padding:0 4px;border-radius:10px;
+  background:#d2454d;color:#fff;font-family:'Inter',sans-serif;font-size:11px;font-weight:700;
+  display:flex;align-items:center;justify-content:center}
+.seat.wants .av{border-color:#8fb7ff;box-shadow:0 0 0 4px rgba(143,183,255,.22)}
+.want{position:absolute;right:-6px;top:-4px;width:18px;height:18px;border-radius:9px;background:#8fb7ff;color:#0b1220;font:700 12px 'Inter',sans-serif;display:flex;align-items:center;justify-content:center}
+.pill{height:16px;padding:0 6px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:.06em;display:flex;align-items:center;justify-content:center}
+.chip{flex:1;height:44px;border:1px solid #2a312d;border-radius:10px;background:#141917;color:#f2efe6;font-size:13px;font-weight:600}
+.act{height:56px;border:0;border-radius:12px;font-size:15px;font-weight:700;color:#f2efe6}
+.row{display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 14px;border-radius:12px;background:#141917;border:1px solid #2a312d}
+.sheet{position:absolute;inset:0;background:#0a0c0b;z-index:20;overflow-y:auto;padding:20px 20px 32px;-webkit-overflow-scrolling:touch}
+.h2{font-size:12px;font-weight:600;letter-spacing:.1em;color:#a3aba5;margin:22px 0 8px}
+.toast{position:absolute;left:16px;right:16px;top:62px;z-index:60;padding:12px 14px;border-radius:12px;background:#2a1417;border:1px solid #d2454d;font-size:13px}
+.toast.ok{background:#14221a;border-color:#2f7d53}
+.evc{border:1px solid #2a312d;background:#141917;border-radius:16px;padding:14px;margin-top:12px}
+.evc.off{opacity:.5}
+.pill2{font-size:10px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:999px;border:1px solid #2a312d;color:#a3aba5;white-space:nowrap}
+.pill2.g{border-color:#d8b45c;color:#d8b45c}
+.pass{margin-top:12px;border:1px solid #d8b45c;border-radius:14px;padding:14px;background:linear-gradient(135deg,#1d1a0d,#12402f)}
+.tabs{position:absolute;left:0;right:0;bottom:0;height:72px;display:flex;background:#0f1311;border-top:1px solid #2a312d;z-index:30}
+.tabs button{flex:1;border:0;background:transparent;color:#a3aba5;font-size:13px;font-weight:600}
+.tabs button.on{color:#d8b45c}
+.rolechip{height:34px;padding:0 10px;border-radius:17px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px;font-weight:600}
+.rolechip.on{border-color:#d8b45c;color:#d8b45c;background:rgba(216,180,92,.1)}
+input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
+.small{font-size:12px;line-height:1.5}
+</style>
+
+</head>
+<body>
+<div id="safe"></div>
+<div id="wrap"><div id="stage"></div><canvas id="sky" width="390" height="844"></canvas><div id="shout"></div></div>
+<div id="turn"><div><div class="disp" style="font-size:30px;line-height:1.1">Turn your phone<br>upright</div>
+<div class="muted small" style="margin-top:10px;white-space:normal">The table is dealt tall, so it needs the long way up.</div></div></div>
+<script>
+// all in one SVG so it stays sharp and correctly spaced at every size.
+// The card artwork lives in 3-table.js, next to the code that draws the table.
+

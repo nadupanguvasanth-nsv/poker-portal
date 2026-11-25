@@ -69,20 +69,6 @@ function bestFive(cards) {
   return pick;
 }
 
-function bestScore(cards) {
-  let best = -1;
-  const n = cards.length;
-  for (let a = 0; a < n - 4; a++)
-    for (let b = a + 1; b < n - 3; b++)
-      for (let c = b + 1; c < n - 2; c++)
-        for (let d = c + 1; d < n - 1; d++)
-          for (let e = d + 1; e < n; e++) {
-            const s = score5([cards[a], cards[b], cards[c], cards[d], cards[e]]);
-            if (s > best) best = s;
-          }
-  return best;
-}
-
 const categoryOf = (score) => CATEGORY[Math.floor(score / 13 ** 5)];
 
 // ---- game variants ----
@@ -113,7 +99,10 @@ function bestOmaha(hole, board) {
 }
 function evalHand(variant, hole, board) {
   if (VARIANTS[variant].omaha) return bestOmaha(hole, board);
-  return { score: bestScore(hole.concat(board)), five: bestFive(hole.concat(board)) };
+  // One pass. This used to ask for the score and the cards separately, which walked all twenty-one
+  // five-card combinations twice over the same seven cards and threw the first answer away.
+  const five = bestFive(hole.concat(board));
+  return five ? { score: score5(five), five } : { score: -1, five: null };
 }
 
 class Hand {
@@ -343,22 +332,28 @@ class Hand {
     }
   }
 
-  // next street on every board. One burn per street normally; with several boards only the turn and river are burned
-  // (three 5-card flops need almost the whole deck).
+  // Next street on every board. A card is burned first, as at a real table - but the burn is a
+  // courtesy and the board is not, so when the deck is tight the burn is what gives way.
+  //
+  // Three 5-card flops with seven players is the hand that decides this: 35 cards in people's
+  // hands and 15 on the boards is 50 of the 52, and the three burns do not all fit. Dealing the
+  // river without burning is what a real table does when the deck is short, and it is what the
+  // portal does here.
+  //
+  // The throw matters as much as the skip. An empty deck hands back nothing rather than
+  // complaining, so without this a board would quietly take a card that is not a card and the
+  // hand would be scored on it. Better to stop the hand and say so.
   dealNext() {
-    const single = this.boards.length === 1;
-    const burn = () => this.deck.pop();
-    if (this.street === 'preflop') {
-      this.street = 'flop'; burn();
-      for (const b of this.boards) b.push(this.deck.pop(), this.deck.pop(), this.deck.pop());
-    } else if (this.street === 'flop') {
-      this.street = 'turn'; burn();
-      for (const b of this.boards) b.push(this.deck.pop());
-    } else {
-      this.street = 'river'; burn();
-      for (const b of this.boards) b.push(this.deck.pop());
+    const each = this.street === 'preflop' ? 3 : 1;
+    const need = this.boards.length * each;
+    if (this.deck.length < need) {
+      throw new Error('Not enough cards left to finish the board - too many players for this game');
     }
-    void single;
+    if (this.deck.length > need) this.deck.pop();        // the burn, if the deck can spare it
+    if (this.street === 'preflop') this.street = 'flop';
+    else if (this.street === 'flop') this.street = 'turn';
+    else this.street = 'river';
+    for (const b of this.boards) for (let i = 0; i < each; i++) b.push(this.deck.pop());
   }
 
   // the board is dealt out `runs` times from where it stands
@@ -414,25 +409,82 @@ class Hand {
       return { board: board.slice(), hands, winners: {} };
     });
     const B = boardResults.length;
+    // Three flops are one pot played three ways, not three pots. Each board is worth a point,
+    // shared when a board is split, and whoever ends with the most points takes the whole thing -
+    // so you have to be good on two of the three, and winning one board while somebody else wins
+    // the other two is worth nothing at all. Level at the top and the pot is split between those
+    // who are level.
+    //
+    // Two boards are not played that way and stay as they were: each board takes its own half of
+    // the pot. Points need an odd number to settle anything - on two boards one each is level and
+    // both to one player is a scoop, which is what splitting per board already does - so the only
+    // thing points would change there is a hand where one board is split, and turning that into
+    // winner-takes-all is a rule nobody asked for.
+    //
+    // Running it twice stays per board too, whatever the number: that is one hand dealt out more
+    // than once to cut the luck, so each run takes its own share.
+    const byPoints = B > 2 && this.boardKind === 'boards';
     const won = {};
+
+    // what each board came to, over everybody still in the hand - for the table to show, kept
+    // apart from the pots because a side pot is contested by fewer people than the board was
+    const points = {};
+    if (byPoints) {
+      for (const p of live) points[p.id] = 0;
+      for (let b = 0; b < B; b++) {
+        let best = -1;
+        for (const p of live) best = Math.max(best, boardResults[b].hands[p.id].score);
+        const ws = live.filter((p) => boardResults[b].hands[p.id].score === best).map((p) => p.id);
+        for (const id of ws) {
+          points[id] += 1 / ws.length;
+          boardResults[b].winners[id] = 1 / ws.length;
+        }
+      }
+    }
+
     const pots = this.buildPots().map((pot) => {
       const out = {};
-      for (let b = 0; b < B; b++) {
-        // each board takes an equal part of the pot (the first boards take any odd chips)
-        const part = Math.floor(pot.amount / B) + (b < pot.amount % B ? 1 : 0);
-        if (!part) continue;
-        let best = -1;
-        for (const id of pot.eligible) best = Math.max(best, boardResults[b].hands[id].score);
-        const winners = pot.eligible.filter((id) => boardResults[b].hands[id].score === best);
-        // odd chips go to the winners closest to the left of the button
-        winners.sort((a, c) => this.dist(a) - this.dist(c));
-        const base = Math.floor(part / winners.length);
-        let extra = part - base * winners.length;
-        for (const id of winners) {
+      if (byPoints) {
+        // the same count again, but only among those who paid into this pot
+        const pts = {};
+        for (const id of pot.eligible) pts[id] = 0;
+        for (let b = 0; b < B; b++) {
+          let best = -1;
+          for (const id of pot.eligible) best = Math.max(best, boardResults[b].hands[id].score);
+          const ws = pot.eligible.filter((id) => boardResults[b].hands[id].score === best);
+          for (const id of ws) pts[id] += 1 / ws.length;
+        }
+        let top = 0;
+        for (const id of pot.eligible) top = Math.max(top, pts[id]);
+        // a board split three ways is a third of a point, which does not land on a round number,
+        // so the comparison is made with a little room rather than exactly
+        const takers = pot.eligible.filter((id) => pts[id] > top - 1e-9);
+        takers.sort((a, c) => this.dist(a) - this.dist(c));
+        const base = Math.floor(pot.amount / takers.length);
+        let extra = pot.amount - base * takers.length;
+        for (const id of takers) {
           const share = base + (extra-- > 0 ? 1 : 0);
           won[id] = (won[id] || 0) + share;
           out[id] = (out[id] || 0) + share;
-          boardResults[b].winners[id] = (boardResults[b].winners[id] || 0) + share;
+        }
+      } else {
+        for (let b = 0; b < B; b++) {
+          // each board takes an equal part of the pot (the first boards take any odd chips)
+          const part = Math.floor(pot.amount / B) + (b < pot.amount % B ? 1 : 0);
+          if (!part) continue;
+          let best = -1;
+          for (const id of pot.eligible) best = Math.max(best, boardResults[b].hands[id].score);
+          const winners = pot.eligible.filter((id) => boardResults[b].hands[id].score === best);
+          // odd chips go to the winners closest to the left of the button
+          winners.sort((a, c) => this.dist(a) - this.dist(c));
+          const base = Math.floor(part / winners.length);
+          let extra = part - base * winners.length;
+          for (const id of winners) {
+            const share = base + (extra-- > 0 ? 1 : 0);
+            won[id] = (won[id] || 0) + share;
+            out[id] = (out[id] || 0) + share;
+            boardResults[b].winners[id] = (boardResults[b].winners[id] || 0) + share;
+          }
         }
       }
       return { amount: pot.amount, eligible: pot.eligible, winners: Object.entries(out).map(([id, share]) => ({ id, share })) };
@@ -447,7 +499,8 @@ class Hand {
       reveal[p.id] = { cards: p.cards.slice(), handName: h.handName, best: h.best };
     }
     this.finished = true; this.turn = -1;
-    this.result = { uncontested: false, reveal, won, pots, boardResults, boardKind: this.boardKind };
+    this.result = { uncontested: false, reveal, won, pots, boardResults, boardKind: this.boardKind,
+      points: byPoints ? points : null, boardsPlayed: B };
   }
 
   dist(id) {
@@ -483,4 +536,4 @@ class Hand {
   }
 }
 
-module.exports = { Hand, newDeck, shuffle, score5, bestScore, bestFive, bestOmaha, evalHand, categoryOf, VARIANTS, canRunIt, RANKS, SUITS };
+module.exports = { Hand, newDeck, shuffle, score5, bestFive, bestOmaha, evalHand, categoryOf, CATEGORY, VARIANTS, canRunIt, RANKS, SUITS };
