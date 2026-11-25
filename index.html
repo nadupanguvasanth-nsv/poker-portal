@@ -200,7 +200,7 @@ input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
 // S is everything the screen knows. render() draws S. Nothing else touches the DOM.
 var S = { screen: 'signin', tab: 'tables', token: '', me: null, tables: [], history: [], members: [],
           formats: [], variants: [], code: '', v: null, toast: '', busy: false, open: {}, seats: 7,
-          openSponsor: {}, showGone: false, groups: [], roster: [], groupEdit: null, study: null };
+          openSponsor: {}, showGone: false, groups: [], roster: [], groupEdit: null, study: null, review: null, spot: null };
 
 try { S.token = localStorage.getItem('sb-token') || ''; } catch (e) {}
 
@@ -869,6 +869,22 @@ function resumeTable() {
   else try { localStorage.removeItem('sb-table'); } catch (e) {}
 }
 
+// Where the hand file goes when the phone will not save it. Copying works everywhere, including
+// in a web app on the home screen, which is the one place a download quietly does nothing.
+function handFileSheet() {
+  var f = S.handfile;
+  return '<div class="sheet" style="z-index:57"><div class="disp" style="font-size:26px">The hands</div>'
+    + '<div class="muted small" style="margin:8px 0 12px;white-space:normal">'
+    + f.hands + ' hands, written the way an online room writes them. Your phone would not save it as '
+    + 'a file, so copy it and paste it into a text file on whatever you are going to read it with. '
+    + 'The name it wants is <b>' + esc(f.name) + '</b>.</div>'
+    + '<button class="btn" onclick="copyText(S.handfile.text)">Copy the lot</button>'
+    + '<div class="evc" style="margin-top:12px;white-space:pre-wrap;font-size:11px;line-height:1.45;'
+    + 'max-height:320px;overflow:auto">' + esc(f.text.slice(0, 4000))
+    + (f.text.length > 4000 ? '\n\n\u2026 and the rest, which Copy takes in full.' : '') + '</div>'
+    + '<button class="btn ghost" style="margin-top:12px" onclick="S.handfile=null;render()">Done</button></div>';
+}
+
 function inviteSheet() {
   var t = S.invite;
   return '<div class="sheet" style="z-index:50"><div class="disp" style="font-size:28px">'
@@ -1063,8 +1079,11 @@ function lineChart(series, opts) {
   if (y0 < 0 && y1 > 0) {
     g += '<line x1="' + L + '" y1="' + Y(0).toFixed(1) + '" x2="' + (W - 6) + '" y2="' + Y(0).toFixed(1) + '" stroke="#3a443e" stroke-dasharray="3 3"/>';
   }
-  g += '<text x="2" y="' + (Y(y1) + 9).toFixed(1) + '" fill="#a3aba5" font-size="9">' + kfmt(Math.round(y1)) + '</text>';
-  g += '<text x="2" y="' + Y(y0).toFixed(1) + '" fill="#a3aba5" font-size="9">' + kfmt(Math.round(y0)) + '</text>';
+  // The axis says what the line says. A graph labelled in chips under a figure read in big blinds
+  // is two different stories about the same evening.
+  var axis = opts.bb ? function (v) { return Math.round(v / opts.bb) + 'bb'; } : function (v) { return kfmt(Math.round(v)); };
+  g += '<text x="2" y="' + (Y(y1) + 9).toFixed(1) + '" fill="#a3aba5" font-size="9">' + axis(y1) + '</text>';
+  g += '<text x="2" y="' + Y(y0).toFixed(1) + '" fill="#a3aba5" font-size="9">' + axis(y0) + '</text>';
   series.forEach(function (sr) {
     var d = sr.points.map(function (pt, i) { return (i ? 'L' : 'M') + X(pt[0]).toFixed(1) + ' ' + Y(pt[1]).toFixed(1); }).join(' ');
     g += '<path d="' + d + '" fill="none" stroke="' + sr.colour + '" stroke-width="' + (sr.thick ? 2.4 : 1.2) + '"'
@@ -1201,6 +1220,10 @@ function historyList() {
       } else {
         // it does happen: a night called off before a hand finished, or everyone exactly even
         h += '<div class="muted small" style="white-space:normal">Nobody owes anybody. Everyone finished on what they put in.</div>';
+      }
+      if (g.study || g.hands) {
+        h += '<button class="btn ghost" style="margin-top:12px" onclick="openReview(\'' + g.id + '\')">Look at the night</button>'
+          + '<button class="btn ghost" style="margin-top:8px" onclick="exportHands(\'' + g.id + '\')">Export the Texas hands</button>';
       }
       h += '<a class="btn ghost" style="margin-top:12px;display:flex;align-items:center;justify-content:center;text-decoration:none" target="_blank" rel="noopener" href="/api/statement?token=' + encodeURIComponent(S.token) + '&id=' + g.id + '">Statement (PDF)</a>';
       if (g.replays) h += '<button class="btn ghost" style="margin-top:8px" onclick="loadReplay(\'' + g.id + '\')">Best ' + g.replays + ' hands</button>';
@@ -1701,6 +1724,12 @@ function myMembersBlock() {
 // the cards took over. Nothing here is advice - the portal has no idea what the right frequency
 // is, and a number dressed up as a verdict would be a lie told confidently. It is never shown
 // while a hand is live; it is a thing to look at afterwards.
+// A figure the report counted either in chips or in big blinds, depending on whether the nights
+// it came from knew their stakes. The report says which; this prints it accordingly.
+function unit(n, kind) {
+  return kind === 'bb' ? Math.round(n) + 'bb' : fmt(Math.round(n)) + ' chips';
+}
+
 function studyBlock() {
   var d = S.study;
   if (!d) {
@@ -1727,24 +1756,46 @@ function studyBlock() {
       h += '<div class="muted small" style="margin-top:6px;white-space:normal">Too few hands to say anything worth saying yet.</div></div>';
       return;
     }
-    h += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">'
-      + statBit('IN', w.vpip, '%', 'how often he put money in before the flop')
-      + statBit('RAISED', w.pfr, '%', 'how often that was a raise rather than a call')
-      + statBit('RE-RAISED', w.threeBet, '%', 'how often he put in a second raise when he had the chance')
-      + statBit('GAVE UP TO ONE', w.foldTo3Bet, '%', 'how often he folded to a re-raise')
-      + statBit('BET THE FLOP', w.cbet, '%', 'having raised before it')
-      + statBit('FOLDED TO ONE', w.foldToCbet, '%', 'how often he folded to a bet on the flop')
-      + statBit('TO SHOWDOWN', w.wtsd, '%', 'of the hands he saw a flop with')
-      + statBit('WON THERE', w.wonAtShowdown, '%', 'of the showdowns he reached')
-      + statBit('BETS PER CALL', w.aggression, '', 'bets and raises against calls')
-      + '</div>';
-    if (w.allIns) {
+    // Nine labelled percentages told you nothing unless you already knew what each label meant
+    // and what a normal figure for it looked like. The same nine counts, said as sentences.
+    var raisedShare = w.vpip ? (w.pfr / w.vpip) * 100 : null;
+    var inTen = w.aggression === null || w.aggression === undefined
+      ? null : Math.round((w.aggression / (w.aggression + 1)) * 10);
+    var lines = [];
+    if (w.vpip !== null) {
+      lines.push('Plays ' + oneIn(w.vpip) + ' hands'
+        + (raisedShare === null ? '.' : ', and comes in raising with ' + oneIn(raisedShare) + ' of them.'));
+    }
+    if (inTen !== null) {
+      lines.push('Once the flop is out, about ' + inTen + ' of every 10 times he puts chips in it is a bet or a raise'
+        + ' - the other ' + (10 - inTen) + ' are calls.');
+    }
+    if (w.wtsd !== null) {
+      lines.push('Of the flops he sees, he is still there at the end in ' + oneIn(w.wtsd)
+        + (w.wonAtShowdown === null ? '.' : ', and wins ' + oneIn(w.wonAtShowdown) + ' of those.'));
+    }
+    if (w.foldToCbet !== null || w.threeBet !== null) {
+      var bits = [];
+      if (w.foldToCbet !== null) bits.push('folds to a bet on the flop ' + oneInTimes(w.foldToCbet));
+      if (w.threeBet !== null) bits.push('puts in a second raise ' + oneInTimes(w.threeBet) + ' of the times he can');
+      lines.push('He ' + bits.join(', and ') + '.');
+    }
+    h += '<div style="margin-top:8px">';
+    lines.forEach(function (line) {
+      h += '<div class="muted small" style="white-space:normal;margin-top:4px">' + line + '</div>';
+    });
+    h += '</div>';
+
+    if (w.allIns && w.luckUnit !== 'mixed') {
       h += '<div style="margin-top:10px;border-top:1px solid #2a312d;padding-top:8px">'
         + '<div class="muted small" style="white-space:normal">'
-        + w.allIns + ' pot' + (w.allIns === 1 ? '' : 's') + ' decided by the cards. Worth ' + fmt(w.dueAllIn)
-        + ' to him; he took ' + fmt(w.gotAllIn) + '.</div>'
+        + w.allIns + ' pot' + (w.allIns === 1 ? '' : 's') + ' where the chips were all in and the cards '
+        + 'decided it. His share of those pots came to ' + unit(w.dueAllIn, w.luckUnit)
+        + '; he actually took ' + unit(w.gotAllIn, w.luckUnit) + '.</div>'
         + '<div style="font-weight:700;margin-top:4px;color:' + (luck > 0 ? '#7ddba0' : luck < 0 ? '#f08a8f' : '#a3aba5') + '">'
-        + (luck > 0 ? '+' : '') + fmt(luck) + ' against what the cards owed him</div>'
+        + (luck > 0 ? unit(luck, w.luckUnit) + ' better than the cards owed him'
+          : luck < 0 ? unit(-luck, w.luckUnit) + ' worse than the cards owed him'
+            : 'exactly what the cards owed him') + '</div>'
         + (w.sampled ? '<div class="muted small" style="margin-top:2px">' + w.sampled + ' of those were counted by sampling, so the figure is close rather than exact.</div>' : '')
         + '</div>';
     }
@@ -1762,16 +1813,375 @@ function studyBlock() {
   return h;
 }
 
-function statBit(label, v, suffix, why) {
-  if (v === null || v === undefined) return '';
-  return '<div style="min-width:84px" title="' + esc(why) + '">'
-    + '<div class="muted" style="font-size:9px;letter-spacing:.08em">' + label + '</div>'
-    + '<div style="font-size:16px;font-weight:700">' + v + suffix + '</div></div>';
-}
-
 function loadStudy() {
   toast('Counting\u2026');
   api('study', {}).then(function (j) { S.study = j; render(); }).catch(fail);
+}
+
+// ---- one night, looked at properly ----
+// The shape Railbird uses, because it works: the figures across the top, how the chips moved,
+// the pots that turned it, and then the decisions. What is different is what goes in the last
+// part. There are no scores out of a hundred here, because a score needs a solver and the portal
+// has not got one. What it has instead is the cards - all of them - so it can say what a call
+// actually cost and what it was actually worth, which is a fact rather than an opinion.
+function reviewSheet() {
+  var r = S.review;
+  var h = '<div class="sheet" style="z-index:55">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+    + '<div><div class="disp" style="font-size:28px;line-height:1.05">The night</div>'
+    + '<div class="muted small">' + esc(r.title || '') + ' &middot; ' + when(r.at) + ' &middot; ' + r.hands + ' hands</div></div>'
+    + '<button class="rolechip" onclick="S.review=null;render()">Close</button></div>';
+
+  if (!r.hands) {
+    return h + '<div class="evc" style="margin-top:12px"><div class="muted small" style="white-space:normal">'
+      + 'No Texas hands on record for that night, so there is nothing to count. Hands are kept from the day this went in.'
+      + '</div></div><button class="btn ghost" style="margin-top:16px" onclick="S.review=null;render()">Back</button></div>';
+  }
+
+  // how the chips moved
+  if (r.curve && r.curve.length > 1) {
+    h += '<div class="h2" style="margin-top:16px">HOW THE NIGHT WENT</div>'
+      + '<div class="evc">'
+      + lineChart([{ points: r.curve, colour: (r.curve[r.curve.length - 1][1] >= 0 ? '#7ddba0' : '#f08a8f'), thick: true }], { zero: true, bb: r.bb, xlabel: r.hands + ' hands' })
+      + '<div class="muted small" style="margin-top:6px;white-space:normal">' + howItWent(r) + '</div></div>';
+  }
+
+  // How he played, in sentences. The figures underneath are the same ones a poker tracker
+  // prints - VPIP, PFR, aggression - but nobody at this table speaks that language, and a
+  // number with no sense of what normal looks like tells you nothing at all.
+  var me = r.me;
+  var pick = function (key) {
+    return (r.who || []).filter(function (w) { return w.id !== r.meId; }).map(function (w) { return w[key]; });
+  };
+  if (me) {
+    h += '<div class="h2" style="margin-top:16px">HOW YOU PLAYED</div>';
+
+    // 1. how many hands he put money into
+    if (me.vpip !== null) {
+      h += playRow('Hands you played', oneIn(me.vpip), me.vpip + '% of ' + me.hands + ' hands',
+        me.vpip, 0, 100, [20, 45], pick('vpip'),
+        'You put money in before the flop in ' + oneIn(me.vpip) + ' hands. '
+        + sits(me.vpip, [20, 45], pick('vpip'),
+          'More hands than most, which means more of them get awkward after the flop.',
+          'Fewer hands than most - you waited for something.'));
+    }
+
+    // 2. of the hands he played, how many he came in raising rather than calling. The share of
+    //    his own hands is the useful figure; the raw percentage of all hands is not.
+    if (me.vpip && me.pfr !== null) {
+      var share = Math.round((me.pfr / me.vpip) * 1000) / 10;
+      h += playRow('When you played, how often you raised', oneIn(share), Math.round(share) + '% of them',
+        share, 0, 100, [30, 70],
+        (r.who || []).filter(function (w) { return w.id !== r.meId && w.vpip; })
+          .map(function (w) { return w.pfr === null ? null : (w.pfr / w.vpip) * 100; }),
+        'The rest you came in calling. '
+        + sits(share, [30, 70], null,
+          'You took the lead most times you came in.',
+          'You came in calling far more often than raising, which leaves the lead to somebody else.'));
+    }
+
+    // 3. betting against calling once the flop is out, said as a count out of ten rather than
+    //    as a ratio, which nobody reads correctly on sight
+    if (me.aggression !== null && me.aggression !== undefined) {
+      var outOfTen = Math.round((me.aggression / (me.aggression + 1)) * 10);
+      h += playRow('Betting against calling', outOfTen + ' in every 10',
+        me.aggression + ' bets per call', me.aggression, 0, 3, [0.5, 2], pick('aggression'),
+        'Of every 10 times you put chips in after the flop, about ' + outOfTen
+        + ' were a bet or a raise and ' + (10 - outOfTen) + ' were a call. '
+        + sits(me.aggression, [0.5, 2], pick('aggression'),
+          'You pushed more than most.', 'You called more than most.'));
+    }
+
+    // 4. the showdown, only when he saw enough flops for it to mean anything
+    if (me.wtsd !== null && me.sawFlop >= 8) {
+      h += playRow('Hands you took to the end', oneIn(me.wtsd), me.wtsd + '% of the flops you saw',
+        me.wtsd, 0, 100, [20, 40], pick('wtsd'),
+        'Of the flops you saw, you were still there at the showdown in ' + oneIn(me.wtsd) + '. '
+        + sits(me.wtsd, [20, 40], pick('wtsd'),
+          'You saw a lot of showdowns, which usually means paying to find out.',
+          'You let go of most of them before the end.'));
+    }
+
+    h += '<div class="muted small" style="margin:8px 2px 0;white-space:normal">'
+      + 'The shaded stretch on each line is roughly where most players sit - a rough guide, not a '
+      + 'mark out of ten. Gold is you'
+      + ((r.who || []).length > 1 ? '; the grey dots are the others at the table.' : '.') + '</div>';
+  }
+
+  // the pots that turned it
+  if (r.swings && r.swings.length) {
+    h += '<div class="h2" style="margin-top:16px">THE POTS THAT MATTERED</div>';
+    r.swings.forEach(function (sw) {
+      h += '<div class="row" style="margin-top:6px"><div style="flex:1;min-width:0">'
+        + '<div style="font-size:13px">Hand ' + sw.no + (sw.cards && sw.cards.length ? ' &middot; ' + sw.cards.map(esc).join(' ') : '') + '</div>'
+        + '<div class="muted small">pot ' + bbPlain(sw.pot, r.bb) + '</div></div>'
+        + '<div style="font-weight:700;color:' + (sw.net > 0 ? '#7ddba0' : sw.net < 0 ? '#f08a8f' : '#a3aba5') + '">'
+        + bb(sw.net, r.bb) + '</div></div>';
+    });
+  }
+
+  // the decisions where the price can be worked out
+  h += '<div class="h2" style="margin-top:16px">WHAT THE CARDS SAY</div>';
+  if (!r.findings || !r.findings.length) {
+    h += '<div class="muted small" style="white-space:normal">Nothing stood out. The portal only speaks up where it can work the price out exactly - a call with one man left in and all the cards known - so a quiet night here is a quiet night, not a clean bill of health.</div>';
+  } else {
+    h += '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">'
+      + 'Worked out from the cards, after the fact. Not an opinion about how often you should be calling \u2014 the arithmetic of the hand you actually played.</div>';
+    r.findings.forEach(function (f) {
+      var col = f.kind === 'good' ? '#7ddba0' : f.kind === 'fold' ? '#f0c674' : '#f08a8f';
+      h += '<div class="evc" style="margin-top:6px;padding:10px;border-color:' + (f.kind === 'good' ? '#2c5e3f' : '#3a3123') + '">'
+        + '<div style="display:flex;gap:8px"><div style="flex:none;color:' + col + '">&middot;</div>'
+        + '<div class="small" style="white-space:normal">Hand ' + f.no + ': ' + f.text + '</div></div>'
+        + '<button class="rolechip" style="margin-top:8px" onclick="openSpot(\'' + r.id + '\',' + f.no + ')">Look at the hand</button></div>';
+    });
+  }
+
+  // and the figures, said back
+  if (r.remarks && r.remarks.length) {
+    h += '<div class="h2" style="margin-top:16px">OVER THE NIGHT</div>';
+    r.remarks.forEach(function (line) {
+      h += '<div style="display:flex;gap:8px;margin-top:4px"><div class="gold" style="flex:none">&middot;</div>'
+        + '<div class="muted small" style="white-space:normal">' + line + '</div></div>';
+    });
+  }
+
+  if (r.who && r.who.length > 1) {
+    h += '<div class="h2" style="margin-top:16px">EVERYBODY</div>';
+    r.who.forEach(function (w) {
+      h += '<div class="row" style="margin-top:6px"><div style="flex:1;min-width:0">'
+        + '<div style="font-size:13px;font-weight:600">' + esc(w.name) + '</div>'
+        + '<div class="muted small">' + w.hands + ' hands &middot; played '
+        + (w.vpip === null ? '-' : oneIn(w.vpip))
+        + (w.vpip && w.pfr !== null ? ' &middot; raised ' + oneIn((w.pfr / w.vpip) * 100) + ' of those' : '')
+        + '</div></div></div>';
+    });
+  }
+
+  h += '<div class="muted small" style="margin-top:16px;white-space:normal;border-top:1px solid #2a312d;padding-top:10px">'
+    + 'No hand here carries a score out of a hundred. A score like that comes from a solver, which works out how '
+    + 'TWO players should play - half a minute a flop, and only ever two. Your table is four and five and seven, '
+    + 'and nobody has a solver for that. A number invented to look like one would be worse than none.</div>';
+  return h + '<button class="btn ghost" style="margin-top:14px" onclick="S.review=null;render()">Back</button></div>';
+}
+
+// One hand, decision by decision. The price against what the hand was actually worth.
+function spotSheet() {
+  var sp = S.spot;
+  var h = '<div class="sheet" style="z-index:56">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+    + '<div><div class="disp" style="font-size:26px;line-height:1.05">Hand ' + sp.no + '</div>'
+    + '<div class="muted small">pot ' + bbPlain(sp.pot, sp.bb) + (sp.won ? ' &middot; you took ' + bbPlain(sp.won, sp.bb) : '') + '</div></div>'
+    + '<button class="rolechip" onclick="S.spot=null;render()">Close</button></div>';
+
+  h += '<div class="evc" style="margin-top:12px"><div class="muted small">YOUR CARDS</div>'
+    + '<div style="display:flex;gap:4px;margin-top:6px">' + (sp.cards || []).map(function (c) { return cardHtml(c, 'md'); }).join('') + '</div>';
+  if (sp.board && sp.board.length) {
+    h += '<div class="muted small" style="margin-top:10px">THE BOARD</div>'
+      + '<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">' + sp.board.map(function (c) { return cardHtml(c, 'md'); }).join('') + '</div>';
+  }
+  h += '</div>';
+
+  h += '<div class="h2" style="margin-top:14px">EVERY DECISION YOU MADE</div>'
+    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">'
+    + 'What each decision cost you, how often you had to be right for it to be worth it, and how '
+    + 'often you actually were. No guessing \u2014 the portal dealt the cards and knows what '
+    + 'everybody held.</div>';
+
+  (sp.steps || []).forEach(function (st) {
+    var gap = (st.needed !== null && st.equity !== null) ? st.equity - st.needed : null;
+    h += '<div class="evc" style="margin-top:6px;padding:10px">'
+      + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
+      + '<div style="font-size:13px;font-weight:600">' + (STREETS_P[st.street] || st.street) + ' &middot; ' + esc(ACT_WORD[st.did] || st.did)
+      + (st.did === 'call' && st.toCall ? ' ' + bbPlain(st.toCall, sp.bb)
+        : st.amount ? ' to ' + bbPlain(st.amount, sp.bb) : '') + '</div>'
+      + (st.equity === null ? '' : '<div style="text-align:right;flex:none"><div style="font-weight:700;color:'
+        + (gap === null ? '#a3aba5' : gap >= 0 ? '#7ddba0' : '#f08a8f') + ';font-size:17px">' + st.equity + '</div>'
+        + '<div class="muted" style="font-size:9px;letter-spacing:.04em">IN 100</div></div>')
+      + '</div>'
+      + '<div class="muted small" style="margin-top:4px;white-space:normal">'
+      + (st.against ? 'Against ' + st.against + (st.against === 1 ? ' man. ' : ' men. ') : '')
+      + (st.toCall
+        ? bbPlain(st.toCall, sp.bb) + ' to call, ' + bbPlain(st.pot, sp.bb) + ' in the middle - so you '
+          + 'had to be good ' + st.needed + ' times in 100 to break even.'
+        : 'Nothing to call. ' + bbPlain(st.pot, sp.bb) + ' in the middle.')
+      + '</div>';
+    // Only a call is paying a price. A raise is putting chips in to make somebody else fold, and
+    // measuring it against pot odds calls a perfectly good bluff a mistake - the equity is worth
+    // seeing either way, but the verdict belongs to calls.
+    if (gap !== null && st.toCall && st.did === 'call') {
+      h += '<div class="small" style="margin-top:4px;color:' + (gap >= 0 ? '#7ddba0' : '#f08a8f') + '">'
+        + (gap >= 0 ? 'You were good more often than you needed to be \u2014 the price was there.'
+          : 'You needed ' + st.needed + ' and had ' + st.equity + '. The price was not there.')
+        + (st.street !== 'river'
+          ? ' <span class="muted">That is the price in front of you; there was still betting to come, which can make a '
+            + 'thin call worth it or an easy one expensive.</span>' : '')
+        + '</div>';
+    }
+    h += '</div>';
+  });
+
+  h += '<div class="muted small" style="margin-top:14px;white-space:normal;border-top:1px solid #2a312d;padding-top:10px">'
+    + 'What the others held is not shown. The portal needs their cards to work out what yours was worth, '
+    + 'but a review that listed everybody\u2019s folds would hand you a record of how the rest of the table plays.</div>';
+  return h + '<button class="btn ghost" style="margin-top:14px" onclick="S.spot=null;render()">Back</button></div>';
+}
+
+var STREETS_P = { preflop: 'Before the flop', flop: 'Flop', turn: 'Turn', river: 'River' };
+var ACT_WORD = { call: 'called', raise: 'raised to', bet: 'bet', check: 'checked', fold: 'folded', allin: 'all in' };
+
+// A night, written out for a study tool to read. It comes back as text and goes straight to a
+// file - on a phone that lands in Downloads, which is near enough to anywhere you want it.
+// Getting the file off the phone.
+//
+// A hidden link with a download attribute is how this is done on a desktop, and on an iPhone it
+// is how nothing is done at all: in a web app saved to the home screen the tap is ignored and no
+// error is raised, so the old version of this said "23 hands" and handed over nothing. The share
+// sheet is the thing that works there - Save to Files, Mail, AirDrop - so it is tried first, and
+// the link is kept for the desktop. Whatever happens, the text is still on screen to copy, which
+// is the one route that cannot fail.
+function exportHands(id) {
+  api('export-hands', { id: id }).then(function (j) {
+    var shown = function () { S.handfile = j; render(); };
+    var file = null;
+    try { file = new File([j.text], j.name, { type: 'text/plain' }); } catch (e) { file = null; }
+
+    if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: j.name })
+        .then(function () { toast(j.hands + ' hands'); })
+        .catch(function (e) {
+          // a cancelled share is the person changing his mind, not a failure to be worked around
+          if (e && e.name === 'AbortError') return;
+          shown();
+        });
+      return;
+    }
+
+    try {
+      var blob = new Blob([j.text], { type: 'text/plain' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = j.name;
+      if (typeof a.download !== 'string') throw new Error('no download here');
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+      toast(j.hands + ' hands');
+    } catch (e) {
+      shown();
+    }
+  }).catch(fail);
+}
+
+function openSpot(gameId, no) {
+  api('spot', { id: gameId, hand: no }).then(function (j) { S.spot = j; render(); }).catch(fail);
+}
+
+// Chips are whatever the table happened to be playing for; big blinds are the same everywhere,
+// so a 32bb pot means something to anybody and a 6,400 pot means nothing without the stakes.
+function bb(n, big) {
+  if (!big) return fmt(Math.round(n));
+  var v = n / big;
+  var r = Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
+  return (r > 0 ? '+' : '') + r + 'bb';
+}
+function bbPlain(n, big) {
+  if (!big) return fmt(Math.round(n));
+  var v = n / big;
+  return (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + 'bb';
+}
+
+// ---------------------------------------------------------------- saying it in plain words
+//
+// A percentage is a number you have to convert in your head before it means anything, and most
+// people do not bother. "2 in every 3" lands straight away. These are the fractions people
+// actually say out loud; the nearest one is used, and the exact figure is kept beside it for
+// anybody who wants it.
+var ODDS = [[2, '1 in 50'], [3.3, '1 in 30'], [5, '1 in 20'], [6.7, '1 in 15'], [8.3, '1 in 12'],
+  [10, '1 in 10'], [12.5, '1 in 8'], [14.3, '1 in 7'], [16.7, '1 in 6'], [20, '1 in 5'],
+  [25, '1 in 4'], [33.3, '1 in 3'], [40, '2 in every 5'], [50, '1 in 2'], [60, '3 in every 5'],
+  [66.7, '2 in every 3'], [75, '3 in every 4'], [80, '4 in every 5'], [90, '9 in every 10']];
+// The same fraction with the word in it, for sentences where "folds 1 in 7" reads as a score
+// rather than a frequency.
+function oneInTimes(p) {
+  var w = oneIn(p);
+  if (/^1 in /.test(w)) return w.replace(/^1 in /, '1 time in ');
+  return w.replace(/^(\d+) in /, '$1 times in ');
+}
+
+function oneIn(p) {
+  if (p === null || p === undefined) return '—';
+  if (p <= 1) return 'almost never';
+  if (p >= 95) return 'nearly every hand';
+  var best = ODDS[0];
+  ODDS.forEach(function (o) { if (Math.abs(o[0] - p) < Math.abs(best[0] - p)) best = o; });
+  return best[1];
+}
+
+// Where a figure sits on a scale, with the stretch most players fall in shaded behind it. The
+// shading is a rough guide and says so - it is not a verdict, and there is no solver behind it.
+// Other people's marks are only ever drawn for the portal admin, because how often a man plays
+// is exactly the thing you would want to know about him at the table.
+function scale(mine, lo, hi, band, others) {
+  if (mine === null || mine === undefined) return '';
+  var at = function (v) { return Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100)); };
+  var s = '<div style="position:relative;height:18px;margin-top:9px">'
+    + '<div style="position:absolute;left:0;right:0;top:8px;height:3px;background:#262d28;border-radius:2px"></div>';
+  if (band) {
+    s += '<div style="position:absolute;top:8px;height:3px;background:#39443c;border-radius:2px;left:'
+      + at(band[0]).toFixed(1) + '%;width:' + (at(band[1]) - at(band[0])).toFixed(1) + '%"></div>';
+  }
+  (others || []).forEach(function (v) {
+    if (v === null || v === undefined) return;
+    s += '<div style="position:absolute;top:5px;width:9px;height:9px;margin-left:-4.5px;border-radius:5px;'
+      + 'background:#59635b;left:' + at(v).toFixed(1) + '%"></div>';
+  });
+  s += '<div style="position:absolute;top:2px;width:15px;height:15px;margin-left:-7.5px;border-radius:8px;'
+    + 'background:#d8b45c;border:2px solid #10140f;left:' + at(mine).toFixed(1) + '%"></div>';
+  return s + '</div>';
+}
+
+// One line about the figure, in words, saying only what can honestly be said: where it sits
+// against the stretch most players fall in, and - for the portal admin - against the table.
+function sits(mine, band, others, high, low) {
+  if (mine === null || mine === undefined) return '';
+  var out = mine > band[1] ? high : mine < band[0] ? low : 'About where most players sit.';
+  // `others` is everybody but him, so all of them above him means he was the lowest. Said as a
+  // sentence about the others rather than a rank, because "the least" sitting next to "a lot"
+  // reads like a contradiction when both are true.
+  var vals = (others || []).filter(function (v) { return v !== null && v !== undefined; });
+  if (vals.length > 1) {
+    var above = vals.filter(function (v) { return v > mine; }).length;
+    out += above === 0 ? ' Nobody else here did it more often.'
+      : above === vals.length ? ' Everybody else here did it more often.'
+        : ' Middle of the table tonight.';
+  }
+  return out;
+}
+
+// The graph said in words, because a line is easy to look at and hard to describe, and the three
+// figures that used to sit under it - high, low, finished - were three figures to decode.
+function howItWent(r) {
+  var end = r.curve[r.curve.length - 1][1];
+  var out = r.high <= 0 ? 'You never got ahead tonight.'
+    : 'At your best you were ' + bbPlain(r.high, r.bb) + ' up.';
+  if (r.low < 0) out += ' At your worst, ' + bbPlain(Math.abs(r.low), r.bb) + ' down.';
+  out += end > 0 ? ' You finished ' + bbPlain(end, r.bb) + ' up.'
+    : end < 0 ? ' You finished ' + bbPlain(Math.abs(end), r.bb) + ' down.'
+      : ' You finished level.';
+  return out;
+}
+
+function playRow(label, words, exact, mine, lo, hi, band, others, note) {
+  return '<div class="evc" style="margin-top:8px;padding:12px">'
+    + '<div class="muted" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase">' + label + '</div>'
+    + '<div style="display:flex;align-items:baseline;gap:8px;margin-top:2px">'
+    + '<div style="font-size:19px;font-weight:700">' + words + '</div>'
+    + '<div class="muted small">' + exact + '</div></div>'
+    + scale(mine, lo, hi, band, others)
+    + '<div class="muted small" style="margin-top:7px;white-space:normal">' + note + '</div></div>';
+}
+
+function openReview(id) {
+  api('review', { id: id }).then(function (j) { S.review = j; render(); }).catch(fail);
 }
 
 // ---- the groups a primary member plays with ----
@@ -2701,6 +3111,8 @@ function askSheet() {
 function screenKey() {
   if (!S.token || !S.me) return 'signin';
   if (S.ask) return 'ask';
+  if (S.spot) return 'spot:' + S.spot.no;
+  if (S.review) return 'review:' + S.review.id;
   if (S.groupEdit) return 'group:' + (S.groupEdit.id || 'new');
   if (S.book) return 'book';
   if (S.rules) return 'rules:' + S.rules;
@@ -2720,11 +3132,14 @@ function render() {
   }
   var html = !S.token || !S.me ? signInScreen()
     : S.ask ? askSheet()
+    : S.spot ? spotSheet()
+    : S.review ? reviewSheet()
     : S.groupEdit ? groupSheet()
     : S.book === 'portal' ? generalBook()
     : S.book ? gameBook()
     : S.rules ? rulesSheet()
     : S.replay ? replaySheet()
+    : S.handfile ? handFileSheet()
     : S.invite ? inviteSheet()
     : S.screen === 'table' ? tableScreen()
     : home();

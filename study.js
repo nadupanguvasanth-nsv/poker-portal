@@ -28,7 +28,7 @@ const STUDY_KINDS = ['sb', 'bb', 'ante', 'fold', 'check', 'call', 'bet', 'raise'
 // Back into the shape the counting reads.
 function expand(rec) {
   if (!rec || !rec.a) return rec;                 // already in the long form
-  const players = (rec.p || []).map((id, i) => ({ id: String(i), seat: i, memberId: id }));
+  const players = (rec.p || []).map((id, i) => ({ id: String(i), seat: i, memberId: id, start: (rec.st || [])[i] || 0 }));
   const acts = rec.a.map((x) => ({ s: STUDY_STREETS[x[0]], k: STUDY_KINDS[x[1]], id: String(x[2]), a: x[3] }));
   const won = {}; (rec.w || []).forEach((v, i) => { if (v) won[String(i)] = v; });
   const reveal = {}; (rec.sh || []).forEach((v, i) => { if (v) reveal[String(i)] = 1; });
@@ -39,7 +39,9 @@ function expand(rec) {
     ids.forEach((id, k) => { cards[id] = rec.ai.c[k]; });
     allIn = { board: rec.ai.b || [], cards, ids };
   }
-  return { no: rec.no, pot: rec.pot, players, acts, won, reveal, allIn };
+  const hole = {};
+  (rec.c || []).forEach((cs, i) => { if (cs && cs.length) hole[String(i)] = cs; });
+  return { no: rec.no, pot: rec.pot, bb: rec.bb || 0, players, acts, won, reveal, allIn, board: rec.b || [], hole };
 }
 
 const RANKS = '23456789TJQKA';
@@ -230,14 +232,224 @@ function readHand(rec, sheets, opts) {
   if (rec.allIn && rec.allIn.ids && rec.allIn.ids.length > 1 && !(opts && opts.skipEquity)) {
     const e = equities(rec.allIn.board || [], rec.allIn.cards || {}, rec.allIn.ids);
     const pot = rec.pot || 0;
+    // In big blinds when the hand knows its own stakes, so two nights at different stakes can be
+    // added together honestly. One night at 100/200 and one at 25/50 do not share a chip.
+    const unit = rec.bb || 1;
     for (const id of rec.allIn.ids) {
       const s = by(id);
       s.allIns += 1;
       if (!e.exact) s.sampled += 1;
-      s.allInEquity += (e.eq[id] || 0) * pot;
-      s.allInWon += won[id] || 0;
+      s.allInEquity += ((e.eq[id] || 0) * pot) / unit;
+      s.allInWon += (won[id] || 0) / unit;
+      // One night counted in blinds and another in chips cannot be added together, and the
+      // figure that came out of it would be nonsense wearing whichever label happened to be
+      // last. Mixed is recorded as mixed, and the screen leaves it out.
+      const u = rec.bb ? 'bb' : 'chips';
+      s.allInUnit = s.allInUnit && s.allInUnit !== u ? 'mixed' : u;
     }
   }
+}
+
+// ---------------------------------------------------------------- what a hand showed
+// The only kind of judgement the portal is in a position to make about a decision: whether the
+// price was there. It knows what everybody held and what the board did, so when somebody called
+// it can work out exactly what he needed and exactly what he had. That is not a solver's opinion
+// of how often he should be calling - it is arithmetic about the hand that was actually played,
+// and it is either right or it is wrong.
+//
+// Nothing here guesses. Where the cards are not known the finding is simply not made.
+const STREET_CARDS = { preflop: 0, flop: 3, turn: 4, river: 5 };
+
+// A figure inside a sentence, in big blinds where the stakes are known. Chips only mean something
+// to somebody who remembers what the table was playing for that night; big blinds mean the same
+// thing on every table there has ever been.
+function money(n, big) {
+  if (!big) return Math.round(n || 0).toLocaleString('en-IN');
+  const v = (n || 0) / big;
+  return (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + 'bb';
+}
+
+function findings(rec, forId, big) {
+  const out = [];
+  const hole = rec.hole || {};
+  const board = rec.board || [];
+  const players = rec.players || [];
+  const who = {};
+  for (const p of players) who[p.id] = p.memberId || p.id;
+  const mine = players.filter((p) => (p.memberId || p.id) === forId).map((p) => p.id);
+  if (!mine.length) return out;
+  const me = mine[0];
+  if (!hole[me] || hole[me].length < 2) return out;
+
+  const acts = rec.acts || [];
+  const live = new Set(players.map((p) => p.id));
+  const inStreet = {};
+  let street = 'preflop';
+  let high = 0;
+  let pot = 0;
+
+  for (const a of acts) {
+    if (a.s !== street) { street = a.s; high = 0; for (const k of Object.keys(inStreet)) delete inStreet[k]; }
+    const had = inStreet[a.id] || 0;
+
+    if (a.k === 'fold') {
+      // Folding the best hand is only knowable where everybody left in showed theirs, which is
+      // to say at a showdown. Anywhere else the portal would be guessing and does not say.
+      if (a.id === me && street !== 'preflop') {
+        const others = [...live].filter((x) => x !== me && hole[x] && hole[x].length);
+        if (others.length && board.length === 5) {
+          const mineScore = evalHand('holdem', hole[me], board).score;
+          const best = Math.max(...others.map((x) => evalHand('holdem', hole[x], board).score));
+          if (mineScore > best) {
+            out.push({
+              no: rec.no, kind: 'fold',
+              text: 'you folded, and by the river yours would have been the best hand. '
+                + money(rec.pot || 0, big) + ' in the middle at the end.',
+            });
+          }
+        }
+      }
+      live.delete(a.id);
+      continue;
+    }
+    if (a.k === 'check') continue;
+    if (a.k === 'sb' || a.k === 'bb' || a.k === 'ante') { inStreet[a.id] = a.a; high = Math.max(high, a.a); pot += a.a; continue; }
+
+    const put = a.a - had;
+    const callingFor = high - had;
+
+    // A call on the river, where the price is the whole story.
+    //
+    // Only the river. On any earlier street there is betting still to come and the hand can
+    // improve, so "you needed 40% and had 28%" is true about the immediate price and misleading
+    // as a judgement - it calls a perfectly ordinary big-blind defence a mistake. On the river
+    // nothing more is coming: what he had to put in against what was there is the entire
+    // question, and the answer is simply right or wrong.
+    if (a.id === me && street === 'river' && a.a <= high && put > 0) {
+      const facing = board.slice(0, STREET_CARDS[street] || 0);
+      // Against everybody still in, not just one man. The portal holds every card, so this is
+      // his real chance of ending up with the best hand, which is the figure the price has to be
+      // measured against. Four people calling along is the ordinary case at this table, and a
+      // check that only fired heads-up would almost never fire at all.
+      const others = [...live].filter((x) => x !== me && hole[x] && hole[x].length);
+      if (others.length && pot > 0) {
+        const ids = ['me'].concat(others.map((_, i) => 'o' + i));
+        const cs = { me: hole[me] };
+        others.forEach((x, i) => { cs['o' + i] = hole[x]; });
+        const e = equities(facing, cs, ids);
+        const needed = put / (pot + put);
+        const had2 = e.eq.me;
+        // A call has to be big enough to matter before it is worth saying anything about. Calling
+        // one blind on the end with the best hand is not a decision anybody needs told back to
+        // them, and five lines like that bury the one hand that actually cost something.
+        const worthSaying = big ? put >= 2 * big : put >= pot * 0.12;
+        if (!worthSaying) { /* too small to be a lesson */ }
+        else if (needed - had2 > 0.08) {
+          out.push({
+            no: rec.no, kind: 'call',
+            text: 'you called ' + money(put, big) + ' to win ' + money(pot, big)
+              + '. For that to be worth it you had to be good ' + Math.round(needed * 100)
+              + ' times in 100 - you were good ' + Math.round(had2 * 100) + ' times in 100.',
+          });
+        } else if (had2 - needed > 0.3) {
+          out.push({
+            no: rec.no, kind: 'good',
+            text: 'you called ' + money(put, big) + ' when you only had to be good '
+              + Math.round(needed * 100) + ' times in 100 - and you were good '
+              + Math.round(had2 * 100) + ' times in 100.',
+          });
+        }
+      }
+    }
+    inStreet[a.id] = a.a;
+    if (a.a > high) high = a.a;
+    pot += put;
+    void callingFor;
+  }
+
+  // Getting it all in. Like a river call, this is a judgement that can be made whole: no decision
+  // follows it, so what the hand was worth at that moment is the entire question. Whether it came
+  // in or not is beside the point and is said separately.
+  if (rec.allIn && rec.allIn.ids && rec.allIn.ids.length > 1 && rec.allIn.ids.includes(me)) {
+    const e = equities(rec.allIn.board || [], rec.allIn.cards || {}, rec.allIn.ids);
+    const mineEq = Math.round((e.eq[me] || 0) * 100);
+    const took = (rec.won || {})[me] || 0;
+    const fair = Math.round((e.eq[me] || 0) * (rec.pot || 0));
+    out.push({
+      no: rec.no,
+      kind: mineEq >= 55 ? 'good' : mineEq >= 40 ? 'fold' : 'call',
+      text: 'all in against ' + (rec.allIn.ids.length - 1)
+        + (rec.allIn.ids.length === 2 ? ' man' : ' men') + ' with ' + mineEq
+        + ' chances in 100. Your share of the ' + money(rec.pot || 0, big) + ' pot was '
+        + money(fair, big) + '; you took ' + money(took, big) + '.',
+    });
+  }
+  return out;
+}
+
+// Every decision one man made in a hand, with the price he was getting and what he actually
+// held at that moment.
+//
+// This is the thing a solver cannot do and the portal can, because the portal dealt the cards.
+// Railbird has to reason about what the others might have; this knows. What it will not do is
+// say what they had - a review that listed everybody's folded cards would be a record of how the
+// rest of the table plays, handed to one player, and that is not a study tool, it is an edge.
+function spots(rec, forId) {
+  const hole = rec.hole || {};
+  const board = rec.board || [];
+  const players = rec.players || [];
+  const mine = players.filter((p) => (p.memberId || p.id) === forId).map((p) => p.id);
+  if (!mine.length || !hole[mine[0]]) return null;
+  const me = mine[0];
+
+  const live = new Set(players.map((p) => p.id));
+  const inStreet = {};
+  let street = 'preflop';
+  let high = 0;
+  let pot = 0;
+  const steps = [];
+
+  for (const a of rec.acts || []) {
+    if (a.s !== street) { street = a.s; high = 0; for (const k of Object.keys(inStreet)) delete inStreet[k]; }
+    const had = inStreet[a.id] || 0;
+
+    if (a.id === me && a.k !== 'sb' && a.k !== 'bb' && a.k !== 'ante') {
+      const facing = board.slice(0, STREET_CARDS[street] || 0);
+      const others = [...live].filter((x) => x !== me && hole[x] && hole[x].length);
+      const toCall = Math.max(0, high - had);
+      let eq = null;
+      if (others.length) {
+        const ids = ['me'].concat(others.map((_, i) => 'o' + i));
+        const cs = { me: hole[me] };
+        others.forEach((x, i) => { cs['o' + i] = hole[x]; });
+        eq = equities(facing, cs, ids).eq.me;
+      }
+      steps.push({
+        street,
+        did: a.k === 'allin' ? (a.a > high ? 'raise' : 'call') : a.k,
+        amount: a.a,
+        pot: Math.round(pot),
+        toCall: Math.round(toCall),
+        needed: toCall > 0 ? Math.round((toCall / (pot + toCall)) * 100) : null,
+        equity: eq === null ? null : Math.round(eq * 100),
+        against: others.length,
+      });
+    }
+
+    if (a.k === 'fold') { live.delete(a.id); continue; }
+    if (a.k === 'check') continue;
+    inStreet[a.id] = a.a;
+    if (a.a > high) high = a.a;
+    pot += a.a - had;
+  }
+
+  return {
+    no: rec.no, pot: rec.pot, board,
+    cards: hole[me],
+    // what everybody else held is deliberately not here
+    won: (rec.won || {})[me] || 0,
+    steps,
+  };
 }
 
 // ---------------------------------------------------------------- the report
@@ -257,14 +469,16 @@ function report(hands, opts) {
       cbet: pct(s.cbetN, s.cbetChance),
       foldToCbet: pct(s.foldedToCbet, s.facedCbet),
       wtsd: pct(s.showdowns, s.sawFlop),
+      sawFlop: s.sawFlop,
       wonAtShowdown: pct(s.wonAtShowdown, s.showdowns),
       // bets and raises against calls. One means he raises as often as he calls.
       aggression: s.passive ? Math.round((s.aggressive / s.passive) * 100) / 100 : (s.aggressive ? null : 0),
       allIns: s.allIns,
       // what the pots he was all-in for were worth to him, against what he actually took
       dueAllIn: Math.round(s.allInEquity),
-      gotAllIn: s.allInWon,
+      gotAllIn: Math.round(s.allInWon),
       luck: Math.round(s.allInWon - s.allInEquity),
+      luckUnit: s.allInUnit || 'chips',
       sampled: s.sampled,
     };
   }
@@ -275,27 +489,35 @@ function report(hands, opts) {
 // back in words, with the count attached so it can be checked. None of them is advice: the portal
 // has no idea what the right frequency is, and a number dressed up as a verdict would be a lie
 // told confidently.
-function remarks(r) {
+// `who` decides the voice: the night's own review is addressed to the man reading it, while the
+// screen that lists everybody has to talk about each of them by name.
+function remarks(r, big, who) {
+  const you = who === 'you';
+  const HE = you ? 'you' : 'he';
+  const HIM = you ? 'you' : 'him';
+  const DID = (v, p) => (you ? p : v);
   const out = [];
   if (!r || !r.hands || r.hands < 20) return out;
   const n = r.hands;
-  if (r.vpip !== null && r.vpip >= 55) out.push(`put money in before the flop in ${r.vpip}% of hands`);
-  else if (r.vpip !== null && r.vpip <= 15) out.push(`put money in before the flop in only ${r.vpip}% of hands`);
-  if (r.vpip !== null && r.pfr !== null && r.vpip - r.pfr >= 30) {
-    out.push(`came in calling far more than raising - ${r.vpip}% in, ${r.pfr}% of it raised`);
+  const inTen = (p) => Math.max(1, Math.round(p / 10));
+  if (r.foldToCbet !== null && r.foldToCbet >= 70) {
+    out.push(`when somebody bet the flop at ${HIM}, ${HE} ${DID('folded', 'folded')} about ${inTen(r.foldToCbet)} ${inTen(r.foldToCbet) === 1 ? 'time' : 'times'} in 10`);
   }
-  if (r.foldToCbet !== null && r.foldToCbet >= 70) out.push(`folded to ${r.foldToCbet}% of bets on the flop`);
-  if (r.foldTo3Bet !== null && r.foldTo3Bet >= 75) out.push(`gave up to ${r.foldTo3Bet}% of re-raises before the flop`);
-  if (r.aggression !== null && r.aggression <= 0.4) out.push(`called about ${Math.round(1 / Math.max(r.aggression, 0.05))} times for every bet or raise`);
-  if (r.wtsd !== null && r.wtsd >= 45) out.push(`went to a showdown with ${r.wtsd}% of the hands he saw a flop with`);
-  if (r.cbet !== null && r.cbetChance !== 0 && r.cbet <= 25) out.push(`bet the flop after raising before it only ${r.cbet}% of the time`);
-  if (r.allIns >= 5 && Math.abs(r.luck) > 0) {
+  if (r.foldTo3Bet !== null && r.foldTo3Bet >= 75) {
+    out.push(`when ${HE} raised and somebody raised ${HIM} back, ${HE} gave it up about ${inTen(r.foldTo3Bet)} ${inTen(r.foldTo3Bet) === 1 ? 'time' : 'times'} in 10`);
+  }
+  if (r.cbet !== null && r.cbetChance !== 0 && r.cbet <= 25) {
+    out.push(`after raising before the flop ${HE} bet the flop only ${r.cbet === 0 ? 'once all night, or not at all' : 'about ' + inTen(r.cbet) + (inTen(r.cbet) === 1 ? ' time' : ' times') + ' in 10'}`);
+  }
+  if (r.allIns >= 5 && Math.abs(r.luck) > 0 && r.luckUnit !== 'mixed') {
+    const u = r.luckUnit === 'bb' ? 'bb' : ' chips';
     out.push(r.luck < 0
-      ? `took ${Math.abs(r.luck).toLocaleString('en-IN')} chips less than the all-ins were worth to him`
-      : `took ${r.luck.toLocaleString('en-IN')} chips more than the all-ins were worth to him`);
+      ? `${you ? 'your' : 'his'} all-ins were worth ${Math.abs(r.luck).toLocaleString('en-IN')}${u} more than ${HE} actually took - the cards owed ${HIM}`
+      : `${HE} took ${r.luck.toLocaleString('en-IN')}${u} more from ${you ? 'your' : 'his'} all-ins than they were worth - the cards were kind`);
   }
+  void big; void DID;
   void n;
   return out;
 }
 
-module.exports = { equities, report, remarks, readHand, expand, STUDY_KINDS, STUDY_STREETS };
+module.exports = { equities, money, report, remarks, readHand, expand, findings, spots, STUDY_KINDS, STUDY_STREETS };

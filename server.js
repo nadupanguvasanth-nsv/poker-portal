@@ -16,6 +16,7 @@ const { Table, FORMATS, PICKABLE, SEATS, TOURNEY, NO_CAP, VARIANTS } = require('
 const { CATEGORY } = require('./engine');
 const { settle, statementPdf } = require('./statement');
 const study = require('./study');
+const { gameText } = require('./export');
 const { STUDY_KINDS, STUDY_STREETS } = study;
 const { START_GRACE_MS, ROUND_TO, YELLOW_AFTER_MS, RED_AFTER_MS, RED_AT_DEBTS } = require('./house');
 const webpush = require('./webpush');
@@ -141,6 +142,21 @@ const ROUNDS_KEPT = Number(process.env.ROUNDS_KEPT || 10);
 
 const httpErr = (code, message) => Object.assign(new Error(message), { status: code });
 
+
+// Which seat had the button, worked out from who put in the small blind. Three or more players:
+// the button is the seat before the small blind, going round. Heads up: the small blind is the
+// button. With no small blind on record - which should not happen - the first seat, as before.
+function buttonSeat(h) {
+  const seats = (h.players || []).map((p) => p.seat);
+  if (!seats.length) return 0;
+  const sb = (h.acts || []).find((a) => a.k === 'sb');
+  if (!sb) return seats[0];
+  const who = (h.players || []).find((p) => p.id === sb.id);
+  if (!who) return seats[0];
+  if (seats.length === 2) return who.seat;
+  const i = seats.indexOf(who.seat);
+  return seats[(i - 1 + seats.length) % seats.length];
+}
 // ---------------------------------------------------------------- state
 let state = { members: {}, history: [], vapid: null };
 const store = makeStore(process.env);
@@ -547,9 +563,27 @@ function keepRound(t, h) {
       no: rec.no, pot: h.pot,
       p: rec.players.map((x) => (t.players.get(x.id) || {}).memberId || x.id),
       a: (h.acts || []).map((x) => [STREETS.indexOf(x.s), KINDS.indexOf(x.k), seatOf[x.id], x.a || 0])
-        .filter((x) => x[0] >= 0 && x[1] >= 0 && x[2] !== undefined),
+        .filter((x, i, all) => {
+          const ok = x[0] >= 0 && x[1] >= 0 && x[2] !== undefined;
+          // Dropping an action quietly would leave a record that counts and reads perfectly and
+          // is missing a bet. Nothing can be done about it here, but it is said out loud so it
+          // shows up in the log rather than in somebody's figures a month later.
+          if (!ok) console.log('study: hand ' + rec.no + ' had an action the record could not place, and it was left out');
+          void i; void all;
+          return ok;
+        }),
       w: rec.players.map((x) => (rec.won || {})[x.id] || 0),
+      // What each man had in front of him as the hand began. Four numbers a hand, which is
+      // nothing, and without them a hand written out for an outside tool says everybody sat
+      // down with no chips - so the tool cannot tell a pot worth twenty blinds from one worth
+      // two hundred, and depth is most of what makes a decision right or wrong.
+      st: rec.players.map((x) => Math.round(x.start || 0)),
       sh: rec.players.map((x) => ((rec.reveal || {})[x.id] ? 1 : 0)),
+      // The board and everybody's cards. Needed for the only kind of judgement the portal can
+      // honestly make about a decision - whether the price was there - which cannot be worked out
+      // without knowing what the man actually held. Kept per seat, so it is a handful of bytes.
+      b: (h.boards[0] || []).slice(),
+      c: rec.players.map((x) => ((h.players.find((y) => y.id === x.id) || {}).cards || []).slice()),
       ai: h.allIn ? {
         b: h.allIn.board,
         c: h.allIn.ids.map((id) => h.allIn.cards[id]),
@@ -869,8 +903,10 @@ const routes = {
       .filter((g) => (g.study || []).length)
       .filter((g) => !from || g.at >= from)
       .filter((g) => m.isAdmin || g.people.some((p) => p.memberId === m.id));
+    // Each hand carries the big blind of the night it was played, so nights at different stakes
+    // can be counted together without pretending a chip means the same thing on both.
     const hands = [];
-    for (const g of games) for (const h of g.study) hands.push(h);
+    for (const g of games) for (const h of g.study) hands.push({ ...h, bb: g.bb || 0 });
     const full = study.report(hands);
     const mine = m.isAdmin ? full : (full[m.id] ? { [m.id]: full[m.id] } : {});
     const names = {};
@@ -883,6 +919,118 @@ const routes = {
         ...mine[id], remarks: study.remarks(mine[id]),
       })).sort((a, c) => c.hands - a.hands),
     };
+  },
+
+  // One night, looked at properly: the figures, how the chips moved, the pots that turned it,
+  // and the decisions where the price can be worked out after the fact.
+  //
+  // The hand-by-hand findings are only ever a man's own. They are built out of everybody's hole
+  // cards - there is no other way to say what a call was worth - and handing one player a record
+  // of what the rest fold would be handing him the game.
+  review(b) {
+    const m = people.auth(b);
+    const g = state.history.find((x) => x.id === b.id);
+    if (!g) throw httpErr(404, 'No such game');
+    const played = g.people.some((p) => p.memberId === m.id);
+    if (!m.isAdmin && !played) throw httpErr(403, 'You were not in that game');
+    const hands = (g.study || []).map(study.expand).map((h) => ({ ...h, bb: g.bb || 0 }));
+    const full = study.report(hands);
+
+    // what the night did, chip by chip, for whoever is looking
+    const mine = g.people.find((p) => p.memberId === m.id);
+    const curve = mine && g.curve ? (g.curve[mine.id] || []) : [];
+    let low = 0, high = 0, run = 0;
+    const start = curve.length ? curve[0][1] : 0;
+    for (const pt of curve) { run = pt[1] - start; low = Math.min(low, run); high = Math.max(high, run); }
+
+    // the pots that turned it, biggest first
+    const swings = hands.map((h) => {
+      const row = (h.players || []).find((p) => p.memberId === m.id);
+      if (!row) return null;
+      const got = (h.won || {})[row.id] || 0;
+      let put = 0;
+      const inStreet = {};
+      for (const a of h.acts || []) {
+        if (a.id !== row.id) continue;
+        if (a.k === 'fold' || a.k === 'check') continue;
+        const had = inStreet[a.s] || 0;
+        if (a.a > had) { put += a.a - had; inStreet[a.s] = a.a; }
+      }
+      return { no: h.no, net: got - put, pot: h.pot, cards: (h.hole || {})[row.id] || [] };
+    }).filter(Boolean).sort((a, c) => Math.abs(c.net) - Math.abs(a.net)).slice(0, 3);
+
+    return {
+      id: g.id, at: g.at, title: g.formatName, hands: hands.length,
+      bb: g.bb || 0, meId: m.id,
+      me: mine ? full[m.id] || null : null,
+      remarks: mine && full[m.id] ? study.remarks(full[m.id], g.bb || 0, 'you') : [],
+      // everybody's figures for the portal admin; a member gets his own
+      who: (m.isAdmin ? Object.keys(full) : [m.id]).filter((id) => full[id]).map((id) => ({
+        id, name: (g.people.find((p) => p.memberId === id) || {}).name || 'somebody', ...full[id],
+      })).sort((a, c) => c.hands - a.hands),
+      curve: curve.map((pt) => [pt[0], pt[1] - start]),
+      low, high,
+      swings,
+      // Mistakes first, then the ones that went well, and few enough that each is read rather
+      // than scrolled past. A screen of twelve findings is a screen nobody finishes.
+      findings: hands.flatMap((h) => study.findings(h, m.id, g.bb || 0))
+        .sort((a, c) => (a.kind === 'good' ? 1 : 0) - (c.kind === 'good' ? 1 : 0))
+        .slice(0, 6),
+    };
+  },
+
+  // A night written out the way an online room writes it, so a study tool can read it. Only the
+  // Texas hands: three flops and five-card Omaha have no expression in that format at all, and a
+  // tool reading them would be reading something that is not what happened.
+  //
+  // Nothing is deleted afterwards and nothing has to be asked for in advance. Every Texas hand is
+  // kept anyway and a night is about 27 KB, so there is no weight to shed and no reason to make
+  // somebody decide beforehand which games they might one day want to look at.
+  'export-hands'(b) {
+    const m = people.auth(b);
+    const g = state.history.find((x) => x.id === b.id);
+    if (!g) throw httpErr(404, 'No such game');
+    const mine = g.people.find((p) => p.memberId === m.id);
+    if (!m.isAdmin && !mine) throw httpErr(403, 'You were not in that game');
+    const hands = (g.study || []).map(study.expand).map((h) => ({
+      no: h.no, at: g.at, variant: 'holdem', pot: h.pot,
+      // Where the button was. The record does not name it, but it does name who posted the small
+      // blind, and the button is the seat before him - or, heads up, the small blind himself.
+      // Written as seat one for every hand, as it was, any tool reading the file would have
+      // concluded that the whole night was played from one position, and position is most of
+      // what a hand means.
+      button: buttonSeat(h),
+      boards: [h.board || []],
+      acts: h.acts,
+      players: h.players.map((p) => ({
+        id: p.id, seat: p.seat, start: p.start || 0,
+        name: (g.people.find((x) => x.memberId === p.memberId) || {}).name || 'Player',
+      })),
+      cards: h.hole || {},
+      reveal: Object.keys(h.reveal || {}).reduce((a, id) => { a[id] = { cards: (h.hole || {})[id] || [] }; return a; }, {}),
+      won: h.won || {},
+      // Seat numbers are per hand: the man in seat 2 tonight's eighth hand need not be the man
+      // who was in seat 2 in the first, because people join and leave. So each hand says for
+      // itself which seat belongs to the man asking, rather than a single seat taken from hand
+      // one and assumed to hold - which would have written somebody else's cards as his.
+      hero: (h.players.find((p) => p.memberId === m.id) || {}).id || null,
+    }));
+    if (!hands.length) throw httpErr(400, 'No Texas hands were played that night, so there is nothing a solver could read');
+    const text = gameText({ code: g.code, at: g.at, sb: g.sb, bb: g.bb, title: g.formatName, hands }, { seats: SEATS });
+    return { name: 'smart-buddies-' + (g.code || 'game') + '.txt', hands: hands.length, text };
+  },
+
+  // One hand, decision by decision, for whoever is asking about his own play.
+  spot(b) {
+    const m = people.auth(b);
+    const g = state.history.find((x) => x.id === b.id);
+    if (!g) throw httpErr(404, 'No such game');
+    if (!m.isAdmin && !g.people.some((p) => p.memberId === m.id)) throw httpErr(403, 'You were not in that game');
+    const rec = (g.study || []).map(study.expand).find((h) => h.no === Number(b.hand));
+    if (!rec) throw httpErr(404, 'No such hand on record');
+    const out = study.spots(rec, m.id);
+    if (!out) throw httpErr(404, 'You were not dealt into that hand');
+    return { ...out, bb: g.bb || 0 };
   },
 
   // ---- the groups a primary member plays with ----
