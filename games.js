@@ -87,7 +87,7 @@ function tourneySettings(s = {}) {
   const levelMin = Number.isFinite(m) && m >= TOURNEY.minLevelMin && m <= TOURNEY.maxLevelMin
     ? m : Math.round(TOURNEY.levelMs / 60000);
   const b = tourneyBlinds(stack);
-  return { ...base, sb: b.sb, bb: b.bb, minBuyin: stack, maxBuyin: stack, levelMs: levelMin * 60000 };
+  return { ...base, minPlayers: 2, sb: b.sb, bb: b.bb, minBuyin: stack, maxBuyin: stack, levelMs: levelMin * 60000 };
 }
 
 class Table {
@@ -260,7 +260,10 @@ class Table {
     // game goes on for as long as two people have chips. Held to its starting number, a table of
     // four stopped dead the moment one man went out, stood up or let his clock run down - and a
     // tournament stopped for good, because nobody can join one to make the number up again.
-    const need = this.startedAt ? 2 : Math.max(2, this.settings.minPlayers);
+    // A tournament has no starting number at all. Nothing about it is automatic: whoever runs it
+    // looks at who has turned up and starts it when he judges that enough, and the only thing
+    // the table insists on is the two it takes to play a hand.
+    const need = this.startedAt || this.format === 'tournament' ? 2 : Math.max(2, this.settings.minPlayers);
     if (ready.length < need) {
       return `Waiting for ${need} players with chips (${ready.length} so far)`;
     }

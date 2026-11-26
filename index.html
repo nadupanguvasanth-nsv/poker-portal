@@ -488,13 +488,16 @@ function newTableForm() {
     h += '<div class="h2">THE TOURNAMENT</div><div style="display:flex;gap:8px">'
       + miniField('n_stack', 'CHIPS EACH', S.lastStack || 10000, 'oninput="tourneyEcho()" onblur="tourneySnap()"')
       + miniField('n_level', 'MINUTES A LEVEL', S.lastLevel || 5, 'oninput="tourneyEcho()" onblur="tourneySnap()"')
-      + '</div><div class="muted small" id="t_echo" style="margin-top:8px;white-space:normal">' + tourneyLine(S.lastStack || 10000, S.lastLevel || 5) + '</div>'
+      + '</div><div class="muted small" style="margin-top:6px;white-space:normal">A tournament never starts by itself and has no number to reach. '
+      + 'You start it, when you judge that enough have sat down - it only takes two to play. Nobody can join once you have.</div><div class="muted small" id="t_echo" style="margin-top:8px;white-space:normal">' + tourneyLine(S.lastStack || 10000, S.lastLevel || 5) + '</div>'
       + '<div class="muted small" style="margin-top:8px;white-space:normal">Chips go in tens of thousands &mdash; 10,000, 20,000, 50,000 and so on. Anything in between is taken to the nearest. No late entries, nobody buys more chips, and the last player holding everything wins.</div>';
   } else {
     h += '<div class="h2">THE TABLE</div><div style="display:flex;gap:8px">'
       + miniField('n_sb', 'SMALL', S.lastSb || 100) + miniField('n_bb', 'BIG', S.lastBb || 200) + miniField('n_min', 'MIN BUY-IN', S.lastMin || 10000)
       + '</div><div style="display:flex;gap:8px;margin-top:8px">'
-      + miniField('n_players', 'START WITH', 4) + miniField('n_turn', 'SECONDS A TURN', 40) + '</div>'
+      + miniField('n_players', 'START WITH (2 TO 7)', S.lastPlayers || 4) + miniField('n_turn', 'SECONDS A TURN', 40) + '</div>'
+      + '<div class="muted small" style="margin-top:6px;white-space:normal">Start with is yours to set: how many must be sitting down with chips, you included, '
+      + 'before the table deals itself. Four is only what it comes filled in with - make it 2 or 3 if that is the game you want. It is fixed once the table is open, and there is no starting short of it.</div>'
     + groupPicker()
       + '<div style="display:flex;gap:8px;margin-top:8px">'
       + miniField('n_stay', 'MINUTES EACH', S.lastStay === undefined ? 60 : S.lastStay) + '<div style="flex:1"></div></div>'
@@ -554,9 +557,11 @@ function doOpen() {
     S.lastLevel = tLevel(val('n_level'));
     body.settings = { stack: S.lastStack, levelMin: S.lastLevel };
   } else {
+    // how many it takes to start: his call, between two and the number of seats, and remembered
+    S.lastPlayers = Math.max(2, Math.min(S.seats || 7, Math.floor(Number(val('n_players'))) || 4));
     S.lastSb = Number(val('n_sb')); S.lastBb = Number(val('n_bb')); S.lastMin = Number(val('n_min'));
     S.lastStay = Math.max(0, Math.floor(Number(val('n_stay'))) || 0);
-    body.settings = { sb: S.lastSb, bb: S.lastBb, minBuyin: S.lastMin, minPlayers: Number(val('n_players')),
+    body.settings = { sb: S.lastSb, bb: S.lastBb, minBuyin: S.lastMin, minPlayers: S.lastPlayers,
       turnSeconds: Number(val('n_turn')), minMinutes: S.lastStay };
   }
   api('table-open', body).then(function (j) {
@@ -608,18 +613,19 @@ function generalBook() {
     'A primary member can start a table, and whoever starts it runs it. Several can run at once. Everybody else plays in them - the portal admin decides who is which, and tells you if he changes yours.',
     'Starting one gives you a message to paste into the group chat.',
     'Before play, take a free seat from the list. The table deals itself once enough of you are sitting down with chips - nobody presses anything, and it says so a few seconds before it does.',
+    'Whoever opens a table sets that number, anything from two to seven, and he is one of it: a table opened for four deals when three more have joined him. Somebody sitting out, or with no chips, is not counted. It will not start short of the number.',
     'If somebody stands up again before it deals, it stops and says why rather than going quiet.',
     'Tap the cards in the middle of the table to see them large for a moment. The table menu has a switch for a four-colour deck - clubs green, diamonds blue - and a button that tests the sound and tells you what your phone says about it.',
     'Whoever runs a table can pause it and start it again. Every clock stops with it - the time to act, the minimum time you agreed to stay, and in a tournament the blinds - so a break costs nobody anything. Only a set finishing time stays where it is, because that is a time of day.',
     'The number a table is opened for is only for starting. Once the first hand is dealt it carries on as long as two players have chips.',
-    'A tournament is the exception: it waits for whoever runs it to start it, and nobody joins once it has begun. It is play or fold - nobody sits out of one - and whoever runs it can pause it, blinds and all.',
+    'A tournament is the exception: it has no starting number and never starts by itself. Whoever runs it starts it when he judges enough have sat down, and nobody joins once it has begun. It is play or fold - nobody sits out of one - and whoever runs it can pause it, blinds and all.',
     'Arrive after it has started and you ask to come in; whoever runs the table lets you in or does not.',
     'You can watch a running game without taking a seat, and be offered one from inside the room.',
   ]);
 
   part('At the table', [
     'Seven seats, first come first served.',
-    'Nothing waits on a tap that never comes: run out of time on your turn and you check if you can, fold if you cannot, and sit out until you say otherwise.',
+    'Nothing waits on a tap that never comes: run out of time on your turn and you check if you can, fold if you cannot, and sit out until you say otherwise. In a tournament you are not sat out: you stay dealt in, paying your blinds, and your hands are folded after a moment until you are back.',
     'However long a table asks you to stay, your time runs from when <b>you</b> sat down, not from when the game began.',
     'Three ways out before your time is up: you have lost the lot, whoever runs the table lets you go, or you sit in the ring paying your blinds - posted and folded, never dealt - until your time is up.',
     'Chips bought while a hand is being played go on when that hand ends, never in the middle of it.',
@@ -631,7 +637,7 @@ function generalBook() {
   part('Saying something', [
     'Nobody types at a table. There is a list of things worth saying and you tap one - back in five minutes, deal me out, one more orbit, nice hand, I need to leave early.',
     'It lands at the bottom of the other person\u2019s screen for five seconds and then goes.',
-    'Some of them do the thing as well as say it: asking to leave early raises the real request, and buying back in, sitting out and coming back happen on the tap.',
+    'Some of them do the thing as well as say it: asking to leave early raises the real request, and buying back in, sitting out and coming back happen on the tap. A tournament has no sitting out and no buying back in, so those are not on its list.',
     'Whoever runs the table has his own list - starting in a minute, your turn, taking a break, wrapping up, please settle up.',
   ]);
 
@@ -653,9 +659,7 @@ function generalBook() {
     'Only the portal admin lifts a red flag, and paying up does not lift it by itself.',
     'If a winner cannot be reached, the portal admin can enter the receipt for him - and it is recorded as exactly that.',
     'Chips are virtual. What you settle between yourselves, and how, is your own business.',
-    'The portal counts how you play, out of the Texas hands it has watched: how often you put money in, how often you raise rather than call, how often you bet the flop, how often you give it up. On the Me screen, under How it is going, and nobody sees yours but you - the portal admin sees everybody\u2019s.',
-    'It also works out what the pots were worth to you when everybody was all-in and the rest was down to the cards, and sets that against what you actually took. That is the answer to always getting unlucky, one way or the other.',
-    'None of it is ever shown while a hand is being played, and none of it is advice. The portal knows what you did and what it was worth. It does not know what you should have done, and will not pretend to.',
+    'The portal keeps a count of how the Texas hands are played and what the all-in pots were worth. That record is the portal admin\u2019s alone: no member can open it, his own figures included, and none of it is ever shown while a hand is being played.',
     'Being taken out of the portal does not erase you. Every game you played, and anything owed either way, stays on the record, and you come back as yourself if the portal admin puts you back.',
   ]);
 
@@ -704,6 +708,8 @@ function gameBook() {
     bits.push(g.pl
       ? 'Pot-limit: raise anything you like between the minimum and the pot \u2014 and a pot raise means your call first, then the pot as it stands after that call, so with 300 in the middle and 200 to call it comes to 700. The \u00bd pot and \u00be pot buttons work out the amounts for you.'
       : 'No-limit: raise anything from the minimum up to every chip you have');
+    bits.push('A card is burned before the flop, before the turn and before the river'
+      + (g.boards > 2 && g.hole >= 5 ? '. With seven players this game can run the deck too short to burn at the river - the river cards are then dealt without one' : ', as long as the deck can spare it - the board always comes first'));
     bits.push('Up to ' + Math.min(g.max, S.seats || 7) + ' players in a hand');
     h += '<div style="margin-top:8px">';
     bits.forEach(function (b) {
@@ -775,13 +781,13 @@ function rulesSheet() {
     + (t.format === 'tournament' ? row('Starts', 'when ' + esc(t.admin) + ' starts it') : row('Deals itself at', t.minPlayers + ' players'))
     + row('Time to act', t.turnSeconds + ' seconds');
   if (t.format === 'tournament') {
-    h += note('A tournament does not deal itself. ' + esc(t.admin) + ' starts it once everybody playing has sat down, and it needs at least '
-      + t.minPlayers + ' to begin - after that it is played down to the last one. Nobody joins once it has started. ' + esc(t.admin) + ' can pause it and start it again, and the blinds stand still while it is paused.');
+    h += note('A tournament does not deal itself and has no number to reach. ' + esc(t.admin) + ' starts it when he judges that enough have sat down - '
+      + 'it only takes two to play - and from there it is played down to the last one. Nobody joins once it has started. ' + esc(t.admin) + ' can pause it and start it again, and the blinds stand still while it is paused.');
   } else {
     h += note('Nobody has to press anything to begin. Once ' + t.minPlayers + ' of you are sitting down with chips the table says so and deals '
     + (H.graceSeconds ? H.graceSeconds + ' seconds later' : 'straight away')
     + ' - and if somebody stands up again before then it stops and says why. That number is only for getting started: once the first hand is dealt the game carries on as long as two of you have chips. '
-    + esc(t.admin) + ' can deal early, or go short-handed, from the table menu. Anyone arriving after that asks to come in.');
+    + esc(t.admin) + ' counts as one of the ' + t.minPlayers + ', and anybody sitting out or without chips does not. It will not start short of that number. Anyone arriving after it has started asks to come in.');
   }
   if (t.lastHands) h += row('Still to play', t.lastHands + ' hand' + (t.lastHands === 1 ? '' : 's'));
   if (t.endAt) h += row('Finishing at', clock(t.endAt));
@@ -793,7 +799,7 @@ function rulesSheet() {
 
   h += '<div class="h2">SAYING SOMETHING</div>';
   h += row('How', 'Tap it, do not type it');
-  h += note('There is a list of things worth saying at a table and you tap one - back in five minutes, deal me out, one more orbit, nice hand, I need to leave early. It lands at the bottom of the other person\u2019s screen for five seconds and then goes. Some of them do the thing as well as say it: asking to leave early raises the real request with ' + esc(t.admin) + ', and buying back in, sitting out and coming back happen on the tap. ' + esc(t.admin) + ' has his own list - starting in a minute, your turn, taking a break, wrapping up, please settle up.');
+  h += note('There is a list of things worth saying at a table and you tap one - back in five minutes, deal me out, one more orbit, nice hand, I need to leave early. It lands at the bottom of the other person\u2019s screen for five seconds and then goes. Some of them do the thing as well as say it: asking to leave early raises the real request with ' + esc(t.admin) + ', and ' + (t.format === 'tournament' ? 'there is no sitting out or buying back in at a tournament, so those are not on the list' : 'buying back in, sitting out and coming back happen on the tap') + '. ' + esc(t.admin) + ' has his own list - starting in a minute, your turn, taking a break, wrapping up, please settle up.');
 
   h += '<div class="h2">SETTLING UP</div>';
   h += row('Stacks rounded to', fmt(H.roundTo) + ' chips');
@@ -807,7 +813,7 @@ function rulesSheet() {
 
   h += '<div class="h2">WHO RUNS IT</div>';
   h += row('This table', esc(t.admin));
-  h += note(esc(t.admin) + ' lets latecomers in, decides who may leave early, can stop the game for a break, call the last few hands or set a time to finish, and closes it at the end. Closing works out everyone\u2019s account and says who pays who. The portal admin can do all of that too.');
+  h += note(esc(t.admin) + ' lets latecomers in, decides who may leave early, can pause the game for a break - every clock stops with it: the time to act, the time you agreed to stay' + (t.format === 'tournament' ? ', and the blinds' : '') + ' - call the last few hands or set a time to finish, and closes it at the end. Closing works out everyone\u2019s account and says who pays who. The portal admin can do all of that too.');
 
   return h + '<button class="btn ghost" style="margin-top:16px" onclick="S.rules=null;render()">Back</button></div>';
 }
@@ -2839,7 +2845,7 @@ function controls(v, A, RES) {
         + (v.waiting ? esc(v.waiting) : v.format === 'tournament' ? 'Start the tournament' : 'Start now') + '</button>';
       if (v.format === 'tournament' && !v.waiting && v.status === 'waiting') {
         w += '<div class="muted small" style="margin-top:6px;white-space:normal">A tournament does not deal itself. '
-          + 'Start it when everybody who is playing has sat down - nobody can join once it has begun.</div>';
+          + 'There is no number to reach: start it when you judge that enough have sat down. Nobody can join once it has begun.</div>';
       }
     }
     else w += '<div class="evc" style="margin:0"><div class="muted small">' + (v.waiting ? esc(v.waiting) : 'Waiting for ' + esc(v.admin) + ' to start') + '</div></div>';
