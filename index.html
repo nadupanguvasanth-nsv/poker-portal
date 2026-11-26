@@ -245,7 +245,10 @@ function connect() {
     // his turn is over once the table no longer offers him anything to do: the lit button goes out
     // ... and the raise slider goes back to the start, so last turn's figure is never waiting
     // under his thumb on the next one
-    if (!S.v.legal) { S.pressed = null; S.sized = null; S.raiseTo = null; }
+    // ... and it is over just the same when the next thing he sees is a fresh turn of his own:
+    // two-handed, the big blind closes the betting before the flop and opens it after
+    if (!S.v.legal || S.v.turn !== S.turnKey) { S.pressed = null; S.sized = null; S.raiseTo = null; }
+    S.turnKey = S.v.turn;
     // the phone's clock may be minutes out; keep the difference so the turn ring runs true
     if (S.v.now) S.skew = Date.now() - S.v.now;
     watchActs();            // did somebody just call or raise? flash it on their seat
@@ -643,7 +646,7 @@ function generalBook() {
     'Tap the cards in the middle of the table to see them large for a moment. The table menu has a switch for a four-colour deck - clubs green, diamonds blue - and a button that tests the sound and tells you what your phone says about it.',
     'Whoever runs a table can pause it and start it again. Every clock stops with it - the time to act, the minimum time you agreed to stay, and in a tournament the blinds - so a break costs nobody anything. Only a set finishing time stays where it is, because that is a time of day.',
     'The number a table is opened for is only for starting. Once the first hand is dealt it carries on as long as two players have chips.',
-    'A tournament is the exception: it has no starting number and never starts by itself. Whoever runs it starts it when he judges enough have sat down, and nobody joins once it has begun. It is play or fold - nobody sits out of one - and whoever runs it can pause it, blinds and all.',
+    'A tournament is the exception: it has no starting number and never starts by itself. Only the member who opened it has the Start button - nobody else, the portal admin included - and he starts it when he judges enough have sat down. Nobody joins once it has begun. It is play or fold - nobody sits out of one - and whoever runs it can pause it, blinds and all.',
     'Arrive after it has started and you ask to come in; whoever runs the table lets you in or does not.',
     'You can watch a running game without taking a seat, and be offered one from inside the room.',
   ]);
@@ -656,7 +659,8 @@ function generalBook() {
     'Losing your connection is not sitting out. If your phone drops off the table, the hand you were in is checked or folded for you - or, if your chips were all in, it simply plays out and your stack shows the result - and you are left out of the deal until your phone is back. The moment it is, you are in the next hand without having to ask. If you had chosen to sit out before it dropped, you come back still sitting out.',
     'In a tournament nobody is sat out or left out of the deal: miss two turns, or lose your connection, and you stay dealt in, paying your blinds, with your hands folded after a moment until you are back.',
     'However long a table asks you to stay, your time runs from when <b>you</b> sat down, not from when the game began.',
-    'Three ways out before your time is up: you have lost the lot, whoever runs the table lets you go, or you sit in the ring paying your blinds - posted and folded, never dealt - until your time is up.',
+    'The minimum time holds only a player who is ahead - with more in front of him than he has bought in for. It is there to stop somebody winning a pot and leaving with it, not to keep anybody at the table losing. If you are level or down you may leave whenever you like, without asking.',
+    'If you are ahead there are two ways out before your time is up: whoever runs the table lets you go, or you sit in the ring paying your blinds - posted and folded, never dealt - until your time is up or you are no longer ahead.',
     'Chips bought while a hand is being played go on when that hand ends, never in the middle of it.',
     'If somebody is all-in for less than the bets around him, the rest goes into a side pot that only the players who paid into it can win. He can win no more than he put in, matched by everybody still in the hand.',
     'Showing your cards can be chosen at any point in a hand, but only happens once the hand is over.',
@@ -800,7 +804,7 @@ function rulesSheet() {
   h += '<div class="h2">STAYING AND LEAVING</div>';
   h += row('Expected to stay', t.minMinutes ? t.minMinutes + ' minutes' : 'As long as you like');
   if (t.minMinutes) {
-    h += note('Your ' + t.minMinutes + ' minutes run from when you sat down, not from when the game began, so arriving late does not mean leaving early. Three ways out before your time is up: you have lost the lot, ' + esc(t.admin) + ' lets you go, or you sit in the ring paying your blinds - posted and folded, never dealt - until your time is up and then leave with what is left. After that nobody has to ask anybody.');
+    h += note('Your ' + t.minMinutes + ' minutes run from when you sat down, not from when the game began, so arriving late does not mean leaving early. The time holds only a player who is ahead of what he has bought in for: level, down, or having lost the lot, you may leave whenever you like without asking. If you are ahead there are two ways out before your time is up: ' + esc(t.admin) + ' lets you go, or you sit in the ring paying your blinds - posted and folded, never dealt - until your time is up or you are no longer ahead, and then leave with what is left.');
   } else {
     h += note('Nobody has to ask to leave at this table.');
   }
@@ -2947,6 +2951,7 @@ function controls(v, A, RES) {
       + '<div class="muted small" style="white-space:normal;margin-top:3px">Nobody is on the clock and no hand will be dealt. '
       + esc(v.admin) + ' can start it again.</div></div>'
       + (v.iRunIt ? '<button class="btn" style="margin-top:10px" onclick="pauseGame(false)">Start the game again</button>' : '')
+      + (v.me && v.me.away && v.format !== 'tournament' ? '<button class="btn ghost" id="backin" style="margin-top:8px" onclick="setAway(false)">Join the next hand when it starts</button>' : '')
       + '</div>';
   }
   // Somebody who walked in to look rather than to play. Without this he falls through to the
@@ -2966,36 +2971,51 @@ function controls(v, A, RES) {
     }
     return h + '<button class="btn ghost" style="margin-top:8px" onclick="leaveTable()">Back to the tables</button></div>';
   }
+  // Sitting out, and the way back in. This comes before everything else a seated player can be
+  // shown, because it has to be there whatever the table is doing. It used to sit further down,
+  // after the screen for a table that is waiting - so the moment a game stopped for want of
+  // players, the one person who could set it going again by sitting back in lost the button that
+  // does it, and had to go looking in the menu. It is now always where his own buttons will be
+  // on his turn: at the bottom of the table.
+  if (v.me && v.me.away && v.format === 'tournament') {
+    return '<div style="padding-top:14px">'
+      + '<div class="evc" style="margin:0"><div style="font-weight:600;font-size:14px">Your clock ran out</div>'
+      + '<div class="muted small" style="white-space:normal;margin-top:3px">Nobody sits out of a tournament. You are still '
+      + 'dealt in and your blinds are still coming off you - your hands are being folded until you are back.</div></div>'
+      + '<button class="btn" id="backin" style="margin-top:10px;height:58px;font-size:17px" onclick="setAway(false)">I am back</button></div>';
+  }
+  if (v.me && v.me.away) {
+    var stopped = v.status !== 'playing' || !v.hand || v.hand.finished;
+    return '<div style="padding-top:12px">'
+      + '<button class="btn" id="backin" style="height:58px;font-size:17px" onclick="setAway(false)">Join the next hand</button>'
+      + '<div class="evc" style="margin:10px 0 0"><div style="font-weight:600;font-size:14px">You are sitting out</div>'
+      + '<div class="muted small" style="white-space:normal;margin-top:3px">Your seat and your chips are being kept, and no blinds are coming off you. '
+      + (stopped && v.waiting ? esc(v.waiting) + '. ' : '')
+      + 'Tap the button and you are dealt into the next hand.</div></div>'
+      + (v.iRunIt && v.status !== 'playing' && !v.waiting ? '<button class="btn ghost" style="margin-top:8px" onclick="startGame()">Start now</button>' : '')
+      + '</div>';
+  }
   if (v.status !== 'playing' || !v.hand) {
     var w = '<div style="padding-top:18px">';
-    if (v.iRunIt) {
-      w += '<button class="btn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">'
-        + (v.waiting ? esc(v.waiting) : v.format === 'tournament' ? 'Start the tournament' : 'Start now') + '</button>';
-      if (v.format === 'tournament' && !v.waiting && v.status === 'waiting') {
-        w += '<div class="muted small" style="margin-top:6px;white-space:normal">A tournament does not deal itself. '
-          + 'There is no number to reach: start it when you judge that enough have sat down. Nobody can join once it has begun.</div>';
+    if (v.iStart) {
+      // A tournament's button always says what it is. Alone at the table it used to read "Waiting
+      // for 2 players with chips", which is the reason it cannot be pressed yet and looked like
+      // there was no start button at all. The reason goes underneath, in its own line.
+      if (v.format === 'tournament') {
+        w += '<button class="btn" id="startbtn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">Start the tournament</button>'
+          + '<div class="muted small" style="margin-top:6px;white-space:normal">'
+          + (v.waiting ? 'It takes two to play: this lights up as soon as one more player has sat down. '
+            : 'There is no number to reach: start it when you judge that enough have sat down. ')
+          + 'A tournament never starts by itself, and nobody can join once it has begun.</div>';
+      } else {
+        w += '<button class="btn" id="startbtn" ' + (v.waiting ? 'disabled' : '') + ' onclick="startGame()">'
+          + (v.waiting ? esc(v.waiting) : 'Start now') + '</button>';
       }
     }
     else w += '<div class="evc" style="margin:0"><div class="muted small">' + (v.waiting ? esc(v.waiting) : 'Waiting for ' + esc(v.admin) + ' to start') + '</div></div>';
     return w + '</div>';
   }
   if (v.hand.runit) return '<div style="padding-top:14px">' + runItVote(v) + '</div>';
-
-  // sat out, by choice or because a clock ran out while the phone was away
-  if (v.me && v.me.away && v.format === 'tournament') {
-    return '<div style="padding-top:14px">'
-      + '<div class="evc" style="margin:0"><div style="font-weight:600;font-size:14px">Your clock ran out</div>'
-      + '<div class="muted small" style="white-space:normal;margin-top:3px">Nobody sits out of a tournament. You are still '
-      + 'dealt in and your blinds are still coming off you - your hands are being folded until you are back.</div></div>'
-      + '<button class="btn" style="margin-top:10px" onclick="setAway(false)">I am back</button></div>';
-  }
-  if (v.me && v.me.away) {
-    return '<div style="padding-top:14px">'
-      + '<div class="evc" style="margin:0"><div style="font-weight:600;font-size:14px">You are sitting out</div>'
-      + '<div class="muted small" style="white-space:normal;margin-top:3px">Your seat and your chips are being kept. '
-      + 'You are not in the hand being played and no blinds are coming off you.</div></div>'
-      + '<button class="btn" style="margin-top:10px" onclick="setAway(false)">Join the next hand</button></div>';
-  }
 
   // the hand is over: offer to show what you had
   if (v.hand.finished) {
@@ -3159,14 +3179,14 @@ function tableMenu(v) {
         h += '<button class="btn ghost" style="margin-top:8px" onclick="askLeave()">'
           + (v.me.stack <= 0 ? 'Leave the table' : 'Leave the table') + '</button>'
           + '<div class="muted small" style="margin-top:6px;white-space:normal">'
-          + (v.me.stack <= 0 ? 'You have no chips left, so you are free to go.' : 'You have stayed the time, so you may go whenever you like.')
+          + (v.me.stack <= 0 ? 'You have no chips left, so you are free to go.' : !v.me.ahead && v.settings.minMinutes ? 'You are not ahead of what you bought in for, so the minimum time does not hold you. You may go whenever you like.' : 'You have stayed the time, so you may go whenever you like.')
           + '</div>';
       } else if (v.me.asked) {
         h += '<div class="muted small" style="margin-top:8px;white-space:normal">You have asked ' + esc(v.admin) + ' if you can go early. Waiting on him.</div>';
       } else {
         h += '<button class="btn ghost" style="margin-top:8px" onclick="askLeave()">Ask to leave early</button>'
-          + '<div class="muted small" style="margin-top:6px;white-space:normal">Everybody said they would stay until '
-          + clock(v.me.freeAt) + '. Ask and ' + esc(v.admin) + ' decides; if he says no, your blinds keep going in without you until then.</div>';
+          + '<div class="muted small" style="margin-top:6px;white-space:normal">You are ahead, and everybody said they would stay until '
+          + clock(v.me.freeAt) + '. Ask and ' + esc(v.admin) + ' decides; if he says no, your blinds keep going in without you until then - or until you are no longer ahead.</div>';
       }
     }
   }

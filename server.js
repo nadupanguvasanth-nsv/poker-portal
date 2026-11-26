@@ -277,6 +277,8 @@ function tableView(t, member) {
     code: t.code, title: t.title, format: t.format, formatName: FORMATS[t.format].name,
     variant: t.variant, variantName: t.variant ? VARIANTS[t.variant].name : '',
     admin: t.adminName, adminId: t.adminId, iRunIt: iRun,
+    // whether the start button is his: at a tournament, only whoever opened it
+    iStart: t.format === 'tournament' ? t.isAdmin(member.id) : iRun,
     status: t.status, handNo: t.handNo, startedAt: t.startedAt, endedAt: t.endedAt,
     paused: !!t.paused, lastHands: t.lastHands || 0, endAt: t.endAt || 0,
     blinds: b, settings: t.settings, seatsMax: SEATS,
@@ -300,9 +302,12 @@ function tableView(t, member) {
     }),
     me: mine ? { id: mine.id, memberId: mine.memberId, seat: mine.seat, stack: mine.stack, bought: mine.bought, away: t.format === 'tournament' ? !!mine.absent : !!mine.away, out: !!mine.out,
       topUp: mine.topUp || 0, auto: !!mine.auto, inPlay: inPlay(t, mine),
-      canLeave: t.servedTime(mine), forfeit: !!mine.forfeit, asked: !!mine.leaveAsk,
+      canLeave: t.servedTime(mine), ahead: t.ahead(mine), forfeit: !!mine.forfeit, asked: !!mine.leaveAsk,
       freeAt: (t.settings.minMinutes || 0) ? (mine.joinedAt || t.createdAt) + t.settings.minMinutes * 60000 : 0 } : null,
     legal: mine && t.hand && !t.hand.finished ? (t.hand.legal(mine.id) || null) : null,
+    // which turn this is: it moves on with every action, so the phone can tell a new turn of his
+    // from the one he has just played even when the two arrive back to back
+    turn: t.hand ? t.handNo + ':' + t.hand.acts.length : '',
     // Check/fold, chosen ahead of his turn: whether it is on, and whether there is a turn of his
     // still to come in this hand for it to apply to.
     pre: !!(mine && t.hand && !t.hand.finished && mine.pre === t.handNo),
@@ -590,7 +595,7 @@ function nextHand(t) {
   // anybody the game admin let go, or who is out of a tournament, leaves now
   for (const p of t.seated()) {
     if (p.leaveOk) t.stand(p, 'leaving early, blinds waived');
-    else if (p.forfeit && t.servedTime(p)) t.stand(p, 'stayed to the end of his time and left');
+    else if (p.forfeit && t.servedTime(p)) t.stand(p, t.ahead(p) ? 'stayed to the end of his time and left' : 'is no longer ahead, so his blinds stop and he has left');
     else if (t.format === 'tournament' && p.busted) t.stand(p, 'out');
   }
   if (t.format === 'tournament') {
@@ -1233,6 +1238,11 @@ const routes = {
   'table-start'(b) {
     const m = people.auth(b);
     const t = lobby.mustRun(lobby.need(b.code), m);
+    // A tournament is started by the member who opened it, and by nobody else - not even the
+    // portal admin, who can do everything else at any table. Starting is the one decision that
+    // cannot be taken back: nobody can join afterwards, so it belongs to whoever called the game
+    // and knows who he is waiting for.
+    if (t.format === 'tournament' && !t.isAdmin(m.id)) throw httpErr(403, `Only ${t.adminName} can start this tournament`);
     if (t.status === 'ended') throw httpErr(400, 'That game has finished');
     if (t.paused) throw httpErr(400, 'The game is paused - start it again first');
     if (t.hand && !t.hand.finished) throw httpErr(400, 'A hand is already running');

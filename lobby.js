@@ -170,7 +170,7 @@ function makeLobby(ctx) {
       if (!p) throw httpErr(400, 'You are not at this table');
       if (t.servedTime(p)) {
         p.leaveOk = true;
-        t.say(p.stack <= 0 ? `${p.name} is out of chips and is leaving` : `${p.name} has stayed the time and is leaving`);
+        t.say(p.stack <= 0 ? `${p.name} is out of chips and is leaving` : !t.ahead(p) ? `${p.name} is not ahead and is leaving` : `${p.name} has stayed the time and is leaving`);
         changed(); broadcast(t);
         return { asked: false, leaving: true };
       }

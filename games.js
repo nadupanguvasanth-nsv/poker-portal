@@ -156,9 +156,16 @@ class Table {
 
   // Whether somebody has stayed as long as they said they would. A player who has lost everything
   // has nothing left to stay for, so his time is up whatever the clock says.
+  //
+  // The time is there to stop somebody winning a pot and walking out with it. It was never meant
+  // to keep a man at the table losing: so it binds only a player who is ahead. Anybody with no
+  // more in front of him than he has bought in for is free to go whenever he likes, without
+  // asking and without his blinds being taken.
+  ahead(p) { return !!p && p.stack > (p.bought || 0); }
   servedTime(p) {
     if (!p) return true;
     if (p.stack <= 0) return true;
+    if (!this.ahead(p)) return true;
     const mins = this.settings.minMinutes || 0;
     if (!mins) return true;
     return Date.now() - (p.joinedAt || this.createdAt) >= mins * 60000;
