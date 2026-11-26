@@ -238,6 +238,7 @@ class Table {
   // Returns true if the level went up, so the table can be told.
   tickLevel() {
     if (this.format !== 'tournament' || this.status !== 'playing') return false;
+    if (this.paused) return false;               // the clock stands still with the game
     if (!this.levelAt || Date.now() < this.levelAt) return false;
     this.level += 1;
     this.levelAt = Date.now() + this.levelMs();
@@ -248,13 +249,20 @@ class Table {
 
   // Who is actually ready to be dealt in: chips in front of them and not sitting out. Four people
   // where one has stepped away is a three-handed game, and should not set a table going.
-  ready() { return this.seated().filter((p) => p.stack > 0 && !p.away); }
+  // In a tournament there is no sitting out, so everybody with chips counts.
+  ready() { return this.seated().filter((p) => p.stack > 0 && (this.format === 'tournament' || !p.away)); }
 
   canStart() {
     if (this.status === 'ended') return 'This game has ended';
     const ready = this.ready();
-    if (ready.length < Math.max(2, this.settings.minPlayers)) {
-      return `Waiting for ${Math.max(2, this.settings.minPlayers)} players with chips (${ready.length} so far)`;
+    // How many it takes to BEGIN is not how many it takes to carry on. The table's number is for
+    // getting a game going and for nothing after that: once the first hand has been dealt, any
+    // game goes on for as long as two people have chips. Held to its starting number, a table of
+    // four stopped dead the moment one man went out, stood up or let his clock run down - and a
+    // tournament stopped for good, because nobody can join one to make the number up again.
+    const need = this.startedAt ? 2 : Math.max(2, this.settings.minPlayers);
+    if (ready.length < need) {
+      return `Waiting for ${need} players with chips (${ready.length} so far)`;
     }
     return '';
   }
@@ -263,7 +271,7 @@ class Table {
     const why = this.canStart();
     if (why) throw new Error(why);
     const dealt = this.seated()
-      .filter((p) => p.stack > 0 && !p.away)
+      .filter((p) => p.stack > 0 && (this.format === 'tournament' || !p.away))
       .sort((a, b) => a.seat - b.seat);
     if (dealt.length < 2) throw new Error('Not enough players with chips');
 

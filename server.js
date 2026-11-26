@@ -143,19 +143,11 @@ const ROUNDS_KEPT = Number(process.env.ROUNDS_KEPT || 10);
 const httpErr = (code, message) => Object.assign(new Error(message), { status: code });
 
 
-// Which seat had the button, worked out from who put in the small blind. Three or more players:
-// the button is the seat before the small blind, going round. Heads up: the small blind is the
-// button. With no small blind on record - which should not happen - the first seat, as before.
+// Which seat had the button, for writing a hand out. The study works out whose it was.
 function buttonSeat(h) {
-  const seats = (h.players || []).map((p) => p.seat);
-  if (!seats.length) return 0;
-  const sb = (h.acts || []).find((a) => a.k === 'sb');
-  if (!sb) return seats[0];
-  const who = (h.players || []).find((p) => p.id === sb.id);
-  if (!who) return seats[0];
-  if (seats.length === 2) return who.seat;
-  const i = seats.indexOf(who.seat);
-  return seats[(i - 1 + seats.length) % seats.length];
+  const id = study.buttonOf(h);
+  const p = (h.players || []).find((x) => x.id === id);
+  return p ? p.seat : 0;
 }
 // ---------------------------------------------------------------- state
 let state = { members: {}, history: [], vapid: null };
@@ -300,13 +292,13 @@ function tableView(t, member) {
       if (!p || p.out) return null;
       return {
         id: p.id, seat, name: p.name, stack: p.stack, bought: p.bought,
-        away: !!p.away, busted: !!p.busted, place: p.place || 0,
+        away: t.format === 'tournament' ? !!p.absent : !!p.away, busted: !!p.busted, place: p.place || 0,
         leaveAsk: !!p.leaveAsk, leaveOk: !!p.leaveOk,
         isAdmin: p.memberId === t.adminId, me: !!(mine && p.id === mine.id),
         flag: flagOf(p.memberId),          // everybody at the table can see who owes from before
       };
     }),
-    me: mine ? { id: mine.id, memberId: mine.memberId, seat: mine.seat, stack: mine.stack, bought: mine.bought, away: !!mine.away, out: !!mine.out,
+    me: mine ? { id: mine.id, memberId: mine.memberId, seat: mine.seat, stack: mine.stack, bought: mine.bought, away: t.format === 'tournament' ? !!mine.absent : !!mine.away, out: !!mine.out,
       topUp: mine.topUp || 0, auto: !!mine.auto, inPlay: inPlay(t, mine),
       canLeave: t.servedTime(mine), forfeit: !!mine.forfeit, asked: !!mine.leaveAsk,
       freeAt: (t.settings.minMinutes || 0) ? (mine.joinedAt || t.createdAt) + t.settings.minMinutes * 60000 : 0 } : null,
@@ -327,6 +319,8 @@ function tableView(t, member) {
 // ---------------------------------------------------------------- the clock
 function clearTimers(t) {
   clearTimeout(t.startTimer); t.startTimer = null; clearTimeout(t.timer); clearTimeout(t.nextTimer); t.timer = null; t.nextTimer = null; }
+
+const ABSENT_MS = Number(process.env.ABSENT_MS || 2500);
 
 function armTurn(t) {
   clearTimeout(t.timer);
@@ -351,16 +345,26 @@ function armTurn(t) {
   }
 
   if (h.turn < 0) return;
-  t.deadline = Date.now() + t.settings.turnSeconds * 1000;
+  // Nobody sits out of a tournament: every stack is dealt in and pays its blinds whether its
+  // owner is there or not. So a man whose clock has already run out once is not given the full
+  // clock again on every street of every hand - the table would wait on an empty chair all
+  // night. He is checked or folded after a moment, until he touches anything at all.
+  const onTurn = t.players.get((h.players[h.turn] || {}).id);
+  const gone = t.format === 'tournament' && onTurn && onTurn.absent;
+  const wait = gone ? ABSENT_MS : t.settings.turnSeconds * 1000;
+  t.deadline = Date.now() + wait;
   t.timer = setTimeout(() => {
     const p = h.players[h.turn];
     if (!p) return;
     const L = h.legal(p.id);
     try { h.act(p.id, L && L.canCheck ? 'check' : 'fold'); } catch (err) { /* already moved on */ }
     const who = t.players.get(p.id);
-    if (who) { who.away = true; t.say(`${who.name} ran out of time and is sitting out`); }
+    if (who && t.format === 'tournament') {
+      if (!who.absent) t.say(`${who.name} ran out of time - still dealt in, and folded until back`);
+      who.absent = true;
+    } else if (who) { who.away = true; t.say(`${who.name} ran out of time and is sitting out`); }
     afterAction(t);
-  }, t.settings.turnSeconds * 1000 + 300);
+  }, wait + 300);
 }
 
 // Somebody is in play if the hand being dealt has a copy of their stack: whatever happens to the
@@ -464,6 +468,10 @@ const SAYINGS = {
 
 function maybeAutoStart(t) {
   if (!t) return;
+  // A tournament begins when whoever runs it says so. Everybody starts level and somebody arriving
+  // a minute late cannot simply buy in beside the others, so the fourth person sitting down is not
+  // the moment to deal - the field being complete is, and only the man running it knows that.
+  if (t.format === 'tournament') return;
   if (t.status !== 'waiting' || t.paused || t.canStart()) {
     // Somebody stood up or stepped away while the table was counting down. Stop the countdown at
     // once rather than letting it run and fail, but say so - a countdown that simply goes quiet
@@ -563,13 +571,12 @@ function keepRound(t, h) {
       no: rec.no, pot: h.pot,
       p: rec.players.map((x) => (t.players.get(x.id) || {}).memberId || x.id),
       a: (h.acts || []).map((x) => [STREETS.indexOf(x.s), KINDS.indexOf(x.k), seatOf[x.id], x.a || 0])
-        .filter((x, i, all) => {
+        .filter((x) => {
           const ok = x[0] >= 0 && x[1] >= 0 && x[2] !== undefined;
           // Dropping an action quietly would leave a record that counts and reads perfectly and
           // is missing a bet. Nothing can be done about it here, but it is said out loud so it
           // shows up in the log rather than in somebody's figures a month later.
           if (!ok) console.log('study: hand ' + rec.no + ' had an action the record could not place, and it was left out');
-          void i; void all;
           return ok;
         }),
       w: rec.players.map((x) => (rec.won || {})[x.id] || 0),
@@ -898,17 +905,17 @@ const routes = {
   // fresh can never be a stale one left over from a rule that has since changed.
   study(b) {
     const m = people.auth(b);
+    people.adminOnly(m);
     const from = Number(b.from) || 0;
     const games = state.history
       .filter((g) => (g.study || []).length)
-      .filter((g) => !from || g.at >= from)
-      .filter((g) => m.isAdmin || g.people.some((p) => p.memberId === m.id));
+      .filter((g) => !from || g.at >= from);
     // Each hand carries the big blind of the night it was played, so nights at different stakes
     // can be counted together without pretending a chip means the same thing on both.
     const hands = [];
     for (const g of games) for (const h of g.study) hands.push({ ...h, bb: g.bb || 0 });
     const full = study.report(hands);
-    const mine = m.isAdmin ? full : (full[m.id] ? { [m.id]: full[m.id] } : {});
+    const mine = full;
     const names = {};
     for (const g of games) for (const p of g.people) if (p.memberId) names[p.memberId] = p.name;
     return {
@@ -929,15 +936,17 @@ const routes = {
   // of what the rest fold would be handing him the game.
   review(b) {
     const m = people.auth(b);
+    people.adminOnly(m);
     const g = state.history.find((x) => x.id === b.id);
     if (!g) throw httpErr(404, 'No such game');
-    const played = g.people.some((p) => p.memberId === m.id);
-    if (!m.isAdmin && !played) throw httpErr(403, 'You were not in that game');
+    // Whose night is being looked at. The portal admin's own unless he asks for somebody else's,
+    // which he may: the whole of this is his to see and nobody else's.
+    const who = b.who ? String(b.who) : m.id;
     const hands = (g.study || []).map(study.expand).map((h) => ({ ...h, bb: g.bb || 0 }));
     const full = study.report(hands);
 
-    // what the night did, chip by chip, for whoever is looking
-    const mine = g.people.find((p) => p.memberId === m.id);
+    // what the night did, chip by chip, for whoever is being looked at
+    const mine = g.people.find((p) => p.memberId === who);
     const curve = mine && g.curve ? (g.curve[mine.id] || []) : [];
     let low = 0, high = 0, run = 0;
     const start = curve.length ? curve[0][1] : 0;
@@ -945,7 +954,7 @@ const routes = {
 
     // the pots that turned it, biggest first
     const swings = hands.map((h) => {
-      const row = (h.players || []).find((p) => p.memberId === m.id);
+      const row = (h.players || []).find((p) => p.memberId === who);
       if (!row) return null;
       const got = (h.won || {})[row.id] || 0;
       let put = 0;
@@ -961,21 +970,18 @@ const routes = {
 
     return {
       id: g.id, at: g.at, title: g.formatName, hands: hands.length,
-      bb: g.bb || 0, meId: m.id,
-      me: mine ? full[m.id] || null : null,
-      remarks: mine && full[m.id] ? study.remarks(full[m.id], g.bb || 0, 'you') : [],
-      // everybody's figures for the portal admin; a member gets his own
-      who: (m.isAdmin ? Object.keys(full) : [m.id]).filter((id) => full[id]).map((id) => ({
+      bb: g.bb || 0, meId: who, own: who === m.id,
+      meName: mine ? mine.name : '',
+      me: mine ? full[who] || null : null,
+      remarks: mine && full[who] ? study.remarks(full[who], g.bb || 0, 'you') : [],
+      who: Object.keys(full).map((id) => ({
         id, name: (g.people.find((p) => p.memberId === id) || {}).name || 'somebody', ...full[id],
       })).sort((a, c) => c.hands - a.hands),
       curve: curve.map((pt) => [pt[0], pt[1] - start]),
       low, high,
       swings,
-      // Mistakes first, then the ones that went well, and few enough that each is read rather
-      // than scrolled past. A screen of twelve findings is a screen nobody finishes.
-      findings: hands.flatMap((h) => study.findings(h, m.id, g.bb || 0))
-        .sort((a, c) => (a.kind === 'good' ? 1 : 0) - (c.kind === 'good' ? 1 : 0))
-        .slice(0, 6),
+      // only the all-ins: the one thing about a single hand that can be judged whole
+      findings: hands.flatMap((h) => study.findings(h, who, g.bb || 0)).slice(0, 6),
     };
   },
 
@@ -988,10 +994,11 @@ const routes = {
   // somebody decide beforehand which games they might one day want to look at.
   'export-hands'(b) {
     const m = people.auth(b);
+    people.adminOnly(m);
     const g = state.history.find((x) => x.id === b.id);
     if (!g) throw httpErr(404, 'No such game');
-    const mine = g.people.find((p) => p.memberId === m.id);
-    if (!m.isAdmin && !mine) throw httpErr(403, 'You were not in that game');
+    // the hands are written from one seat: the portal admin's, or whoever he is looking at
+    const who = b.who ? String(b.who) : m.id;
     const hands = (g.study || []).map(study.expand).map((h) => ({
       no: h.no, at: g.at, variant: 'holdem', pot: h.pot,
       // Where the button was. The record does not name it, but it does name who posted the small
@@ -1013,7 +1020,7 @@ const routes = {
       // who was in seat 2 in the first, because people join and leave. So each hand says for
       // itself which seat belongs to the man asking, rather than a single seat taken from hand
       // one and assumed to hold - which would have written somebody else's cards as his.
-      hero: (h.players.find((p) => p.memberId === m.id) || {}).id || null,
+      hero: (h.players.find((p) => p.memberId === who) || {}).id || null,
     }));
     if (!hands.length) throw httpErr(400, 'No Texas hands were played that night, so there is nothing a solver could read');
     const text = gameText({ code: g.code, at: g.at, sb: g.sb, bb: g.bb, title: g.formatName, hands }, { seats: SEATS });
@@ -1023,13 +1030,13 @@ const routes = {
   // One hand, decision by decision, for whoever is asking about his own play.
   spot(b) {
     const m = people.auth(b);
+    people.adminOnly(m);
     const g = state.history.find((x) => x.id === b.id);
     if (!g) throw httpErr(404, 'No such game');
-    if (!m.isAdmin && !g.people.some((p) => p.memberId === m.id)) throw httpErr(403, 'You were not in that game');
     const rec = (g.study || []).map(study.expand).find((h) => h.no === Number(b.hand));
     if (!rec) throw httpErr(404, 'No such hand on record');
-    const out = study.spots(rec, m.id);
-    if (!out) throw httpErr(404, 'You were not dealt into that hand');
+    const out = study.spots(rec, b.who ? String(b.who) : m.id);
+    if (!out) throw httpErr(404, 'He was not dealt into that hand');
     return { ...out, bb: g.bb || 0 };
   },
 
@@ -1129,6 +1136,14 @@ const routes = {
         t.deadline = 0;
         t.say(`${m.name} paused the game`);
       } else {
+        // The blinds do not go up while everybody is away from the table. The level is put back
+        // by exactly as long as the game stood still, so a ten-minute break costs nobody a level.
+        const stood = Date.now() - t.paused;
+        if (t.format === 'tournament' && t.levelAt) t.levelAt += stood;
+        // The same for the time each player has agreed to stay, in every kind of game: a break
+        // is not time played, so it does not count towards anybody's minimum. Only a finishing
+        // time is left alone, because that is a time of day and the clock on the wall did not stop.
+        if (t.settings.minMinutes) for (const p of t.list()) if (p.joinedAt) p.joinedAt += stood;
         t.paused = 0;
         t.say(`${m.name} started the game again`);
         // whoever was to act gets a full turn back, not the two seconds that were left when it stopped
@@ -1262,7 +1277,7 @@ const routes = {
     if (t.paused) throw httpErr(400, 'The game is paused');
     if (!t.hand || t.hand.finished) throw httpErr(400, 'No hand is running');
     try { t.hand.act(p.id, b.type, b.amount); } catch (err) { throw httpErr(400, err.message); }
-    p.away = false;
+    p.away = false; p.absent = false;
     afterAction(t);
     changed();
     return { ok: true };
@@ -1321,6 +1336,12 @@ const routes = {
     const t = lobby.need(b.code);
     const p = t.byMember(m.id);
     if (!p) throw httpErr(403, 'You are not at this table');
+    if (t.format === 'tournament') {
+      // play or fold: there is no stepping out of a tournament, only coming back to it
+      if (b.on) throw httpErr(400, 'Nobody sits out of a tournament - you are dealt in every hand, and it is play or fold');
+      if (p.absent) { p.absent = false; t.say(`${p.name} is back`); changed(); broadcast(t); }
+      return { away: false };
+    }
     p.away = !!b.on;
     t.say(`${p.name} is ${p.away ? 'sitting out' : 'back'}`);
     changed(); broadcast(t);
@@ -1351,8 +1372,9 @@ const routes = {
       p.auto = true;
       t.say(`${p.name} will buy back in for ${t.settings.minBuyin} if the chips run out`);
     }
+    if (line.acts === 'out' && t.format === 'tournament') throw httpErr(400, 'Nobody is dealt out of a tournament - it is play or fold');
     if (line.acts === 'out' && p) { p.away = true; t.say(`${p.name} is sitting out`); }
-    if (line.acts === 'back' && p) { p.away = false; t.say(`${p.name} is back`); }
+    if (line.acts === 'back' && p) { p.away = false; p.absent = false; t.say(`${p.name} is back`); }
 
     const who = line.admin ? (b.to ? String(b.to) : '') : t.adminId;
     const msg = { id: Math.random().toString(36).slice(2, 8), from: m.id, fromName: m.nick || m.name,
@@ -1462,7 +1484,14 @@ function myHistory(m) {
   return state.history
     .filter((g) => m.isAdmin || g.people.some((p) => p.memberId === m.id))
     .slice(0, 60)
-    .map((g) => ({ ...g, rounds: undefined, replays: g.rounds ? g.rounds.length : 0 }));
+    // The study record never leaves the server whole. It holds every player's two cards for
+    // every hand of the night - it has to, to work out what a call was worth - and sent along
+    // with the history it put all of them on the phone of anybody who had played, there to be
+    // read by anyone who knew where to look. It was also most of the weight: sixty nights of it
+    // is over a megabyte, fetched every time the portal opened. The count is all a phone needs.
+    .map((g) => ({ ...g, rounds: undefined, study: undefined,
+      // how many hands there are to study is the portal admin's to know; nobody else has a use for it
+      replays: g.rounds ? g.rounds.length : 0, studied: m.isAdmin ? (g.study || []).length : 0 }));
 }
 
 const publicUrl = () => process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
