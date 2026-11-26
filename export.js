@@ -63,10 +63,14 @@ function handText(rec, opts) {
   // digits after the hash, so anything with a letter in it fails every hand in the file without
   // saying why. The portal's own code goes in the table name, where it belongs.
   const id = `${String(o.gameNo || 1).replace(/\D/g, '') || '1'}${String(rec.no || 0).padStart(5, '0')}`;
-  const table = (o.table || 'Smart Buddies').replace(/\s+/g, ' ');
+  // The table's name sits between two quote marks, and a reader finds the end of it by looking
+  // for the next one. Named after the game - Texas Hold'em - the name ended at "Hold", the rest of
+  // the line made no sense, and every hand in the file was thrown out without a word. Nothing but
+  // letters, digits and spaces goes in it.
+  const table = (o.table || 'Smart Buddies').replace(/[^A-Za-z0-9 ]/g, '').replace(/\s+/g, ' ').trim() || 'Smart Buddies';
   const buttonSeat = typeof rec.button === 'number' ? rec.button : (players[0] ? players[0].seat : 0);
 
-  let out = `PokerStars Hand #${id}:  Hold'em No Limit (${amt(sb)}/${amt(bb)}) - ${stamp(rec.at, o.tz)}\n`;
+  let out = `PokerStars Hand #${id}:  Hold'em No Limit (${amt(sb)}/${amt(bb)}) - ${stamp(rec.at)}\n`;
   out += `Table '${table}' ${o.seats || 9}-max Seat #${buttonSeat + 1} is the button\n`;
   for (const p of players) {
     out += `Seat ${p.seat + 1}: ${nameOf(p.id)} (${amt(p.start)} in chips)\n`;
@@ -78,6 +82,22 @@ function handText(rec, opts) {
     else if (a.k === 'sb') out += `${nameOf(a.id)}: posts small blind ${amt(a.a)}\n`;
     else if (a.k === 'bb') out += `${nameOf(a.id)}: posts big blind ${amt(a.a)}\n`;
   }
+
+  // What each player put in over the whole hand. The most anybody put in beyond what the next
+  // man matched was never at risk: it goes back to him, is not part of the pot, and a hand
+  // history says so in a line of its own. Written as won, it made the pot bigger than it was -
+  // a shove that everybody folded to read as a pot of the whole shove.
+  const put = {};
+  for (const st of ['preflop', 'flop', 'turn', 'river']) {
+    const inSt = {};
+    for (const a of byStreet[st]) {
+      if (a.k === 'fold' || a.k === 'check') continue;
+      inSt[a.id] = a.k === 'ante' ? (inSt[a.id] || 0) + a.a : Math.max(inSt[a.id] || 0, a.a);
+    }
+    for (const [pid, v] of Object.entries(inSt)) put[pid] = (put[pid] || 0) + v;
+  }
+  const byMost = Object.entries(put).sort((x, y) => y[1] - x[1]);
+  const uncalled = byMost.length > 1 && byMost[0][1] > byMost[1][1] ? { id: byMost[0][0], amount: byMost[0][1] - byMost[1][1] } : null;
 
   out += '*** HOLE CARDS ***\n';
   const want = rec.hero != null ? rec.hero : o.hero;
@@ -131,7 +151,13 @@ function handText(rec, opts) {
 
   const reveal = rec.reveal || {};
   const shown = Object.keys(reveal).filter((k) => reveal[k] && reveal[k].cards);
-  const won = rec.won || {};
+  const won = Object.assign({}, rec.won || {});
+  let pot = rec.pot || 0;
+  if (uncalled && (won[uncalled.id] || 0) >= uncalled.amount) {
+    out += `Uncalled bet (${amt(uncalled.amount)}) returned to ${nameOf(uncalled.id)}\n`;
+    won[uncalled.id] -= uncalled.amount;
+    pot -= uncalled.amount;
+  }
   if (shown.length) {
     out += '*** SHOW DOWN ***\n';
     for (const sid of shown) {
@@ -146,7 +172,7 @@ function handText(rec, opts) {
 
   // The summary. Nothing reads every line of it, but a hand without one looks truncated.
   out += '*** SUMMARY ***\n';
-  out += `Total pot ${amt(rec.pot || 0)} | Rake 0\n`;
+  out += `Total pot ${amt(pot)} | Rake 0\n`;
   if (board.length >= 3) out += `Board [${cards(board)}]\n`;
   for (const p of players) {
     const line = `Seat ${p.seat + 1}: ${nameOf(p.id)}`;
@@ -168,7 +194,7 @@ function gameText(game, opts) {
     sb: game.sb, bb: game.bb,
     // a number for the hands, and the portal's own code in the table name where letters are fine
     gameNo: String(game.at || Date.now()).slice(-7),
-    table: ((game.title || 'Smart Buddies') + ' ' + (game.code || '')).trim(),
+    table: ('Smart Buddies ' + (game.code || '')).trim(),
     seats: 9,
   }, opts || {});
   const hands = (game.hands || []).filter((h) => !h.variant || h.variant === 'holdem');

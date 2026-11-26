@@ -9,7 +9,6 @@ const crypto = require('crypto');
 
 const rid = (n = 10) => crypto.randomBytes(24).toString('base64url').slice(0, n);
 const PIN_TRIES = 5;                    // wrong passcodes in a row before a pause
-const PIN_LOCK_MS = 5 * 60000;
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 120);
 const MAX_SESSIONS = 6;                 // per member: a phone, a tablet, a reinstall or two
 
@@ -18,9 +17,18 @@ function cleanPhone(s) {
   const digits = String(s || '').replace(/\D/g, '').replace(/^0+/, '');
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
+// A name is letters, digits, spaces, dots and hyphens, in any alphabet, and nothing else.
+//
+// Names are shown on other people's phones - the portal admin's above all - and a name is the
+// one piece of text in the portal that somebody else chooses. Quotes, brackets and the rest have
+// no business in a name and are exactly what an attack on the page showing it is made of, so they
+// are taken out here, where every name, nickname and group name passes, rather than trusted to
+// be handled correctly in every place one is ever displayed.
 function cleanName(s) {
-  return String(s || '').replace(/\s+/g, ' ').trim().slice(0, 18);
+  return String(s || '').normalize('NFC').replace(/[^\p{L}\p{M}\p{N} .\-]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 18);
 }
+const JOIN_CODES = process.env.JOIN_CODES !== 'off';
+const joinCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 const isPin = (s) => /^\d{4}$/.test(String(s || ''));
 
 // Passcodes are stored as a salted hash. Four digits is not much, so the lock-out above is what
@@ -116,25 +124,69 @@ function makePeople(ctx) {
   }
 
   // ---- the lock-out that makes four digits safe enough ----
-  const fails = new Map();
+  //
+  // Four digits is ten thousand possibilities, so everything rests on how slowly they can be
+  // tried. Five wrong and a five-minute wait, for ever, came to sixty guesses an hour - a week of
+  // patience - and the count was kept in memory, so every restart of the server wiped the slate
+  // (and a free server restarts many times a day). Now each lock-out is longer than the last, up
+  // to a day, and it is written down with the member: five minutes, half an hour, two hours,
+  // then a day at a time. That is ten thousand guesses in about five years, not one week.
+  const LOCKS = [5, 30, 120, 1440].map((m) => m * 60000);
   function checkLock(m) {
-    const f = fails.get(m.id);
+    const f = m.lock;
     if (f && f.until > Date.now()) {
       const mins = Math.ceil((f.until - Date.now()) / 60000);
-      throw httpErr(429, `Too many wrong passcodes. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`);
+      const wait = mins >= 120 ? `${Math.ceil(mins / 60)} hours` : `${mins} minute${mins === 1 ? '' : 's'}`;
+      throw httpErr(429, `Too many wrong passcodes. Try again in ${wait}.`);
     }
   }
   function wrongPin(m) {
-    const f = fails.get(m.id) || { n: 0, until: 0 };
+    const f = m.lock || { n: 0, level: 0, until: 0 };
     f.n += 1;
-    if (f.n >= PIN_TRIES) { f.n = 0; f.until = Date.now() + PIN_LOCK_MS; }
-    fails.set(m.id, f);
+    if (f.n >= PIN_TRIES) {
+      f.n = 0;
+      f.until = Date.now() + LOCKS[Math.min(f.level, LOCKS.length - 1)];
+      f.level += 1;
+    }
+    m.lock = f;
+    changed();
   }
-  const rightPin = (m) => fails.delete(m.id);
+  const rightPin = (m) => { if (m.lock) { delete m.lock; changed(); } };
+
+  // ---- the code a new member needs the first time ----
+  //
+  // Knowing somebody's mobile number is not being them. Without this, whoever signed in first
+  // with a new member's number chose that member's passcode and was that member from then on -
+  // and the same after any passcode was reset. So the first sign-in also needs a six-digit code
+  // that travels with the invitation, is seen only by the portal admin and whoever brought the
+  // member in, and stops existing the moment a passcode is set.
+  function ensureJoin(m) {
+    if (m.pin || !live(m)) { if (m.join) delete m.join; return ''; }
+    if (!m.join) { m.join = joinCode(); changed(); }
+    return m.join;
+  }
+  // Who may be shown it: the portal admin, and the member who brought this one in.
+  function joinFor(viewer, m) {
+    if (!JOIN_CODES || m.pin || !live(m)) return '';
+    if (!viewer.isAdmin && m.sponsorId !== viewer.id) return '';
+    return ensureJoin(m);
+  }
+  // Names written before names were restricted are brought into line once, when the portal starts.
+  function tidy() {
+    let touched = 0;
+    for (const m of everyone()) {
+      const n = cleanName(m.name) || 'Member';
+      if (n !== m.name) { m.name = n; touched += 1; }
+      if (m.nick) { const k = cleanName(m.nick); if (k !== m.nick) { m.nick = k; touched += 1; } }
+      for (const g of m.groups || []) { const gn = cleanName(g.name) || 'Group'; if (gn !== g.name) { g.name = gn; touched += 1; } }
+    }
+    if (touched) changed();
+    return touched;
+  }
 
   return {
     members, admin, byPhone, byId, publicMember, whoIs, signOut, cleanPhone, cleanName, isPin,
-    tierOf, canOpen, everyone, live, sponsored, INDUCT_CAP,
+    tierOf, canOpen, everyone, live, sponsored, INDUCT_CAP, joinFor, tidy,
 
     // Whoever is asking, or nobody.
     auth(b) {
@@ -176,6 +228,17 @@ function makePeople(ctx) {
       checkLock(m);
       if (!m.pin) {
         if (!isPin(b.pin)) return { needPin: true, name: m.name, first: true };
+        if (JOIN_CODES) {
+          // the first admin sets the portal up with the storage secret and never comes this way
+          const want = ensureJoin(m);
+          const got = String(b.join || '').replace(/\D/g, '');
+          const a = Buffer.from(want), c = Buffer.from(got.padEnd(want.length, 'x').slice(0, want.length));
+          if (got.length !== want.length || !crypto.timingSafeEqual(a, c)) {
+            wrongPin(m);
+            throw httpErr(401, 'That is not the joining code in your invitation. Ask whoever invited you to send it again.');
+          }
+        }
+        delete m.join; delete m.lock;
         setPin(m, b.pin);
         changed();
         return { token: newSession(m, b.device), me: publicMember(m), welcome: true };
@@ -190,7 +253,7 @@ function makePeople(ctx) {
     lookUp(b) {
       const m = byPhone(b.phone);
       if (!live(m)) return { known: false };
-      return { known: true, name: m.name, first: !m.pin };
+      return { known: true, name: m.name, first: !m.pin, join: JOIN_CODES && !m.pin };
     },
 
     changePin(m, b) {
@@ -378,11 +441,12 @@ function makePeople(ctx) {
     resetPin(b) {
       const m = byId(b.memberId);
       if (!m) throw httpErr(404, 'No such member');
-      delete m.pin; delete m.salt;
+      delete m.pin; delete m.salt; delete m.lock; delete m.join;
       m.sessions = [];
-      fails.delete(m.id);
+      // a fresh code goes with the fresh start: he will need it to choose the new passcode
+      const join = JOIN_CODES ? ensureJoin(m) : '';
       changed();
-      return { ok: true };
+      return { ok: true, join };
     },
   };
 }

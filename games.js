@@ -191,8 +191,21 @@ class Table {
   buttonForHand() { return this.button; }   // one button deals, always
 
   occupied() { return this.seats.map((id, i) => (id && !this.players.get(id).out ? i : -1)).filter((i) => i >= 0); }
+  // The seats the button can travel through: the ones that will actually be dealt a hand.
+  //
+  // It used to travel through every seat somebody was sitting in, including a player who was
+  // sitting out, had no chips, or had dropped off. The button would land on him, nobody could
+  // deal from there, and the hand fell to the next player along - who had just had the button.
+  // Heads up with a third man sitting out, one player posted the small blind two hands in every
+  // three. A seat that is not being dealt in is passed over, as it would be at a real table.
+  dealSeats() {
+    const live = this.seated()
+      .filter((p) => p.stack > 0 && (this.format === 'tournament' || (!p.away && !p.dropped)))
+      .map((p) => p.seat).sort((a, b) => a - b);
+    return live.length >= 2 ? live : this.occupied();
+  }
   nextSeat(from, back = false) {
-    const seats = this.occupied();
+    const seats = this.dealSeats();
     if (!seats.length) return -1;
     if (from < 0) return seats[0];
     const ordered = back ? [...seats].reverse() : seats;
@@ -208,7 +221,7 @@ class Table {
       // The seat holding the variant button can empty - that player busts or walks off - and then
       // the travelling button can never land on it, so the variant would stop coming round for the
       // rest of the night. Put it on a seat somebody is actually sitting in.
-      if (this.varButton < 0 || !this.seats[this.varButton]) this.varButton = this.nextSeat(this.varButton, true);
+      if (this.varButton < 0 || !this.dealSeats().includes(this.varButton)) this.varButton = this.nextSeat(this.varButton, true);
       // the hand just played was the variant one, so the variant button steps back the other way
       if (this.button === this.varButton) this.varButton = this.nextSeat(this.varButton, true);
     }
@@ -218,11 +231,13 @@ class Table {
     // the rest of the night.
     if (this.format === 'roe' && this.button >= 0) {
       this.orbitSeen = (this.orbitSeen || []).filter((s) => this.seats[s]);
-      if (!this.orbitSeen.includes(this.button)) this.orbitSeen.push(this.button);
+      // the seat the hand was actually dealt from, which is not always where the button was left
+      const dealtFrom = this.dealSeats().includes(this.button) ? this.button : this.nextSeat(this.button);
+      if (!this.orbitSeen.includes(dealtFrom)) this.orbitSeen.push(dealtFrom);
     }
     this.button = this.nextSeat(this.button);
     if (this.format !== 'roe') return;
-    if (!this.occupied().every((s) => this.orbitSeen.includes(s))) return;   // still going round
+    if (!this.dealSeats().every((s) => this.orbitSeen.includes(s))) return;   // still going round
     this.roeVariant = !this.roeVariant;          // round of each: turn and turn about
     this.orbitSeen = [];
   }
@@ -250,7 +265,8 @@ class Table {
   // Who is actually ready to be dealt in: chips in front of them and not sitting out. Four people
   // where one has stepped away is a three-handed game, and should not set a table going.
   // In a tournament there is no sitting out, so everybody with chips counts.
-  ready() { return this.seated().filter((p) => p.stack > 0 && (this.format === 'tournament' || !p.away)); }
+  // Nor is anybody whose phone has dropped out: he is held out of the deal until it is back.
+  ready() { return this.seated().filter((p) => p.stack > 0 && (this.format === 'tournament' || (!p.away && !p.dropped))); }
 
   canStart() {
     if (this.status === 'ended') return 'This game has ended';
@@ -274,7 +290,7 @@ class Table {
     const why = this.canStart();
     if (why) throw new Error(why);
     const dealt = this.seated()
-      .filter((p) => p.stack > 0 && (this.format === 'tournament' || !p.away))
+      .filter((p) => p.stack > 0 && (this.format === 'tournament' || (!p.away && !p.dropped)))
       .sort((a, b) => a.seat - b.seat);
     if (dealt.length < 2) throw new Error('Not enough players with chips');
 

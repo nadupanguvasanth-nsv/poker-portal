@@ -169,6 +169,8 @@ body.four .card.s-c{color:#1c8a3c}
 .pill{height:16px;padding:0 6px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:.06em;display:flex;align-items:center;justify-content:center}
 .chip{flex:1;height:44px;border:1px solid #2a312d;border-radius:10px;background:#141917;color:#f2efe6;font-size:13px;font-weight:600}
 .act{height:56px;border:0;border-radius:12px;font-size:15px;font-weight:700;color:#f2efe6}
+.act.lit,.chip.lit{box-shadow:0 0 0 3px #f6e3a6,0 0 18px 2px rgba(216,180,92,.75);filter:brightness(1.25)}
+.act.stood{opacity:.32}
 .row{display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 14px;border-radius:12px;background:#141917;border:1px solid #2a312d}
 .sheet{position:absolute;inset:0;background:#0a0c0b;z-index:20;overflow-y:auto;padding:20px 20px 32px;-webkit-overflow-scrolling:touch}
 .h2{font-size:12px;font-weight:600;letter-spacing:.1em;color:#a3aba5;margin:22px 0 8px}
@@ -224,6 +226,13 @@ function api(name, body) {
 }
 
 // ---------------------------------------------------------------- the live feed
+// "Still here", every few seconds while a table is on the screen. The portal cannot tell a phone
+// that has lost its signal from one whose owner is thinking, except by whether it is still
+// hearing from it - and on that hangs whether a missed turn is a lapse or a dropped connection.
+setInterval(function () {
+  if (S.token && S.code && S.screen === 'table' && !document.hidden) api('here', { code: S.code }).catch(function () {});
+}, 7000);
+
 var feed = null;
 function connect() {
   if (feed) { feed.close(); feed = null; }
@@ -233,6 +242,10 @@ function connect() {
   feed.addEventListener('lobby', function (e) { S.tables = JSON.parse(e.data).tables; if (S.screen !== 'table') render(); });
   feed.addEventListener('table', function (e) {
     S.v = JSON.parse(e.data);
+    // his turn is over once the table no longer offers him anything to do: the lit button goes out
+    // ... and the raise slider goes back to the start, so last turn's figure is never waiting
+    // under his thumb on the next one
+    if (!S.v.legal) { S.pressed = null; S.sized = null; S.raiseTo = null; }
     // the phone's clock may be minutes out; keep the difference so the turn ring runs true
     if (S.v.now) S.skew = Date.now() - S.v.now;
     watchActs();            // did somebody just call or raise? flash it on their seat
@@ -333,18 +346,24 @@ document.addEventListener('visibilitychange', function () {
   clearBadge();
   if (!S.token) return;
   if (!feed || feed.readyState === 2) connect();
+  // back from a call or another app: say so at once, so a seat that was being held is given back now
+  if (S.code && S.screen === 'table') api('here', { code: S.code }).catch(function () {});
   refresh().catch(function () {});
 });
 window.addEventListener('pageshow', function () { clearBadge(); });
 
 // ---------------------------------------------------------------- getting in
+// The joining code, if the invitation link was tapped: it is on the end of the address.
+function joinFromLink() {
+  try { var j = new URLSearchParams(location.search).get('j') || ''; return /^\d{6}$/.test(j) ? j : ''; } catch (e) { return ''; }
+}
 function askNumber() {
   blurField();
   var phone = val('in_phone');
   if (phone.replace(/\D/g, '').length < 10) { toast('Your 10-digit mobile number'); return; }
   api('look-up', { phone: phone }).then(function (j) {
     if (!j.known) { toast('That number is not on the list. Ask the admin to add you.'); return; }
-    S.signin = { phone: phone, name: j.name, first: j.first };
+    S.signin = { phone: phone, name: j.name, first: j.first, join: !!j.join };
     render();
     setTimeout(function () { var el = document.getElementById('in_pin'); if (el) el.focus(); }, 60);
   }).catch(fail);
@@ -354,7 +373,9 @@ function doSignIn() {
   var pin = val('in_pin'), again = S.signin.first ? val('in_pin2') : pin;
   if (!/^\d{4}$/.test(pin)) { toast('Four digits'); return; }
   if (pin !== again) { toast('The two passcodes are not the same'); return; }
-  api('sign-in', { phone: S.signin.phone, pin: pin, device: navigator.userAgent.slice(0, 40) })
+  var join = S.signin.join ? val('in_join').replace(/\D/g, '') : '';
+  if (S.signin.join && join.length !== 6) { toast('The 6-digit joining code from your invitation'); return; }
+  api('sign-in', { phone: S.signin.phone, pin: pin, join: join, device: navigator.userAgent.slice(0, 40) })
     .then(function (j) {
       S.token = j.token; try { localStorage.setItem('sb-token', j.token); } catch (e) {}
       S.signin = null;
@@ -398,6 +419,8 @@ function signInScreen() {
     + '<div class="disp" style="font-size:38px;line-height:1;margin-top:6px">' + (s ? 'Hello ' + esc(s.name) : 'Private<br>poker party') + '</div>'
     + (s
       ? '<div class="muted small" style="margin:10px 0 16px;white-space:normal">' + (s.first ? 'First time here. Choose a 4-digit passcode and that is how you get in from now on.' : 'Your 4-digit passcode, please.') + '</div>'
+        + (s.join ? '<div class="field" style="margin-top:12px"><label for="in_join">JOINING CODE FROM YOUR INVITATION</label>'
+          + '<input id="in_join" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="6 digits" value="' + esc(joinFromLink()) + '" style="letter-spacing:.3em;font-size:22px"></div>' : '')
         + field('in_pin', s.first ? 'CHOOSE A PASSCODE' : 'PASSCODE', 'password', '', 'numeric')
         + (s.first ? field('in_pin2', 'AND AGAIN', 'password', '', 'numeric') : '')
         + '<button class="btn" style="margin-top:16px" onclick="doSignIn()">' + (s.first ? 'Save and come in' : 'Come in') + '</button>'
@@ -604,6 +627,8 @@ function generalBook() {
     'The group has its say, and then the portal admin lets them in or turns them away.',
     'Nothing is sent to the new person until the portal admin has let them in - so nobody\u2019s first go at the portal is being refused at the door.',
     'Once they are in, whoever put them forward sends them the message to sign in. That message carries the rules of the table as well as the link, because passing the rules on is the job.',
+    'The message also carries a six-digit joining code. A new member needs it once, the first time he signs in, to choose his passcode - so knowing somebody\u2019s number is not enough to become them. It is seen only by the portal admin and whoever brought the member in, and a passcode that is reset needs a fresh one.',
+    'Five wrong passcodes and the account is locked: five minutes the first time, then half an hour, two hours, and a day at a time after that.',
     'Ten at a time is the limit, counting anybody still waiting. Somebody taken out, or made primary, frees the place.',
     'Whoever brings somebody in is answerable for them: that they know how the table works, and that they settle up. If one of them is flagged, the man who brought them in is told, can see what it is for, and is the one who has a word.',
     'If a primary member is made secondary, the people he brought in become the portal admin\u2019s. Who first brought them in stays on the record.',
@@ -625,7 +650,11 @@ function generalBook() {
 
   part('At the table', [
     'Seven seats, first come first served.',
-    'Nothing waits on a tap that never comes: run out of time on your turn and you check if you can, fold if you cannot, and sit out until you say otherwise. In a tournament you are not sat out: you stay dealt in, paying your blinds, and your hands are folded after a moment until you are back.',
+    'While you wait for your turn there is a Check / Fold button. Press it and, when the turn reaches you, you check if nobody has bet and fold if somebody has. It stays lit while it is set, lasts for that hand only, and a second tap takes it back.',
+    'Whatever you press on your turn stays lit until your turn is over, so you can see that it took.',
+    'Nothing waits on a tap that never comes: run out of time on your turn and you check if you can and fold if you cannot. Once costs you that hand and nothing more. Twice running and you are sat out until you say otherwise.',
+    'Losing your connection is not sitting out. If your phone drops off the table, the hand you were in is checked or folded for you - or, if your chips were all in, it simply plays out and your stack shows the result - and you are left out of the deal until your phone is back. The moment it is, you are in the next hand without having to ask. If you had chosen to sit out before it dropped, you come back still sitting out.',
+    'In a tournament nobody is sat out or left out of the deal: miss two turns, or lose your connection, and you stay dealt in, paying your blinds, with your hands folded after a moment until you are back.',
     'However long a table asks you to stay, your time runs from when <b>you</b> sat down, not from when the game began.',
     'Three ways out before your time is up: you have lost the lot, whoever runs the table lets you go, or you sit in the ring paying your blinds - posted and folded, never dealt - until your time is up.',
     'Chips bought while a hand is being played go on when that hand ends, never in the middle of it.',
@@ -791,8 +820,8 @@ function rulesSheet() {
   }
   if (t.lastHands) h += row('Still to play', t.lastHands + ' hand' + (t.lastHands === 1 ? '' : 's'));
   if (t.endAt) h += row('Finishing at', clock(t.endAt));
-  if (t.format === 'tournament') h += note('It is play or fold: nobody sits out. Run out of time and you check if you can and fold if you cannot - and you stay dealt in, paying your blinds, with your hands folded after a moment until you are back.');
-  else h += note('Run out of time on your turn and you check if you can, fold if you cannot, and sit out until you say otherwise. Nothing ever waits on a tap that never comes.');
+  if (t.format === 'tournament') h += note('It is play or fold: nobody sits out. Run out of time and you check if you can and fold if you cannot. Miss two turns running, or lose your connection, and you stay dealt in, paying your blinds, with your hands folded after a moment until you are back.');
+  else h += note('Run out of time on your turn and you check if you can and fold if you cannot. Once costs you the hand; twice running and you are sat out until you say otherwise. If your phone loses the table instead, you are left out of the deal and are back in the next hand the moment it returns - unless you had chosen to sit out, in which case you are still sitting out. Nothing ever waits on a tap that never comes.');
   if (t.format === 'mixed') h += note('The variant comes round on its own button, travelling the other way: when the deal reaches the seat holding it, that hand is ' + esc(t.variantName) + '.');
   if (t.format === 'roe') h += note('A full orbit of Texas, then a full orbit of ' + esc(t.variantName) + ', turn and turn about.');
   if (t.bombAnteBB && /bomb/i.test(t.variantName || '')) h += note('In a bomb pot everybody antes ' + t.bombAnteBB + ' big blinds and the hand starts on the flop.');
@@ -891,14 +920,15 @@ function resumeTable() {
 // Where the hand file goes when the phone will not save it. Copying works everywhere, including
 // in a web app on the home screen, which is the one place a download quietly does nothing.
 function handFileSheet() {
-  var f = S.handfile;
-  return '<div class="sheet" style="z-index:57"><div class="disp" style="font-size:26px">The hands</div>'
+  var f = S.handfile, backup = f.what === 'backup';
+  return '<div class="sheet" style="z-index:57"><div class="disp" style="font-size:26px">' + (backup ? 'The backup' : 'The hands') + '</div>'
     + '<div class="muted small" style="margin:8px 0 12px;white-space:normal">'
-    + f.hands + ' hands, written the way an online room writes them. Your phone would not save it as '
-    + 'a file, so copy it and paste it into a text file on whatever you are going to read it with. '
+    + (backup ? f.members + ' members and ' + f.games + ' games. ' : f.hands + ' hands, written the way an online room writes them. ')
+    + 'Your phone would not save it as a file, so copy it and paste it into a '
+    + (backup ? 'note or an email to yourself' : 'text file on whatever you are going to read it with') + '. '
     + 'The name it wants is <b>' + esc(f.name) + '</b>.</div>'
     + '<button class="btn" onclick="copyText(S.handfile.text)">Copy the lot</button>'
-    + '<div class="evc" style="margin-top:12px;white-space:pre-wrap;font-size:11px;line-height:1.45;'
+    + '<div class="evc" style="margin-top:12px;white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.45;'
     + 'max-height:320px;overflow:auto">' + esc(f.text.slice(0, 4000))
     + (f.text.length > 4000 ? '\n\n\u2026 and the rest, which Copy takes in full.' : '') + '</div>'
     + '<button class="btn ghost" style="margin-top:12px" onclick="S.handfile=null;render()">Done</button></div>';
@@ -1480,9 +1510,63 @@ function statsBlock() {
   return h;
 }
 
+// The Portal tab, a section at a time.
+//
+// It had grown into one long page: what you owe, your total, your name and passcode,
+// notifications, the portal's totals, where everybody stands, money still out, the red flags,
+// the analysis, the groups, the members, who is waiting, who has gone, and where it is all
+// stored - a dozen things, each found by scrolling past the rest. Now there is a row of sections
+// across the top and one of them on the screen. A secondary member has only himself to look at,
+// so he gets no row at all.
+function portalSections() {
+  var all = S.members || [];
+  if (S.me.isAdmin) {
+    var waiting = all.filter(function (m) { return m.status === 'pending'; }).length;
+    var red = all.filter(function (m) { return m.flags && m.flags.red; }).length;
+    return [
+      { id: 'me', name: 'Me' },
+      { id: 'members', name: 'Members', n: waiting },
+      { id: 'money', name: 'Money', n: red, bad: true },
+      { id: 'analysis', name: 'Analysis' },
+      { id: 'groups', name: 'Groups' },
+    ];
+  }
+  var out = [{ id: 'me', name: 'Me' }];
+  if (S.induct) out.push({ id: 'people', name: 'My people' });
+  if (S.me.canOpen) out.push({ id: 'groups', name: 'Groups' });
+  return out;
+}
+function sectionBar(secs, cur) {
+  if (secs.length < 2) return '';
+  var h = '<div id="secs" style="display:flex;gap:6px;margin-top:14px;overflow-x:auto;padding-bottom:2px">';
+  secs.forEach(function (x) {
+    h += '<button class="rolechip' + (x.id === cur ? ' on' : '') + '" style="flex:none;height:38px;padding:0 14px;font-size:13px" onclick="S.sec=\'' + x.id + '\';render()">'
+      + x.name
+      + (x.n ? ' <span style="display:inline-block;min-width:18px;height:18px;line-height:18px;border-radius:9px;margin-left:4px;font-size:11px;text-align:center;color:#14110a;background:'
+        + (x.bad ? '#e0626a' : '#d8b45c') + '">' + x.n + '</span>' : '')
+      + '</button>';
+  });
+  return h + '</div>';
+}
+
 function meTab() {
+  var secs = portalSections();
+  var cur = secs.some(function (x) { return x.id === S.sec; }) ? S.sec : 'me';
+  var h = sectionBar(secs, cur);
+  if (cur === 'members') return h + membersBlock();
+  if (cur === 'money') return h + statsBlock();
+  if (cur === 'analysis') return h + studyBlock();
+  if (cur === 'groups') return h + groupsBlock();
+  if (cur === 'people') return h + myMembersBlock();
+  return h + myOwnSection();
+}
+
+// Himself: what he owes and is owed first, because that is what he came to look at; then where
+// he stands over every game; then the things he changes once and forgets.
+function myOwnSection() {
   var h = owedBox() + overallCurve();
-  h += '<div class="evc" style="margin-top:16px"><div class="muted small">SIGNED IN AS</div>'
+  h += '<div class="h2">MY ACCOUNT</div>'
+    + '<div class="evc"><div class="muted small">SIGNED IN AS</div>'
     + '<div class="disp" style="font-size:26px">' + esc(S.me.name) + '</div>'
     + '<div class="muted small">' + esc(S.me.phone) + '</div>'
     + (S.me.nick ? '<div class="muted small" style="margin-top:2px">goes by <b>' + esc(S.me.nick) + '</b> at the table</div>' : '')
@@ -1524,14 +1608,12 @@ function meTab() {
   }
   h += '</div>';
 
-  if (!S.me.isAdmin) return h + groupsBlock() + myMembersBlock();
-
-  h += statsBlock();
-
-  h += studyBlock();
-  h += groupsBlock();
-  h += membersBlock();
-  h += '<div class="h2">STORAGE</div><div class="muted small">' + esc(S.storage || '') + (S.saveError ? '<br><span style="color:#f08a8f">' + esc(S.saveError) + '</span>' : '') + '</div>';
+  if (S.me.isAdmin) {
+    h += '<div class="h2">STORAGE AND BACKUP</div><div class="muted small">' + esc(S.storage || '') + (S.saveError ? '<br><span style="color:#f08a8f">' + esc(S.saveError) + '</span>' : '') + '</div>'
+      + '<button class="btn ghost" style="margin-top:10px" onclick="downloadBackup()">Download a backup</button>'
+      + '<div class="muted small" style="margin-top:6px;white-space:normal">Everything is kept in one file in one place. This gives you a copy of every member, game and debt to keep '
+      + 'somewhere else - your Files, or an email to yourself. It leaves out passcodes and sign-ins, so the copy cannot be used to get in as anybody. Take one now and then, and after any big night.</div>';
+  }
   return h;
 }
 function doChangePin() {
@@ -1550,13 +1632,17 @@ function addMember() {
 function memberLink(id) {
   var m = S.members.filter(function (x) { return x.id === id; })[0];
   if (!m) return;
-  var url = location.origin;
+  // The link carries the joining code, so tapping it fills the code in; it is written out as well,
+  // for anybody who opens the portal some other way.
+  var url = location.origin + (m.join ? '/?j=' + m.join : '');
   // Whoever brings somebody in is answerable for them knowing the rules, so the message carries
   // the rules rather than leaving it to be remembered.
   var mine = !S.me.isAdmin;
   var text = 'Hi ' + m.name + '! This is Smart Buddies, our private poker portal.\n\n' + url
     + '\n\n1. Open that on your phone.\n2. Add it to your home screen, so it opens like an app.\n'
-    + '3. Sign in with this mobile number: ' + m.phone + '\n4. Choose a 4-digit passcode. That is how you get in from then on.\n\n'
+    + '3. Sign in with this mobile number: ' + m.phone + '\n'
+    + (m.join ? '4. Your joining code is ' + m.join + '. You need it once, the first time, and it is for you alone - do not pass it on.\n5. ' : '4. ')
+    + 'Choose a 4-digit passcode. That is how you get in from then on.\n\n'
     + 'How it works:\n'
     + '\u2022 Chips are virtual. What you settle between yourselves, and how, is your own business.\n'
     + '\u2022 Take a free seat at any table on the list. It deals itself once enough of us are sitting down - nobody presses anything.\n'
@@ -1590,19 +1676,15 @@ function membersBlock() {
   var gone = all.filter(function (m) { return m.status === 'archived'; });
   var byName = function (a, b) { return a.name.localeCompare(b.name); };
 
+  // how many there are, and of what kind, before any of them are listed
+  var starters = live.filter(function (m) { return m.isAdmin || m.canOpen; }).length;
   var h = '<div class="h2">MEMBERS (' + live.length + ')</div>'
-    + '<div class="muted small" style="margin:-2px 2px 8px;white-space:normal">'
-    + 'Everybody plays. A <span class="gold">primary</span> member can also start a table and bring people in \u2014 '
-    + 'whoever they bring in waits here for you. Only you make anybody primary, and only you take anybody out.</div>'
-    + '<div class="evc"><div style="display:flex;gap:8px">'
-    + '<input id="am_name" placeholder="Name" maxlength="18" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit">'
-    + '<input id="am_phone" placeholder="Mobile" inputmode="tel" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit"></div>'
-    + '<button class="btn" style="margin-top:8px;height:46px" onclick="addMember()">Add member</button></div>'
-    + '<button class="btn ghost" style="margin-top:8px" onclick="portalInvite()">Share the portal with the group</button>';
-
-  // waiting on you
+    + '<div class="muted small" style="margin:-2px 2px 0;white-space:normal">' + starters + ' can start a game &middot; '
+    + (live.length - starters) + ' play only' + (waiting.length ? ' &middot; <span class="gold">' + waiting.length + ' waiting on you</span>' : '')
+    + (gone.length ? ' &middot; ' + gone.length + ' removed' : '') + '</div>';
+  // Whoever is waiting on him comes first: it is the one thing on this screen that needs him.
   if (waiting.length) {
-    h += '<div class="h2" style="margin-top:16px">WAITING TO BE LET IN (' + waiting.length + ')</div>';
+    h += '<div class="h2">WAITING TO BE LET IN (' + waiting.length + ')</div>';
     waiting.slice().sort(byName).forEach(function (m) {
       h += '<div class="evc" style="margin-top:8px;border-color:#d8b45c">'
         + '<div style="font-size:14px;font-weight:600">' + esc(m.name) + '</div>'
@@ -1615,27 +1697,46 @@ function membersBlock() {
     });
   }
 
-  // everybody who is in, under whoever brought them
-  var mine = live.filter(function (m) { return !m.sponsorId; }).sort(byName);
-  var sponsors = live.filter(function (m) { return m.canOpen && !m.isAdmin && live.some(function (x) { return x.sponsorId === m.id; }); });
-  h += '<div style="margin-top:14px"></div>';
-  mine.forEach(function (m) {
-    h += memberRow(m);
+  // Everybody who is in: the ones who can start a game first, each with whoever they brought in
+  // folded away beneath them, and then the rest.
+  var top = live.filter(function (m) { return !m.sponsorId; }).sort(byName);
+  // himself first, then the rest by name
+  var prim = top.filter(function (m) { return m.isAdmin || m.canOpen; })
+    .sort(function (x, y) { return (y.isAdmin ? 1 : 0) - (x.isAdmin ? 1 : 0) || x.name.localeCompare(y.name); });
+  var rest = top.filter(function (m) { return !m.isAdmin && !m.canOpen; });
+  var under = function (m) {
+    var out = '';
     if (m.canOpen && !m.isAdmin) {
       var theirs = live.filter(function (x) { return x.sponsorId === m.id; }).sort(byName);
       var pend = waiting.filter(function (x) { return x.sponsorId === m.id; }).length;
       if (theirs.length || pend) {
         var open = !!S.openSponsor[m.id];
-        h += '<div style="margin:2px 0 0 12px"><div class="muted small" style="cursor:pointer;padding:4px 0" '
+        out += '<div style="margin:2px 0 0 12px"><div class="muted small" style="cursor:pointer;padding:4px 0" '
           + 'onclick="S.openSponsor[\'' + m.id + '\']=!S.openSponsor[\'' + m.id + '\'];render()">'
           + (open ? '&#9652;' : '&#9662;') + ' brought in ' + theirs.length
           + (pend ? ' &middot; ' + pend + ' waiting' : '') + '</div>';
-        if (open) theirs.forEach(function (x) { h += memberRow(x, true); });
-        h += '</div>';
+        if (open) theirs.forEach(function (x) { out += memberRow(x, true); });
+        out += '</div>';
       }
     }
-  });
-  void sponsors;
+    return out;
+  };
+  h += '<div class="h2">CAN START A GAME (' + prim.length + ')</div>'
+    + '<div class="muted small" style="margin:-2px 2px 4px;white-space:normal">Primary members. They can open a table and bring people in, and whoever they bring in sits under their name.</div>';
+  prim.forEach(function (m) { h += memberRow(m) + under(m); });
+  if (rest.length) {
+    h += '<div class="h2">PLAY ONLY (' + rest.length + ')</div>'
+      + '<div class="muted small" style="margin:-2px 2px 4px;white-space:normal">Secondary members you added yourself. They play at any table and start none.</div>';
+    rest.forEach(function (m) { h += memberRow(m); });
+  }
+
+  // adding somebody is done now and then; the lists are looked at every time, so they come first
+  h += '<div class="h2">ADD SOMEBODY</div>'
+    + '<div class="evc"><div style="display:flex;gap:8px">'
+    + '<input id="am_name" placeholder="Name" maxlength="18" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit">'
+    + '<input id="am_phone" placeholder="Mobile" inputmode="tel" style="flex:1;min-width:0;height:46px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:15px;padding:0 12px;font-family:inherit"></div>'
+    + '<button class="btn" style="margin-top:8px;height:46px" onclick="addMember()">Add member</button></div>'
+    + '<button class="btn ghost" style="margin-top:8px" onclick="portalInvite()">Share the portal with the group</button>';
 
   if (gone.length) {
     var shown = !!S.showGone;
@@ -1648,29 +1749,36 @@ function membersBlock() {
   return h;
 }
 
+// One member: who he is on top, what can be done about him underneath. The four buttons used to
+// sit beside the name and squeeze it into a column one word wide.
 function memberRow(m, inset) {
   var f = m.flags || {};
   var mark = f.red ? '<span class="pill2" style="background:#3a1517;color:#f08a8f">RED</span>'
     : f.yellow ? '<span class="pill2" style="background:#3a2f12;color:#f0c674">YELLOW</span>' : '';
-  var h = '<div class="row" style="margin-top:8px' + (inset ? ';margin-left:4px' : '') + '"><div style="flex:1;min-width:0">'
-    + '<div style="font-size:14px;font-weight:600">' + esc(m.name)
-    + (m.isAdmin ? ' <span class="gold" style="font-size:10px">ADMIN</span>' : '') + ' ' + mark + '</div>'
-    + '<div class="muted small">' + esc(m.phone)
+  var tier = m.isAdmin ? '<span class="pill2 g">ADMIN</span>'
+    : m.status === 'archived' ? ''
+      : m.tier === 'primary' ? '<span class="pill2 g">PRIMARY</span>' : '<span class="pill2">SECONDARY</span>';
+  var h = '<div class="evc" style="margin-top:8px;padding:12px' + (inset ? ';margin-left:4px' : '') + '">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div style="min-width:0">'
+    + '<div style="font-size:15px;font-weight:600">' + esc(m.name) + ' ' + mark + '</div>'
+    + '<div class="muted small" style="white-space:normal">' + esc(m.phone)
     + (m.status === 'archived'
       ? ' &middot; removed ' + when(m.removedAt)
-      : ' &middot; ' + (m.hasPin ? 'signed in before' : 'has not signed in yet')
-        + ' &middot; ' + (m.canOpen ? '<span class="gold">can start a game</span>' : 'plays only'))
+      : ' &middot; ' + (m.hasPin ? 'has signed in' : 'has not signed in yet'))
     + (m.sponsorWas && !m.sponsorId ? ' &middot; first brought in by ' + esc(m.sponsorWas) : '')
-    + '</div></div>';
+    + (m.join ? '<br>Joining code <b style="letter-spacing:.12em">' + esc(m.join) + '</b> &middot; Send link carries it' : '')
+    + '</div></div><div style="flex:none">' + tier + '</div></div>';
   if (m.isAdmin) return h + '</div>';
   if (m.status === 'archived') {
-    return h + '<button class="rolechip on" onclick="restoreMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Put back</button></div>';
+    return h + '<button class="rolechip on" style="margin-top:10px;width:100%" onclick="restoreMember(\'' + m.id + '\')">Put back</button></div>';
   }
-  h += '<button class="rolechip' + (m.tier === 'primary' ? ' on' : '') + '" onclick="setTier(\'' + m.id + '\',\'' + (m.tier === 'primary' ? 'secondary' : 'primary') + '\')">'
-    + (m.tier === 'primary' ? 'Primary' : 'Secondary') + '</button>'
-    + '<button class="rolechip on" onclick="memberLink(\'' + m.id + '\')">Send link</button>'
-    + '<button class="rolechip" onclick="resetMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Reset passcode</button>'
-    + '<button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="removeMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">Remove</button>';
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">'
+    + '<button class="rolechip' + (m.tier === 'primary' ? '' : ' on') + '" onclick="setTier(\'' + m.id + '\',\'' + (m.tier === 'primary' ? 'secondary' : 'primary') + '\')">'
+    + (m.tier === 'primary' ? 'Make secondary' : 'Make primary') + '</button>'
+    + '<button class="rolechip" onclick="memberLink(\'' + m.id + '\')">Send link</button>'
+    + '<button class="rolechip" onclick="resetMember(\'' + m.id + '\')">Reset passcode</button>'
+    + '<button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="removeMember(\'' + m.id + '\')">Remove</button>'
+    + '</div>';
   return h + '</div>';
 }
 
@@ -1886,7 +1994,7 @@ function reviewSheet() {
     if (thin) {
       h += '<div class="muted small" style="margin:-2px 2px 4px;white-space:normal">Only ' + me.hands + ' hands, which is too few to say how anybody '
         + 'plays - one loose orbit moves every figure. These are the counts and nothing more. The running figures, over every night, are the ones to go by.</div>'
-        + '<button class="rolechip" style="margin-top:4px" onclick="S.review=null;S.tab=\'me\';render();loadStudy()">See the running figures</button>';
+        + '<button class="rolechip" style="margin-top:4px" onclick="S.review=null;S.tab=\'me\';S.sec=\'analysis\';render();loadStudy()">See the running figures</button>';
     }
 
     // 1. how many hands he put money into
@@ -2092,35 +2200,43 @@ var ACT_WORD = { call: 'called', raise: 'raised to', bet: 'bet', check: 'checked
 // sheet is the thing that works there - Save to Files, Mail, AirDrop - so it is tried first, and
 // the link is kept for the desktop. Whatever happens, the text is still on screen to copy, which
 // is the one route that cannot fail.
+function saveFile(j, done, type) {
+  var shown = function () { S.handfile = j; render(); };
+  var file = null;
+  try { file = new File([j.text], j.name, { type: type || 'text/plain' }); } catch (e) { file = null; }
+
+  if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: j.name })
+      .then(function () { toast(done); })
+      .catch(function (e) {
+        // a cancelled share is the person changing his mind, not a failure to be worked around
+        if (e && e.name === 'AbortError') return;
+        shown();
+      });
+    return;
+  }
+
+  try {
+    var blob = new Blob([j.text], { type: type || 'text/plain' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = j.name;
+    if (typeof a.download !== 'string') throw new Error('no download here');
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+    toast(done);
+  } catch (e) {
+    shown();
+  }
+}
 function exportHands(id, who) {
-  api('export-hands', { id: id, who: who || '' }).then(function (j) {
-    var shown = function () { S.handfile = j; render(); };
-    var file = null;
-    try { file = new File([j.text], j.name, { type: 'text/plain' }); } catch (e) { file = null; }
-
-    if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({ files: [file], title: j.name })
-        .then(function () { toast(j.hands + ' hands'); })
-        .catch(function (e) {
-          // a cancelled share is the person changing his mind, not a failure to be worked around
-          if (e && e.name === 'AbortError') return;
-          shown();
-        });
-      return;
-    }
-
-    try {
-      var blob = new Blob([j.text], { type: 'text/plain' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = j.name;
-      if (typeof a.download !== 'string') throw new Error('no download here');
-      document.body.appendChild(a); a.click();
-      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
-      toast(j.hands + ' hands');
-    } catch (e) {
-      shown();
-    }
+  api('export-hands', { id: id, who: who || '' }).then(function (j) { saveFile(j, j.hands + ' hands'); }).catch(fail);
+}
+// A copy of the portal to keep somewhere that is not the portal.
+function downloadBackup() {
+  api('backup', {}).then(function (j) {
+    j.hands = j.games; j.what = 'backup';
+    saveFile(j, 'Backup saved: ' + j.members + ' members, ' + j.games + ' games', 'application/json');
   }).catch(fail);
 }
 
@@ -2291,7 +2407,7 @@ function groupsBlock() {
       + (S.me.isAdmin && g.owner ? '<div class="muted small" style="margin-top:2px">kept by ' + esc(g.owner) + '</div>' : '')
       + '<div style="display:flex;gap:8px;margin-top:10px">'
       + '<button class="rolechip on" onclick="editGroup(\'' + g.id + '\')">Change who is in it</button>'
-      + '<button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="dropGroup(\'' + g.id + '\',\'' + esc(g.name) + '\')">Remove</button>'
+      + '<button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="dropGroup(\'' + g.id + '\')">Remove</button>'
       + '</div></div>';
   });
 
@@ -2347,7 +2463,12 @@ function saveGroup() {
     S.groupEdit = null; toast('Saved'); return refresh();
   }).catch(fail);
 }
-function dropGroup(id, name) {
+// A name never goes into the code behind a button. The button carries an id and the name is
+// looked up from it here - so nothing anybody calls himself can ever be run as part of the page.
+function nameOfMember(id) { var m = (S.members || []).filter(function (x) { return x.id === id; })[0]; return m ? m.name : 'this member'; }
+function nameOfGroup(id) { var g = (S.groups || []).filter(function (x) { return x.id === id; })[0]; return g ? g.name : 'this group'; }
+function dropGroup(id) {
+  var name = nameOfGroup(id);
   S.ask = {
     title: 'Remove ' + name + '?',
     detail: 'Only the group goes. Any table already open to it carries on exactly as it is, and nobody loses anything.',
@@ -2387,12 +2508,14 @@ function decideMember(id, ok) {
 }
 function doDecline(id) { S.ask = null; api('member-decide', { memberId: id, ok: false }).then(function () { toast('Declined'); return refresh(); }).catch(fail); }
 
-function restoreMember(id, name) {
+function restoreMember(id) {
+  var name = nameOfMember(id);
   api('member-restore', { memberId: id }).then(function () { toast(name + ' is back'); return refresh(); }).catch(fail);
 }
 // Taking somebody out is not erasing them, and the question says so - otherwise it reads like a
 // delete and nobody would dare use it.
-function removeMember(id, name) {
+function removeMember(id) {
+  var name = nameOfMember(id);
   S.ask = {
     title: 'Take ' + name + ' out of the portal?',
     detail: name + ' will not be able to sign in, and will not appear at a table. Nothing is erased: '
@@ -2404,7 +2527,11 @@ function removeMember(id, name) {
   render();
 }
 function doRemoveMember(id) { S.ask = null; api('member-remove', { memberId: id }).then(function () { toast('Removed'); return refresh(); }).catch(fail); }
-function resetMember(id, name) { if (!confirm('Forget ' + name + "'s passcode? They set a new one next time they sign in.")) return; api('member-reset', { memberId: id }).then(function () { toast('Done'); refresh(); }).catch(fail); }
+function resetMember(id) {
+  var name = nameOfMember(id);
+  if (!confirm('Forget ' + name + "'s passcode? They choose a new one next time they sign in, and will need a new joining code to do it - send them the link again.")) return;
+  api('member-reset', { memberId: id }).then(function () { toast('Done. Send ' + name + ' the link again - it carries the new code.'); refresh(); }).catch(fail);
+}
 // ---------------------------------------------------------------- the table
 // The presentation here is the one settled on in the first build, carried across whole rather
 // than rewritten: the felt in the top half, your own cards and the buttons below it, bullseyes
@@ -2590,6 +2717,7 @@ function plaque(A, st, x, y, w, rel, hand, RES, n, up) {
   var cls = 'seat ' + (up ? 'up' : 'low') + (st.isTurn ? ' turn' : '') + (out ? ' out' : '') + (st.allIn ? ' allin' : '') + (st.wants ? ' wants' : '');
   var line2 = st.allIn ? '<div class="pill" style="margin-top:3px;background:#d2454d;color:#fff">ALL IN</div>'
     : st.busted ? '<div class="sname">Out</div>'
+    : st.offline ? '<div class="sname">Offline</div>'
     : st.away ? '<div class="sname">Away</div>'
     : st.folded ? '<div class="sname">Folded</div>'
     : '<div class="sname">' + esc(st.name) + flagDot(st.flag) + '</div>';
@@ -2875,7 +3003,20 @@ function controls(v, A, RES) {
   }
 
   var L = v.legal;
-  if (!L) return '<div style="padding-top:22px"><div class="evc" style="margin:0"><div class="muted small">Waiting for the others</div></div>' + showRow(v, A) + '</div>';
+  if (!L) {
+    // Not his turn yet. If there is one coming he can say now what he will do with it: check if
+    // nobody has bet by then, fold if somebody has. The button stays lit for as long as that
+    // stands, so there is never any doubt whether it took - and a second tap takes it back.
+    var pre = '';
+    if (v.canPre || v.pre) {
+      pre = '<button class="act' + (v.pre ? ' lit' : '') + '" id="prebtn" style="width:100%;margin-top:10px;background:#1f2a24" onclick="setPre(' + (v.pre ? 'false' : 'true') + ')">'
+        + (v.pre ? 'Check / Fold &nbsp;&#10003;' : 'Check / Fold') + '</button>'
+        + '<div class="muted" style="margin-top:6px;text-align:center;font-size:11px;white-space:normal">'
+        + (v.pre ? 'Set. When it reaches you: check if nobody has bet, fold if somebody has. Tap again to take it back.'
+          : 'Decide now: when it reaches you, check if nobody has bet and fold if somebody has.') + '</div>';
+    }
+    return '<div style="padding-top:22px"><div class="evc" style="margin:0"><div class="muted small">Waiting for the others</div></div>' + pre + showRow(v, A) + '</div>';
+  }
 
   var min = L.minRaiseTo, max = L.maxRaiseTo;
   var cur = (S.raiseTo && S.raiseTo >= min && S.raiseTo <= max) ? S.raiseTo : min;
@@ -2894,29 +3035,41 @@ function controls(v, A, RES) {
       return Math.min(max, Math.max(min, Math.round(L.myBet + L.toCall + f * after)));
     };
     h += '<div style="display:flex;gap:6px;margin-top:8px">'
-      + quick('½ pot', potTo(0.5))
-      + quick('¾ pot', potTo(0.75))
-      + quick('Pot', potTo(1))
+      + quick('½ pot', potTo(0.5), cur)
+      + quick('¾ pot', potTo(0.75), cur)
+      + quick('Pot', potTo(1), cur)
       // in pot-limit the pot IS the ceiling, so an "all in" button would be the same button twice
-      + (L.potLimit ? '' : quick('All in', max)) + '</div>';
+      + (L.potLimit ? '' : quick('All in', max, cur)) + '</div>';
   }
   h += '<div style="display:flex;gap:8px;margin-top:10px">'
-    + '<button class="act" style="flex:1;background:#2a1e20" onclick="act(\'fold\')">Fold</button>'
-    + (L.canCheck ? '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'check\')">Check</button>'
-      : '<button class="act" style="flex:1;background:#1f3328" onclick="act(\'call\')">Call ' + fmt(L.toCall || 0) + '</button>')
-    + (L.canRaise ? '<button class="act" id="rb" style="flex:1;background:#d8b45c;color:#14110a" onclick="act(\'raise\',S.raiseTo||' + min + ')">Raise ' + fmt(cur) + '</button>' : '')
+    + '<button class="act' + pressed('fold') + '" style="flex:1;background:#2a1e20" onclick="act(\'fold\')">Fold</button>'
+    + (L.canCheck ? '<button class="act' + pressed('check') + '" style="flex:1;background:#1f3328" onclick="act(\'check\')">Check</button>'
+      : '<button class="act' + pressed('call') + '" style="flex:1;background:#1f3328" onclick="act(\'call\')">Call ' + fmt(L.toCall || 0) + '</button>')
+    + (L.canRaise ? '<button class="act' + pressed('raise') + '" id="rb" style="flex:1;background:#d8b45c;color:#14110a" onclick="act(\'raise\',S.raiseTo||' + min + ')">Raise ' + fmt(cur) + '</button>' : '')
     + '</div>';
   h += '<div class="muted" style="margin-top:6px;text-align:center;font-size:11px">No-limit &middot; minimum raise to ' + fmt(min) + '</div>';
   return h;
 }
 
 function onRange(x) {
-  S.raiseTo = Number(x);
+  S.raiseTo = Number(x); S.sized = null;           // moved by hand: no sizing button is the one in force any more
   var e = document.getElementById('rv'); if (e) e.textContent = fmt(S.raiseTo);
   var b = document.getElementById('rb'); if (b) b.textContent = 'Raise ' + fmt(S.raiseTo);
 }
-function quick(label, amount) {
-  return '<button class="chip" style="flex:1" onclick="S.raiseTo=' + amount + ';render()">' + label + '</button>';
+// A sizing button stays lit while its amount is the one that will be raised to, so the button
+// and the figure beside it can never say different things.
+function quick(label, amount, cur) {
+  return '<button class="chip' + (S.sized === label && amount === cur ? ' lit' : '') + '" style="flex:1" onclick="S.sized=\'' + label + '\';S.raiseTo=' + amount + ';render()">' + label + '</button>';
+}
+// The button he pressed, lit, and the others stood down, until the table says his turn is over.
+// Without it a tap on a slow connection looks exactly like a tap that missed.
+function pressed(type) {
+  if (!S.pressed) return '';
+  return S.pressed === type ? ' lit' : ' stood';
+}
+function setPre(on) {
+  S.v.pre = !!on; render();                        // lit at once; the table confirms it a moment later
+  api('pre', { code: S.code, on: !!on }).catch(function (e) { S.v.pre = !on; render(); fail(e); });
 }
 
 // ---- showing your cards when nobody made you ----
@@ -2957,7 +3110,9 @@ function sitHere() {
 }
 
 function act(type, amount) {
-  api('act', { code: S.code, type: type, amount: amount }).catch(fail);
+  if (S.pressed) return;                           // one press a turn: a second tap is not a second action
+  S.pressed = type; render();
+  api('act', { code: S.code, type: type, amount: amount }).catch(function (e) { S.pressed = null; render(); fail(e); });
 }
 function startGame() { api('table-start', { code: S.code }).catch(fail); }
 function setAway(on) { api('away', { code: S.code, on: on }).catch(fail); }

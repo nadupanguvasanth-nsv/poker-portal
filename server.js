@@ -292,7 +292,7 @@ function tableView(t, member) {
       if (!p || p.out) return null;
       return {
         id: p.id, seat, name: p.name, stack: p.stack, bought: p.bought,
-        away: t.format === 'tournament' ? !!p.absent : !!p.away, busted: !!p.busted, place: p.place || 0,
+        away: t.format === 'tournament' ? !!p.absent : !!(p.away || p.dropped), offline: !!p.dropped, busted: !!p.busted, place: p.place || 0,
         leaveAsk: !!p.leaveAsk, leaveOk: !!p.leaveOk,
         isAdmin: p.memberId === t.adminId, me: !!(mine && p.id === mine.id),
         flag: flagOf(p.memberId),          // everybody at the table can see who owes from before
@@ -303,6 +303,10 @@ function tableView(t, member) {
       canLeave: t.servedTime(mine), forfeit: !!mine.forfeit, asked: !!mine.leaveAsk,
       freeAt: (t.settings.minMinutes || 0) ? (mine.joinedAt || t.createdAt) + t.settings.minMinutes * 60000 : 0 } : null,
     legal: mine && t.hand && !t.hand.finished ? (t.hand.legal(mine.id) || null) : null,
+    // Check/fold, chosen ahead of his turn: whether it is on, and whether there is a turn of his
+    // still to come in this hand for it to apply to.
+    pre: !!(mine && t.hand && !t.hand.finished && mine.pre === t.handNo),
+    canPre: !!(mine && canPre(t, mine)),
     hand: handView(t, mine),
     requests: iRun ? t.requests.slice() : [],
     leaveAsks: iRun ? t.seated().filter((p) => p.leaveAsk && !p.leaveOk).map((p) => ({ id: p.id, name: p.name })) : [],
@@ -321,6 +325,79 @@ function clearTimers(t) {
   clearTimeout(t.startTimer); t.startTimer = null; clearTimeout(t.timer); clearTimeout(t.nextTimer); t.timer = null; t.nextTimer = null; }
 
 const ABSENT_MS = Number(process.env.ABSENT_MS || 2500);
+const PRE_MS = Number(process.env.PRE_MS || 600);
+const MISSES_TO_SIT_OUT = 2;
+
+// Is this player's phone on this table at the moment?
+//
+// Two things have to be true. A line to the table must be open in his name - and he must have
+// been heard from lately, because an open line proves less than it seems to: a phone that walks
+// into a lift or loses its signal does not hang up, it simply goes quiet, and the portal's end
+// of the line stays open for minutes. So every phone at a table says "still here" every few
+// seconds, and one that has not said so for a while is counted as gone, line or no line.
+const HERE_MS = Number(process.env.HERE_MS || 20000);
+const online = (t, memberId) => {
+  const p = t.byMember(memberId);
+  if (!p || !p.seenAt || Date.now() - p.seenAt > HERE_MS) return false;
+  for (const c of feeds) if (c.code === t.code && c.member.id === memberId) return true;
+  return false;
+};
+// Anything a phone does at a table is a sign of life, and brings back a player who had dropped.
+function seen(t, m) {
+  const p = t && t.byMember(m.id);
+  if (!p) return;
+  p.seenAt = Date.now();
+  if (p.dropped) reconnected(t, m);
+}
+
+// A clock has run out, and why it ran out decides what happens next.
+//
+// A phone that has lost the portal is not a man who has stopped playing. He is checked or folded
+// for the hand he was in - or, if his chips were all in, the hand simply plays out - and he is
+// left out of the deal until his phone is back, at which point he is exactly where he was: in
+// the game, for the next fresh hand, without having to ask. A man who is there and not acting is
+// another matter. He gets one turn's grace, because anybody looks away once; the second in a row
+// sits him out, and he says when he is back. Somebody who chose to sit out is not touched by any
+// of this - he was sitting out when he went and he is sitting out when he returns.
+function timedOut(t, who) {
+  const tourney = t.format === 'tournament';
+  if (!online(t, who.memberId)) {
+    if (!who.dropped) t.say(`${who.name} has lost the connection - ${tourney ? 'still dealt in, and folded' : 'left out of the deal'} until back`);
+    who.dropped = true;
+    if (tourney) who.absent = true;
+    return;
+  }
+  who.missed = (who.missed || 0) + 1;
+  if (who.missed < MISSES_TO_SIT_OUT) { t.say(`${who.name} ran out of time`); return; }
+  if (tourney) {
+    if (!who.absent) t.say(`${who.name} ran out of time again - still dealt in, and folded until back`);
+    who.absent = true;
+  } else {
+    who.away = true;
+    t.say(`${who.name} ran out of time again and is sitting out`);
+  }
+}
+
+// His phone is back. Whatever was done on his behalf while it was gone is undone, and nothing
+// else: a seat he had chosen to leave empty stays empty.
+function reconnected(t, m) {
+  const p = t && t.list().find((x) => x.memberId === m.id);
+  if (!p || !p.dropped) return;
+  p.dropped = false; p.absent = false; p.missed = 0;
+  t.say(`${p.name} is back`);
+  changed(); broadcast(t);
+  maybeAutoStart(t);
+}
+
+// Is there a turn of his still to come in this hand? He must be in it, not folded, not all in,
+// and it must not be his turn already - by then the real buttons are in front of him.
+function canPre(t, p) {
+  const h = t.hand;
+  if (!h || h.finished || t.paused || h.runit || h.turn < 0) return false;
+  const hp = h.players.find((x) => x.id === p.id);
+  if (!hp || hp.folded || hp.allIn) return false;
+  return h.players[h.turn].id !== p.id;
+}
 
 function armTurn(t) {
   clearTimeout(t.timer);
@@ -350,6 +427,22 @@ function armTurn(t) {
   // clock again on every street of every hand - the table would wait on an empty chair all
   // night. He is checked or folded after a moment, until he touches anything at all.
   const onTurn = t.players.get((h.players[h.turn] || {}).id);
+  // He said, before it reached him, that he would check if he could and fold if he could not.
+  // So that is done for him the moment it does reach him - after a beat, so the table sees the
+  // turn arrive and go rather than a hand that seems to skip a seat.
+  if (onTurn && onTurn.pre === t.handNo) {
+    t.deadline = Date.now() + PRE_MS;
+    t.timer = setTimeout(() => {
+      const p = h.players[h.turn];
+      if (!p || t.players.get(p.id) !== onTurn) return;
+      const L = h.legal(p.id);
+      onTurn.pre = 0; onTurn.missed = 0;
+      try { h.act(p.id, L && L.canCheck ? 'check' : 'fold'); } catch (err) { /* already moved on */ }
+      afterAction(t);
+      changed();
+    }, PRE_MS);
+    return;
+  }
   const gone = t.format === 'tournament' && onTurn && onTurn.absent;
   const wait = gone ? ABSENT_MS : t.settings.turnSeconds * 1000;
   t.deadline = Date.now() + wait;
@@ -359,10 +452,7 @@ function armTurn(t) {
     const L = h.legal(p.id);
     try { h.act(p.id, L && L.canCheck ? 'check' : 'fold'); } catch (err) { /* already moved on */ }
     const who = t.players.get(p.id);
-    if (who && t.format === 'tournament') {
-      if (!who.absent) t.say(`${who.name} ran out of time - still dealt in, and folded until back`);
-      who.absent = true;
-    } else if (who) { who.away = true; t.say(`${who.name} ran out of time and is sitting out`); }
+    if (who) timedOut(t, who);
     afterAction(t);
   }, wait + 300);
 }
@@ -731,9 +821,9 @@ const routes = {
       // run. A primary member gets only the people he brought in: he needs to see how they are
       // getting on, and he has no business with anybody else's mobile number.
       members: m.isAdmin
-        ? people.everyone().map((x) => ({ ...people.publicMember(x), flags: flagsFor(x.id) }))
+        ? people.everyone().map((x) => ({ ...people.publicMember(x), flags: flagsFor(x.id), join: people.joinFor(m, x) }))
         : people.canOpen(m)
-          ? people.sponsored(m.id).map((x) => ({ ...people.publicMember(x), flags: flagsFor(x.id) }))
+          ? people.sponsored(m.id).map((x) => ({ ...people.publicMember(x), flags: flagsFor(x.id), join: people.joinFor(m, x) }))
           : [],
       // His own groups - the portal admin sees everybody's.
       groups: people.canOpen(m) ? people.groups(m) : [],
@@ -858,6 +948,28 @@ const routes = {
   'member-remove'(b) { const m = people.auth(b); people.adminOnly(m); return people.remove(b); },
   'member-restore'(b) { const m = people.auth(b); people.adminOnly(m); return people.restore(b); },
   'member-reset'(b) { const m = people.auth(b); people.adminOnly(m); return people.resetPin(b); },
+
+  // A copy of the portal for the portal admin to keep somewhere else. Everything is in one file
+  // in one place, and one bad day - a slip, a fault, somebody who should not have got in - would
+  // otherwise be the end of every game and every debt on record. The copy has the members, the
+  // games and the groups. It leaves out what would let its finder sign in as anybody: passcodes,
+  // the phones signed in, joining codes and notification keys.
+  backup(b) {
+    const m = people.auth(b);
+    people.adminOnly(m);
+    const members = {};
+    for (const x of people.everyone()) {
+      const { pin, salt, sessions, push, subs, join, lock, ...keep } = x;
+      void pin; void salt; void sessions; void push; void subs; void join; void lock;
+      members[x.id] = keep;
+    }
+    const stamp = new Date().toISOString().slice(0, 10);
+    return {
+      name: 'smart-buddies-backup-' + stamp + '.json',
+      games: state.history.length, members: Object.keys(members).length,
+      text: JSON.stringify({ kind: 'smart-buddies-backup', madeAt: Date.now(), members, history: state.history }),
+    };
+  },
 
   // Primary or secondary: who can get a game going at all. Only the portal admin decides it, and
   // the person it is done to is told, because finding out by being refused is a poor way to learn
@@ -999,8 +1111,14 @@ const routes = {
     if (!g) throw httpErr(404, 'No such game');
     // the hands are written from one seat: the portal admin's, or whoever he is looking at
     const who = b.who ? String(b.who) : m.id;
-    const hands = (g.study || []).map(study.expand).map((h) => ({
-      no: h.no, at: g.at, variant: 'holdem', pot: h.pot,
+    // When each hand was played is not kept, only when the night began and ended. Every hand
+    // stamped with the same second reads as one instant, so they are spread evenly across the
+    // night in the order they were dealt - close enough to put them in their right order and
+    // give the session its true length, which is what a reader uses the time for.
+    const from = g.startedAt && g.startedAt < g.at ? g.startedAt : g.at - (g.study || []).length * 60000;
+    const step = (g.at - from) / Math.max(1, (g.study || []).length);
+    const hands = (g.study || []).map(study.expand).map((h, i) => ({
+      no: h.no, at: Math.round(from + i * step), variant: 'holdem', pot: h.pot,
       // Where the button was. The record does not name it, but it does name who posted the small
       // blind, and the button is the seat before him - or, heads up, the small blind himself.
       // Written as seat one for every hand, as it was, any tool reading the file would have
@@ -1023,7 +1141,8 @@ const routes = {
       hero: (h.players.find((p) => p.memberId === who) || {}).id || null,
     }));
     if (!hands.length) throw httpErr(400, 'No Texas hands were played that night, so there is nothing a solver could read');
-    const text = gameText({ code: g.code, at: g.at, sb: g.sb, bb: g.bb, title: g.formatName, hands }, { seats: SEATS });
+    // Seven to a table, as the portal is - and as the file Railbird is known to have read was written.
+    const text = gameText({ code: g.code, at: g.at, sb: g.sb, bb: g.bb, hands }, { seats: SEATS });
     return { name: 'smart-buddies-' + (g.code || 'game') + '.txt', hands: hands.length, text };
   },
 
@@ -1269,6 +1388,27 @@ const routes = {
   },
 
   // --- at the table ---
+  // Check/fold ahead of his turn, on or off. It lasts for the hand it was chosen in and no longer.
+  pre(b) {
+    const m = people.auth(b);
+    const t = lobby.need(b.code);
+    const p = t.byMember(m.id);
+    if (!p) throw httpErr(403, 'You are not at this table');
+    if (b.on && !canPre(t, p)) throw httpErr(400, 'There is no turn of yours coming in this hand');
+    p.pre = b.on ? t.handNo : 0;
+    p.seenAt = Date.now();
+    broadcast(t);
+    return { pre: !!p.pre };
+  },
+
+  // "Still here." Sent by every phone at a table every few seconds, and by nothing else.
+  here(b) {
+    const m = people.auth(b);
+    const t = lobby.get(String(b.code || '').toUpperCase());
+    if (t) seen(t, m);
+    return { ok: true };
+  },
+
   act(b) {
     const m = people.auth(b);
     const t = lobby.need(b.code);
@@ -1277,7 +1417,7 @@ const routes = {
     if (t.paused) throw httpErr(400, 'The game is paused');
     if (!t.hand || t.hand.finished) throw httpErr(400, 'No hand is running');
     try { t.hand.act(p.id, b.type, b.amount); } catch (err) { throw httpErr(400, err.message); }
-    p.away = false; p.absent = false;
+    p.away = false; p.absent = false; p.missed = 0; p.dropped = false; p.seenAt = Date.now(); p.pre = 0;
     afterAction(t);
     changed();
     return { ok: true };
@@ -1339,10 +1479,10 @@ const routes = {
     if (t.format === 'tournament') {
       // play or fold: there is no stepping out of a tournament, only coming back to it
       if (b.on) throw httpErr(400, 'Nobody sits out of a tournament - you are dealt in every hand, and it is play or fold');
-      if (p.absent) { p.absent = false; t.say(`${p.name} is back`); changed(); broadcast(t); }
+      if (p.absent) { p.absent = false; p.missed = 0; p.dropped = false; t.say(`${p.name} is back`); changed(); broadcast(t); }
       return { away: false };
     }
-    p.away = !!b.on;
+    p.away = !!b.on; p.missed = 0; p.dropped = false;
     t.say(`${p.name} is ${p.away ? 'sitting out' : 'back'}`);
     changed(); broadcast(t);
     // somebody stepping away or coming back changes whether there are enough to begin
@@ -1373,8 +1513,8 @@ const routes = {
       t.say(`${p.name} will buy back in for ${t.settings.minBuyin} if the chips run out`);
     }
     if (line.acts === 'out' && t.format === 'tournament') throw httpErr(400, 'Nobody is dealt out of a tournament - it is play or fold');
-    if (line.acts === 'out' && p) { p.away = true; t.say(`${p.name} is sitting out`); }
-    if (line.acts === 'back' && p) { p.away = false; p.absent = false; t.say(`${p.name} is back`); }
+    if (line.acts === 'out' && p) { p.away = true; p.dropped = false; t.say(`${p.name} is sitting out`); }
+    if (line.acts === 'back' && p) { p.away = false; p.absent = false; p.dropped = false; p.missed = 0; t.say(`${p.name} is back`); }
 
     const who = line.admin ? (b.to ? String(b.to) : '') : t.adminId;
     const msg = { id: Math.random().toString(36).slice(2, 8), from: m.id, fromName: m.nick || m.name,
@@ -1604,6 +1744,8 @@ function indexHtml() {
   return raw.split('{{BASE}}').join(publicUrl().replace(/\/$/, ''));
 }
 
+// Nothing the portal's own page sends comes to more than a few hundred bytes.
+const MAX_BODY = Number(process.env.MAX_BODY || 100000);
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -1611,7 +1753,7 @@ function readBody(req) {
     req.on('data', (c) => {
       if (over) return;
       data += c;
-      if (data.length > 1e6) { over = true; reject(httpErr(413, 'that is too much to send at once')); req.destroy(); }
+      if (data.length > MAX_BODY) { over = true; reject(httpErr(413, 'that is too much to send at once')); req.destroy(); }
     });
     req.on('end', () => {
       if (over) return;
@@ -1622,8 +1764,56 @@ function readBody(req) {
   });
 }
 
+// What every browser is told about every page the portal sends.
+//
+// Nothing may put the portal inside a frame on another site, where a tap meant for one thing can
+// be made to land on another. Nothing is loaded from anywhere but the portal itself and the two
+// places its typeface comes from, and it sends its own requests nowhere else - so a script that
+// did find its way onto a page would have nowhere to send what it took. The page still carries
+// its own script and styles inline, as it always has, so those are allowed; everything else is not.
+const SECURITY = {
+  'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    + "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; "
+    + "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
+  'strict-transport-security': 'max-age=15552000',
+  'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+};
+
+// How fast one address may knock.
+//
+// The passcode has its own lock, kept with each member. This is the other half: one address
+// trying number after number to see who is a member, or simply hammering the portal until it
+// falls over. Two allowances, counted by the minute: a small one for anything to do with signing
+// in, and a large one for everything else - large enough for a whole table playing from one
+// house on one connection, which is what a home game looks like from here.
+const LIMITS = process.env.RATE_LIMITS !== 'off';
+const RATE = { auth: Number(process.env.RATE_AUTH || 30), all: Number(process.env.RATE_ALL || 1500) };
+const AUTH_ROUTES = new Set(['sign-in', 'look-up', 'first-admin']);
+const knocks = new Map();
+const addressOf = (req) => String(req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket && req.socket.remoteAddress) || 'unknown').slice(0, 64);
+function allow(req, name) {
+  if (!LIMITS) return;
+  const now = Date.now();
+  const key = addressOf(req);
+  let k = knocks.get(key);
+  if (!k) { k = { all: 0, reset: now + 60000, auth: 0, authReset: now + 600000 }; knocks.set(key, k); }
+  if (now > k.reset) { k.all = 0; k.reset = now + 60000; }            // everything: by the minute
+  if (now > k.authReset) { k.auth = 0; k.authReset = now + 600000; }   // signing in: by the ten minutes
+  k.all += 1;
+  if (k.all > RATE.all) throw httpErr(429, 'Too many requests at once. Give it a minute.');
+  if (AUTH_ROUTES.has(name)) {
+    k.auth += 1;
+    if (k.auth > RATE.auth) throw httpErr(429, 'Too many sign-in attempts from here. Try again in a few minutes.');
+  }
+  if (knocks.size > 5000) for (const [addr, v] of knocks) if (now > v.reset && now > v.authReset) knocks.delete(addr);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
+  for (const [h, v] of Object.entries(SECURITY)) res.setHeader(h, v);
   try {
     if (req.method === 'GET' && url.pathname === '/ping') { res.writeHead(200); return res.end('ok'); }
 
@@ -1651,7 +1841,10 @@ const server = http.createServer(async (req, res) => {
       const name = url.pathname.slice(5);
       const fn = routes[name];
       if (!fn) { res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"error":"no such thing"}'); }
+      allow(req, name);
       const body = await readBody(req);
+      // a request is a small object of named things; anything else is not from the portal's own page
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw httpErr(400, 'that was not a request the portal understands');
       const out = await fn(body);
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(out || { ok: true }));
@@ -1681,10 +1874,15 @@ const server = http.createServer(async (req, res) => {
     if (code === 500) console.error(err);
     if (res.headersSent) return;
     res.writeHead(code, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: err.message || 'something went wrong' }));
+    // What went wrong inside is written to the log and nowhere else: a fault's own words can say
+    // more about how the portal is built than anybody outside it should be told.
+    // A plain refusal the portal wrote itself ("Pick a game") is passed on. A fault in the code is not.
+    const fault = err instanceof TypeError || err instanceof ReferenceError || err instanceof RangeError || err instanceof SyntaxError;
+    res.end(JSON.stringify({ error: fault ? 'Something went wrong. Try that again.' : (err.message || 'something went wrong') }));
   }
 });
 
+const MAX_FEEDS = Number(process.env.MAX_FEEDS || 6);
 function feed(req, res, url) {
   const m = people.whoIs(url.searchParams.get('token'));
   if (!m) { res.writeHead(401); return res.end('sign in'); }
@@ -1692,9 +1890,14 @@ function feed(req, res, url) {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
   res.write('retry: 2000\n\n');
   const client = { res, member: m, code };
+  // A phone, a tablet, a browser left open: a handful of lines is a person. More than that is
+  // something holding the door open on purpose, and the oldest are let go.
+  const his = [...feeds].filter((c) => c.member.id === m.id);
+  while (his.length >= MAX_FEEDS) { const old = his.shift(); try { old.res.end(); if (old.res.socket) old.res.socket.destroy(); } catch (err) { /* gone already */ } feeds.delete(old); }
   feeds.add(client);
   sendTo(client, 'lobby', { tables: lobby.list(m) });
   const t = code && lobby.get(code);
+  if (t) seen(t, m);
   if (t) sendTo(client, 'table', tableView(t, m));
   const beat = setInterval(() => { try { res.write(': .\n\n'); } catch (err) { /* gone */ } }, 25000);
   req.on('close', () => { clearInterval(beat); feeds.delete(client); });
@@ -1756,6 +1959,9 @@ const ready = (async () => {
     else if (saved.members !== undefined) dropped.push('members');
 
     if (ok(saved.history, 'array')) state.history = saved.history;
+    // names written before names were restricted
+    const tidied = people.tidy();
+    if (tidied) console.log('Tidied ' + tidied + ' name(s) that carried characters a name may not have.');
     else if (saved.history !== undefined) dropped.push('history');
 
     state.vapid = saved.vapid || null;
