@@ -1,4 +1,5 @@
 'use strict';
+// Copyright (c) 2026 Vashanth Somasundaram. All rights reserved. See LICENSE.
 // Who the people are, and how they get in.
 //
 // The portal admin is the first member. He signs in the very first time with the storage secret,
@@ -10,7 +11,6 @@ const crypto = require('crypto');
 const rid = (n = 10) => crypto.randomBytes(24).toString('base64url').slice(0, n);
 const PIN_TRIES = 5;                    // wrong passcodes in a row before a pause
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 120);
-const MAX_SESSIONS = 6;                 // per member: a phone, a tablet, a reinstall or two
 
 // +91 98765 43210, 098765 43210 and 9876543210 are all the same person.
 function cleanPhone(s) {
@@ -30,6 +30,8 @@ function cleanName(s) {
 const JOIN_CODES = process.env.JOIN_CODES !== 'off';
 const joinCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 const isPin = (s) => /^\d{4}$/.test(String(s || ''));
+// New members are made to link an authenticator. The tests of everything else switch this off.
+const MUST_2FA = process.env.NEW_MEMBER_2FA !== 'off';
 
 // Passcodes are stored as a salted hash. Four digits is not much, so the lock-out above is what
 // actually protects them; the hash only means the stored file never carries the number itself.
@@ -47,6 +49,45 @@ function pinOk(m, pin) {
   const b = Buffer.from(hashPin(pin, m.salt));
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
+
+// ---- the authenticator ----
+// The six digits an authenticator app shows are the time, cut into half-minutes, signed with a
+// secret the app and the portal both hold (RFC 6238, the scheme every such app speaks). Nothing
+// is sent anywhere: the app works the number out on the phone, the portal works it out here, and
+// they agree or they do not.
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function base32(buf) {
+  let bits = 0, acc = 0, out = '';
+  for (const byte of buf) { acc = (acc << 8) | byte; bits += 8; while (bits >= 5) { out += B32[(acc >>> (bits - 5)) & 31]; bits -= 5; } }
+  if (bits) out += B32[(acc << (5 - bits)) & 31];
+  return out;
+}
+function unbase32(str) {
+  let bits = 0, acc = 0; const out = [];
+  for (const ch of String(str || '').toUpperCase().replace(/[^A-Z2-7]/g, '')) { acc = (acc << 5) | B32.indexOf(ch); bits += 5; if (bits >= 8) { out.push((acc >>> (bits - 8)) & 255); bits -= 8; } }
+  return Buffer.from(out);
+}
+const TOTP_STEP = 30;
+function totpAt(key, step) {
+  const msg = Buffer.alloc(8); msg.writeBigUInt64BE(BigInt(step));
+  const mac = crypto.createHmac('sha1', unbase32(key)).update(msg).digest();
+  const at = mac[19] & 15;
+  return String(((mac.readUInt32BE(at) & 0x7fffffff) % 1000000)).padStart(6, '0');
+}
+// Which half-minute a code belongs to, or 0 if it is not a code for now. The half-minute either
+// side is allowed, because a phone's clock is never quite the portal's and typing takes a moment.
+function totpStep(key, code, now) {
+  const got = String(code || '').replace(/\D/g, '');
+  if (got.length !== 6 || !key) return 0;
+  const here = Math.floor((now || Date.now()) / 1000 / TOTP_STEP);
+  let hit = 0;
+  for (const step of [here, here - 1, here + 1]) {
+    const want = totpAt(key, step);
+    if (crypto.timingSafeEqual(Buffer.from(want), Buffer.from(got)) && !hit) hit = step;
+  }
+  return hit;
+}
+const isCode = (s) => /^\d{6}$/.test(String(s || '').replace(/\s/g, ''));
 
 function makePeople(ctx) {
   const { state, changed, httpErr, secret } = ctx;
@@ -93,16 +134,77 @@ function makePeople(ctx) {
       status: m.status || 'active', live: live(m),
       sponsorId: m.sponsorId || '', sponsor: by ? (by.nick || by.name) : '',
       sponsorWas: m.sponsorWas || '',          // who brought them in, when that is now history
-      removedAt: m.removedAt || 0 };
+      removedAt: m.removedAt || 0,
+      twofa: !!m.totp, must2fa: !!m.must2fa };
+  }
+
+  // ---- the second step of signing in ----
+  // A fresh secret, offered but not yet in force.
+  function offer(m) {
+    m.totpNew = base32(crypto.randomBytes(20));
+    delete m.totpNewStep;
+    changed();
+    return { key: m.totpNew, uri: uriFor(m, m.totpNew) };
+  }
+  const uriFor = (m, key) => `otpauth://totp/${encodeURIComponent('Smart Buddies:' + m.name)}?secret=${key}&issuer=${encodeURIComponent('Smart Buddies')}&algorithm=SHA1&digits=6&period=30`;
+  // Take a code or refuse it. A wrong one counts against him exactly as a wrong passcode does,
+  // and a right one is good once: the same six digits a second time are refused, so a code read
+  // over a shoulder is worth nothing.
+  // (`slot` is where the last half-minute used is kept: one for the authenticator in force and
+  // one for the one being linked, so that changing from one to the other inside the same
+  // half-minute is not mistaken for the same code twice.)
+  function useCode(m, key, code, sorry, slot) {
+    const at = slot || 'totpStep';
+    checkLock(m);
+    const step = isCode(code) ? totpStep(key, code) : 0;
+    if (!step || step <= (m[at] || 0)) { if (isCode(code)) wrongPin(m); throw httpErr(401, sorry); }
+    m[at] = step;
+    changed();
+  }
+  // the one being linked becomes the one in force
+  function promote(m) {
+    m.totp = m.totpNew; m.totpStep = m.totpNewStep || 0; m.totpSince = Date.now();
+    delete m.totpNew; delete m.totpNewStep;
+    changed();
+  }
+  // After the passcode: nothing more for somebody without an authenticator who does not need one;
+  // a code for somebody who has one; and for somebody who must have one and has not, the linking
+  // itself, there and then. Returns what to send back if he is not through yet.
+  function secondStep(m, b) {
+    if (m.totp) {
+      // The portal admin who has lost his phone has nobody to ask, so the storage secret - which
+      // only he holds - clears it, the same proof that made him admin in the first place.
+      if (m.isAdmin && b.secret !== undefined) {
+        if (!secret() || String(b.secret || '') !== secret()) { wrongPin(m); throw httpErr(403, 'That is not the storage secret'); }
+        delete m.totp; delete m.totpNew; delete m.totpStep; delete m.totpNewStep; delete m.totpSince;
+        changed();
+        return null;
+      }
+      if (!isCode(b.code)) return { needCode: true, name: m.name, admin: !!m.isAdmin };
+      useCode(m, m.totp, b.code, 'That is not the code your authenticator is showing');
+      return null;
+    }
+    if (!m.must2fa) return null;
+    if (!isCode(b.code) || !m.totpNew) {
+      const o = m.totpNew ? { key: m.totpNew, uri: uriFor(m, m.totpNew) } : offer(m);
+      return { setup2fa: o, name: m.name };
+    }
+    useCode(m, m.totpNew, b.code, 'That is not the code your authenticator is showing. Check the app and try the next one.', 'totpNewStep');
+    promote(m);
+    return null;
   }
 
   // ---- sessions: a phone stays signed in, and can be signed out from anywhere ----
   function newSession(m, label) {
-    m.sessions = (m.sessions || []).filter((s) => s.until > Date.now());
+    // One device at a time. Signing in here signs out wherever he was signed in before: the old
+    // phone or computer is put back to the sign-in screen, and stops being sent notifications -
+    // those were that device's, and this one asks for its own.
+    const had = (m.sessions || []).length > 0;
     const s = { token: rid(28), at: Date.now(), until: Date.now() + SESSION_DAYS * 86400e3, label: String(label || '').slice(0, 40) };
-    m.sessions.push(s);
-    if (m.sessions.length > MAX_SESSIONS) m.sessions = m.sessions.slice(-MAX_SESSIONS);
+    m.sessions = [s];
+    if (had) m.subs = [];
     changed();
+    if (ctx.signedOut) ctx.signedOut(m, s.token);
     return s.token;
   }
   function whoIs(token) {
@@ -241,12 +343,48 @@ function makePeople(ctx) {
         delete m.join; delete m.lock;
         setPin(m, b.pin);
         changed();
-        return { token: newSession(m, b.device), me: publicMember(m), welcome: true };
+        const step = secondStep(m, b);
+        return step || { token: newSession(m, b.device), me: publicMember(m), welcome: true };
       }
       if (!isPin(b.pin)) return { needPin: true, name: m.name, first: false };
       if (!pinOk(m, b.pin)) { wrongPin(m); throw httpErr(401, 'Wrong passcode'); }
+      const step = secondStep(m, b);
+      if (step) return step;
       rightPin(m);
       return { token: newSession(m, b.device), me: publicMember(m) };
+    },
+
+    // ---- the authenticator, from the Me page ----
+    // Starting to link one. Nothing changes yet: the new secret only counts once he has typed a
+    // code from it, so a link abandoned half-way leaves him exactly as he was. Replacing one that
+    // is already linked takes a code from the old one first.
+    totpBegin(m, b) {
+      if (m.totp) useCode(m, m.totp, b.code, 'To change your authenticator, first enter a code from the one you have now');
+      return offer(m);
+    },
+    totpConfirm(m, b) {
+      if (!m.totpNew) throw httpErr(400, 'Start again: tap Add an authenticator');
+      useCode(m, m.totpNew, b.code, 'That is not the code your authenticator is showing. Check the app and try the next one.', 'totpNewStep');
+      promote(m);
+      return { ok: true, me: publicMember(m) };
+    },
+    // Taking it off again, for somebody who is free to: a member who must have one can change
+    // it but not go without.
+    totpOff(m, b) {
+      if (!m.totp) return { ok: true, me: publicMember(m) };
+      if (m.must2fa) throw httpErr(400, 'Your account needs an authenticator. You can change it, but not remove it.');
+      useCode(m, m.totp, b.code, 'Enter a code from your authenticator to remove it');
+      delete m.totp; delete m.totpNew; delete m.totpStep; delete m.totpNewStep; delete m.totpSince;
+      changed();
+      return { ok: true, me: publicMember(m) };
+    },
+    // The portal admin clearing somebody's, because the phone it was on is lost or changed.
+    totpReset(b) {
+      const m = byId(b.memberId);
+      if (!m) throw httpErr(404, 'No such member');
+      delete m.totp; delete m.totpNew; delete m.totpStep; delete m.totpNewStep; delete m.totpSince; delete m.lock;
+      changed();
+      return { ok: true, name: m.name, must: !!m.must2fa };
     },
 
     // Who is this number, so the sign-in screen can greet them before asking for the passcode.
@@ -296,6 +434,7 @@ function makePeople(ctx) {
 
       const m = {
         id: rid(6), name, phone, addedAt: Date.now(), sessions: [], push: [], tier: 'secondary',
+        must2fa: MUST_2FA,       // everybody added from now on signs in with an authenticator
         status: boss ? 'active' : 'pending',
         sponsorId: boss ? '' : by.id,
       };
@@ -451,4 +590,4 @@ function makePeople(ctx) {
   };
 }
 
-module.exports = { makePeople, cleanPhone, cleanName, isPin };
+module.exports = { makePeople, cleanPhone, cleanName, isPin, totpAt, base32, unbase32 };

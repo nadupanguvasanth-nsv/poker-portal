@@ -1,4 +1,5 @@
 'use strict';
+// Copyright (c) 2026 Vashanth Somasundaram. All rights reserved. See LICENSE.
 // A table: who is sitting at it, whose turn it is, which game this hand is, and the money.
 //
 // Four formats:

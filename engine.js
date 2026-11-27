@@ -1,4 +1,5 @@
 'use strict';
+// Copyright (c) 2026 Vashanth Somasundaram. All rights reserved. See LICENSE.
 // Poker engine: deck, hand ranking, and one no-limit Texas Hold'em hand
 // (blinds, betting rounds, side pots, showdown). No dependencies.
 const crypto = require('crypto');

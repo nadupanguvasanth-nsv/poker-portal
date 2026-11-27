@@ -1,4 +1,5 @@
 'use strict';
+// Copyright (c) 2026 Vashanth Somasundaram. All rights reserved. See LICENSE.
 // Smart Buddies: a private poker portal for one group of friends.
 //
 // This file is the outside of the portal: the web server, the live feed to each phone, and the
@@ -8,12 +9,14 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const { makeStore } = require('./store');
 const { makePeople } = require('./portal');
 const { makeLobby } = require('./lobby');
 const { Table, FORMATS, PICKABLE, SEATS, TOURNEY, NO_CAP, VARIANTS } = require('./games');
 const { CATEGORY } = require('./engine');
+const talk = require('./talk');
 const { settle, statementPdf } = require('./statement');
 const study = require('./study');
 const { gameText } = require('./export');
@@ -150,7 +153,7 @@ function buttonSeat(h) {
   return p ? p.seat : 0;
 }
 // ---------------------------------------------------------------- state
-let state = { members: {}, history: [], vapid: null };
+let state = { members: {}, history: [], vapid: null, mail: {} };
 const store = makeStore(process.env);
 let dirty = false;
 const changed = () => { dirty = true; };
@@ -160,6 +163,7 @@ function snapshot() {
     members: state.members,
     history: state.history,
     vapid: state.vapid,
+    mail: state.mail,
     tables: [...lobby.tables.values()].filter((t) => keepTable(t)).map(saveTable),
   };
 }
@@ -224,7 +228,17 @@ function tellMember(memberId, event, data) {
 }
 
 // ---------------------------------------------------------------- the pieces
-const people = makePeople({ state, changed, httpErr, secret: () => process.env.DRIVE_SECRET || process.env.SETUP_SECRET || '' });
+const people = makePeople({ state, changed, httpErr, secret: () => process.env.DRIVE_SECRET || process.env.SETUP_SECRET || '',
+  // He has signed in somewhere new: any screen of his still open on the old sign-in is told so and
+  // let go at once, rather than finding out the next time it asks for something.
+  signedOut: (m, keep) => {
+    for (const c of [...feeds]) {
+      if (c.member.id !== m.id || c.token === keep) continue;
+      sendTo(c, 'bye', { why: 'elsewhere' });
+      try { c.res.end(); } catch (err) { /* gone already */ }
+      feeds.delete(c);
+    }
+  } });
 // A flag follows the name: the lobby and the table both show it, so the mark is handed to them
 // rather than each working it out. It is only ever the colour - what is behind it stays with the
 // person, whoever brought them in, and the portal admin.
@@ -316,6 +330,8 @@ function tableView(t, member) {
     requests: iRun ? t.requests.slice() : [],
     leaveAsks: iRun ? t.seated().filter((p) => p.leaveAsk && !p.leaveOk).map((p) => ({ id: p.id, name: p.name })) : [],
     notes: t.notes.slice(-10),
+    // the line for the hand just finished, if it earned one; gone as soon as the next is dealt
+    talk: t.talk && t.hand && t.hand.finished && t.talk.no === t.handNo ? { id: t.talk.id, who: t.talk.who, text: t.talk.text } : null,
     log: t.log.slice(-40),
     fx: (t.fx || []).filter((f) => Date.now() - f.at < FX_LIFE_MS).slice(-10),
     reactions: {
@@ -501,6 +517,24 @@ function topUpAll(t) {
   }
 }
 
+// The line somebody would have said out loud. Chosen once, here, so every phone at the table
+// shows the same words under the same name - and chosen only from what the table has seen.
+function tableTalk(t, h) {
+  t.talk = null;
+  if (!h.result || process.env.TABLE_TALK === 'off') return;
+  const runs = t.foldRun || (t.foldRun = {});
+  const busted = h.players.filter((hp) => hp.stack <= 0).map((hp) => hp.id);
+  let said = null;
+  try { said = talk.choose(h, { bb: t.blinds().bb, busted, folded: runs }, t.lastTalk || ''); } catch (err) { console.error('table talk:', err.message); }
+  // how long each of them has now sat a hand out, for the next time
+  for (const hp of h.players) runs[hp.id] = hp.folded ? (runs[hp.id] || 0) + 1 : 0;
+  if (!said) return;
+  const who = t.players.get(said.who);
+  if (!who) return;
+  t.lastTalk = said.text;
+  t.talk = { id: t.code + ':' + t.handNo, no: t.handNo, kind: said.kind, who: who.name, text: said.text };
+}
+
 function afterAction(t) {
   const h = t.hand;
   if (!h) return;
@@ -510,6 +544,7 @@ function afterAction(t) {
     topUpAll(t);                     // only now: the hand has written everybody's stack back
     keepRound(t, h);
     celebrate(t, h);
+    tableTalk(t, h);
     broadcast(t);
     const winner = t.tourneyWinner();
     if (winner) return endGame(t, `${winner.name} won the tournament`);
@@ -807,6 +842,42 @@ function pruneReplays() {
   }
 }
 
+
+// ---------------------------------------------------------------- notes to the portal admin
+// A member's way of saying something to the portal admin that has nothing to do with a hand in
+// progress, and his way of answering. One thread per member, kept short: this is a note through
+// the door, not a chat. Nobody but the member and the portal admin ever sees a thread.
+const MAIL_LEN = 300;      // one note
+const MAIL_KEEP = 50;      // notes kept in a thread; the oldest go first
+const MAIL_WAIT = 3;       // notes a member may have waiting for an answer
+function mailText(v) {
+  // one paragraph: anything that is not a printing character becomes a space
+  const t = String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) throw httpErr(400, 'Write something first');
+  if ([...t].length > MAIL_LEN) throw httpErr(400, `Keep it to ${MAIL_LEN} characters`);
+  return t;
+}
+const theAdmin = () => Object.values(state.members).find((x) => x.isAdmin) || null;
+const unseen = (line, by) => line.filter((x) => x.by !== by && !x.seen).length;
+// What one person is given: a member his own thread, the portal admin everybody's.
+function mailFor(m) {
+  if (!m.isAdmin) {
+    const line = state.mail[m.id] || [];
+    return { thread: line, unread: unseen(line, 'm'), left: Math.max(0, MAIL_WAIT - waiting(line)), max: MAIL_LEN };
+  }
+  const threads = Object.keys(state.mail).filter((id) => state.members[id] && state.mail[id].length).map((id) => {
+    const who = state.members[id], line = state.mail[id];
+    return { memberId: id, name: who.nick || who.name, gone: !people.live(who), thread: line, unread: unseen(line, 'a'), at: line[line.length - 1].at };
+  }).sort((a, b) => b.at - a.at);
+  return { threads, unread: threads.reduce((n, t) => n + t.unread, 0), max: MAIL_LEN };
+}
+// how many of his notes have had no answer yet
+function waiting(line) {
+  let n = 0;
+  for (let i = line.length - 1; i >= 0 && line[i].by === 'm'; i--) n += 1;
+  return n;
+}
+
 // ---------------------------------------------------------------- routes
 const routes = {
   // --- getting in ---
@@ -868,6 +939,7 @@ const routes = {
       flags: flagsFor(m.id),
       toPay: openDebts().filter((d) => d.from === m.id),
       toGet: openDebts().filter((d) => d.to === m.id),
+      mail: mailFor(m),
       flagged: m.isAdmin
         ? Object.values(state.members).filter((x) => x.red).map((x) => ({ id: x.id, name: x.name, why: x.red.why, at: x.red.at }))
         : [],
@@ -953,6 +1025,22 @@ const routes = {
   'member-remove'(b) { const m = people.auth(b); people.adminOnly(m); return people.remove(b); },
   'member-restore'(b) { const m = people.auth(b); people.adminOnly(m); return people.restore(b); },
   'member-reset'(b) { const m = people.auth(b); people.adminOnly(m); return people.resetPin(b); },
+  // --- the authenticator ---
+  'totp-begin'(b) { return people.totpBegin(people.auth(b), b); },
+  'totp-confirm'(b) { return people.totpConfirm(people.auth(b), b); },
+  'totp-off'(b) { return people.totpOff(people.auth(b), b); },
+  // The portal admin clearing a member's authenticator, when the phone it lived on is gone.
+  'member-2fa-reset'(b) {
+    const m = people.auth(b);
+    people.adminOnly(m);
+    const out = people.totpReset(b);
+    if (b.memberId !== m.id) {
+      notify([String(b.memberId)], { title: 'Authenticator reset', body: out.must
+        ? `${m.nick || m.name} cleared your authenticator. You will link a new one the next time you sign in.`
+        : `${m.nick || m.name} cleared your authenticator. Add it again from your Me page when you are ready.`, url: '/', badge: 1 });
+    }
+    return out;
+  },
 
   // A copy of the portal for the portal admin to keep somewhere else. Everything is in one file
   // in one place, and one bad day - a slip, a fault, somebody who should not have got in - would
@@ -964,8 +1052,8 @@ const routes = {
     people.adminOnly(m);
     const members = {};
     for (const x of people.everyone()) {
-      const { pin, salt, sessions, push, subs, join, lock, ...keep } = x;
-      void pin; void salt; void sessions; void push; void subs; void join; void lock;
+      const { pin, salt, sessions, push, subs, join, lock, totp, totpNew, totpStep, totpNewStep, totpSince, ...keep } = x;
+      void pin; void salt; void sessions; void push; void subs; void join; void lock; void totp; void totpNew; void totpStep; void totpNewStep; void totpSince;
       members[x.id] = keep;
     }
     const stamp = new Date().toISOString().slice(0, 10);
@@ -974,6 +1062,56 @@ const routes = {
       games: state.history.length, members: Object.keys(members).length,
       text: JSON.stringify({ kind: 'smart-buddies-backup', madeAt: Date.now(), members, history: state.history }),
     };
+  },
+
+  // --- notes between a member and the portal admin ---
+  // A member writes to the portal admin; the portal admin writes to whoever he names.
+  'mail-send'(b) {
+    const m = people.auth(b);
+    const text = mailText(b.text);
+    const boss = theAdmin();
+    let whose = m.id;
+    if (m.isAdmin) {
+      const to = state.members[String(b.memberId || '')];
+      if (!to || to.isAdmin) throw httpErr(400, 'Choose who it is for');
+      if (!people.live(to)) throw httpErr(400, `${to.name} is not in the portal now`);
+      whose = to.id;
+    } else {
+      if (!boss) throw httpErr(400, 'There is nobody to send it to yet');
+      if (waiting(state.mail[m.id] || []) >= MAIL_WAIT) {
+        throw httpErr(400, `You have ${MAIL_WAIT} notes waiting for ${boss.nick || boss.name} already. Wait for an answer before sending another.`);
+      }
+    }
+    const line = state.mail[whose] || (state.mail[whose] = []);
+    line.push({ id: crypto.randomBytes(5).toString('hex'), by: m.isAdmin ? 'a' : 'm', text, at: Date.now(), seen: false });
+    while (line.length > MAIL_KEEP) line.shift();
+    changed();
+    const other = m.isAdmin ? whose : boss.id;
+    notify([other], { title: m.isAdmin ? 'A note from the portal admin' : `A note from ${m.nick || m.name}`, body: text.length > 120 ? text.slice(0, 117) + '...' : text, url: '/', tag: 'mail-' + whose, badge: 1 });
+    tellMember(other, 'mail', {});
+    return mailFor(m);
+  },
+  // He has read what the other side wrote.
+  'mail-seen'(b) {
+    const m = people.auth(b);
+    const whose = m.isAdmin ? String(b.memberId || '') : m.id;
+    const line = state.mail[whose];
+    if (line) {
+      const mine = m.isAdmin ? 'a' : 'm';
+      let any = false;
+      for (const x of line) if (x.by !== mine && !x.seen) { x.seen = true; any = true; }
+      // the writer's phone learns it was read without being touched
+      if (any) { changed(); const boss = theAdmin(); tellMember(m.isAdmin ? whose : (boss ? boss.id : ''), 'mail', {}); }
+    }
+    return mailFor(m);
+  },
+  // The portal admin clearing a thread away. It goes for both of them.
+  'mail-drop'(b) {
+    const m = people.auth(b);
+    people.adminOnly(m);
+    const whose = String(b.memberId || '');
+    if (state.mail[whose]) { delete state.mail[whose]; changed(); tellMember(whose, 'mail', {}); }
+    return mailFor(m);
   },
 
   // Primary or secondary: who can get a game going at all. Only the portal admin decides it, and
@@ -1802,7 +1940,7 @@ const SECURITY = {
 // house on one connection, which is what a home game looks like from here.
 const LIMITS = process.env.RATE_LIMITS !== 'off';
 const RATE = { auth: Number(process.env.RATE_AUTH || 30), all: Number(process.env.RATE_ALL || 1500) };
-const AUTH_ROUTES = new Set(['sign-in', 'look-up', 'first-admin']);
+const AUTH_ROUTES = new Set(['sign-in', 'look-up', 'first-admin', 'totp-begin', 'totp-confirm', 'totp-off']);
 const knocks = new Map();
 const addressOf = (req) => String(req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket && req.socket.remoteAddress) || 'unknown').slice(0, 64);
 function allow(req, name) {
@@ -1907,12 +2045,13 @@ const server = http.createServer(async (req, res) => {
 
 const MAX_FEEDS = Number(process.env.MAX_FEEDS || 6);
 function feed(req, res, url) {
-  const m = people.whoIs(url.searchParams.get('token'));
+  const token = String(url.searchParams.get('token') || '');
+  const m = people.whoIs(token);
   if (!m) { res.writeHead(401); return res.end('sign in'); }
   const code = (url.searchParams.get('code') || '').toUpperCase();
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
   res.write('retry: 2000\n\n');
-  const client = { res, member: m, code };
+  const client = { res, member: m, code, token };
   // A phone, a tablet, a browser left open: a handful of lines is a person. More than that is
   // something holding the door open on purpose, and the oldest are let go.
   const his = [...feeds].filter((c) => c.member.id === m.id);
@@ -1982,12 +2121,16 @@ const ready = (async () => {
     else if (saved.members !== undefined) dropped.push('members');
 
     if (ok(saved.history, 'array')) state.history = saved.history;
+    else if (saved.history !== undefined) dropped.push('history');
     // names written before names were restricted
     const tidied = people.tidy();
     if (tidied) console.log('Tidied ' + tidied + ' name(s) that carried characters a name may not have.');
-    else if (saved.history !== undefined) dropped.push('history');
 
     state.vapid = saved.vapid || null;
+
+    // notes between members and the portal admin; a file from before there were any has none
+    if (ok(saved.mail, 'object')) state.mail = saved.mail;
+    else if (saved.mail !== undefined) dropped.push('messages');
 
     if (ok(saved.tables, 'array')) for (const raw of saved.tables) restoreTable(raw);
     else if (saved.tables !== undefined) dropped.push('tables');

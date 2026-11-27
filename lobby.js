@@ -1,4 +1,5 @@
 'use strict';
+// Copyright (c) 2026 Vashanth Somasundaram. All rights reserved. See LICENSE.
 // The lobby: every table that is running or waiting, who is running it, and who is in it.
 //
 // Any member can start a table, and whoever starts it is its game admin. The portal admin can see

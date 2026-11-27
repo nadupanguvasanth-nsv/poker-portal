@@ -50,7 +50,7 @@ class Doc {
     add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
     const kids = [];
     this.pages.forEach((ops, i) => {
-      const foot = `BT /F1 8 Tf ${hex('#8a928c')} rg 40 28 Td (${esc(this.footer)}) Tj ET BT /F1 8 Tf ${hex('#8a928c')} rg 555 28 Td (Page ${i + 1} of ${this.pages.length}) Tj ET`;
+      const foot = `BT /F1 8 Tf ${hex('#8a928c')} rg 40 28 Td (${esc(this.footer)}) Tj ET BT /F1 8 Tf ${hex('#8a928c')} rg 555 28 Td (Page ${i + 1} of ${this.pages.length}) Tj ET BT /F1 7 Tf ${hex('#8a928c')} rg 40 17 Td (Copyright 2026 Vashanth Somasundaram. All rights reserved.) Tj ET`;
       const stream = ops.join('\n') + '\n' + foot;
       const c = add(`<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}\nendstream`);
       const p = add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${c} 0 R >>`);

@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- Copyright (c) 2026 Vashanth Somasundaram. All rights reserved. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -157,6 +158,8 @@ body.four .card.s-c{color:#1c8a3c}
   box-shadow:0 8px 22px rgba(0,0,0,.6);animation:sayin .22s ease-out}
 .saybar .who{font-family:'Inter',sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;color:#d8b45c}
 .saybar .what{font-size:14px;color:#f2efe6;margin-top:2px;white-space:normal}
+.saybar.talk{background:#17130c;border-color:#d8b45c;text-align:center;padding:10px 14px}
+.saybar.talk .what{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:17px;line-height:1.25;color:#f4e6c0}
 @keyframes sayin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .actflash{position:absolute;left:50%;bottom:100%;margin-bottom:2px;transform:translateX(-50%);
   padding:2px 8px;border-radius:9px;background:#d8b45c;color:#14110a;font-family:'Inter',sans-serif;
@@ -187,6 +190,16 @@ body.four .card.s-c{color:#1c8a3c}
 .act.stood{opacity:.32}
 .row{display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 14px;border-radius:12px;background:#141917;border:1px solid #2a312d}
 .sheet{position:absolute;inset:0;background:#0a0c0b;z-index:20;overflow-y:auto;padding:20px 20px 32px;-webkit-overflow-scrolling:touch}
+.field textarea{border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;line-height:1.35;padding:10px 14px;font-family:inherit;width:100%;resize:none;display:block}
+.pick{height:48px;border-radius:10px;border:1px solid #2a312d;background:#141917;color:#f2efe6;font-size:16px;padding:0 10px;font-family:inherit;width:100%}
+.dot{display:inline-block;min-width:18px;height:18px;line-height:18px;border-radius:9px;margin-left:4px;padding:0 4px;font-size:11px;font-weight:700;text-align:center;color:#14110a;background:#d8b45c;vertical-align:middle}
+.note{max-width:84%;margin-top:8px;padding:9px 12px;border-radius:14px 14px 14px 4px;background:#1b211e;border:1px solid #2a312d}
+.note.me{margin-left:auto;border-radius:14px 14px 4px 14px;background:#22301f;border-color:#3a5233}
+.note .ntext{font-size:15px;line-height:1.35;white-space:pre-wrap;overflow-wrap:anywhere}
+.note .nwhen{font-size:11px;color:#a3aba5;margin-top:4px}
+.noterow{cursor:pointer}
+.stepno{flex:none;width:26px;height:26px;border-radius:13px;background:#d8b45c;color:#14110a;font-weight:800;font-size:14px;line-height:26px;text-align:center}
+.keybox{margin-top:8px;padding:10px 12px;border-radius:10px;border:1px dashed #5b5148;background:#0f1311;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;letter-spacing:.06em;line-height:1.5;color:#f2efe6;overflow-wrap:anywhere;user-select:all;-webkit-user-select:all}
 .h2{font-size:12px;font-weight:600;letter-spacing:.1em;color:#a3aba5;margin:22px 0 8px}
 .toast{position:absolute;left:16px;right:16px;top:62px;z-index:60;padding:12px 14px;border-radius:12px;background:#2a1417;border:1px solid #d2454d;font-size:13px}
 .toast.ok{background:#14221a;border-color:#2f7d53}
@@ -241,7 +254,22 @@ function blurField() { try { var a = document.activeElement; if (a && a.blur && 
 
 function api(name, body) {
   return fetch('/api/' + name, { method: 'POST', body: JSON.stringify(Object.assign({ token: S.token }, body || {})) })
-    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'Something went wrong'); return j; }); });
+    .then(function (r) { return r.json().then(function (j) {
+      // this sign-in is no longer good: he has signed in somewhere else since, or it has run out
+      if (r.status === 401 && S.token && j.error === 'Please sign in again') signedOutHere();
+      if (!r.ok) throw new Error(j.error || 'Something went wrong');
+      return j;
+    }); });
+}
+// One device at a time: signing in on another puts this one back at the door, and says why.
+function signedOutHere() {
+  if (!S.token) return;
+  S.token = ''; try { localStorage.removeItem('sb-token'); } catch (e) {}
+  S.me = null; S.screen = 'signin'; S.code = ''; S.v = null; S.signin = null; S.book = false; S.ask = null;
+  S.elsewhere = true;
+  if (feed) { feed.close(); feed = null; }
+  if (typeof tuneMusic === 'function') tuneMusic();
+  render();
 }
 
 // ---------------------------------------------------------------- the live feed
@@ -276,11 +304,14 @@ function connect() {
     if (S.v.now) S.skew = Date.now() - S.v.now;
     watchActs();            // did somebody just call or raise? flash it on their seat
     watchSaid();            // and has anybody said anything to you?
+    watchTalk();            // and did the hand just finished earn a line?
     watchTurn();            // and has the turn moved? ring for yours, tick for theirs
     fxIngest(S.v);          // take in anything newly thrown, once, and let it fly
     if (S.screen === 'table') render();
   });
   feed.addEventListener('ended', function () { refresh(); });
+  feed.addEventListener('bye', function () { signedOutHere(); });      // signed in on another device
+  feed.addEventListener('mail', function () { refresh(); });   // a note came, or a thread was cleared
   feed.onerror = function () { /* the browser reconnects by itself */ };
 }
 function refresh() {
@@ -293,6 +324,7 @@ function refresh() {
     S.adminName = j.adminName || S.adminName;
     S.induct = j.induct || null; S.owedBy = j.owedBy || {};
     S.groups = j.groups || []; S.roster = j.roster || [];
+    S.mail = j.mail || null;
     S.push = j.push; clearBadge();
     if (S.screen === 'signin') S.screen = 'home';
     resumeTable();
@@ -401,13 +433,40 @@ function doSignIn() {
   if (pin !== again) { toast('The two passcodes are not the same'); return; }
   var join = S.signin.join ? val('in_join').replace(/\D/g, '') : '';
   if (S.signin.join && join.length !== 6) { toast('The 6-digit joining code from your invitation'); return; }
+  S.signin.pin = pin;
   api('sign-in', { phone: S.signin.phone, pin: pin, join: join, device: navigator.userAgent.slice(0, 40) })
-    .then(function (j) {
-      S.token = j.token; try { localStorage.setItem('sb-token', j.token); } catch (e) {}
-      S.signin = null;
-      connect(); refresh();
-      if (j.welcome) setTimeout(function () { toast('Welcome in. Add this page to your home screen.'); }, 500);
-    }).catch(fail);
+    .then(signInReply).catch(fail);
+}
+// What came back from signing in: through, or one more step. The passcode he typed is held for
+// that step and no longer; it is never kept once he is in.
+function signInReply(j) {
+  if (j.token) {
+    S.elsewhere = false;
+    var first = j.welcome || (S.signin && S.signin.first);
+    S.token = j.token; try { localStorage.setItem('sb-token', j.token); } catch (e) {}
+    S.signin = null;
+    connect(); refresh();
+    if (first) setTimeout(function () { toast('Welcome in. Add this page to your home screen.'); }, 500);
+    return;
+  }
+  if (j.needCode) { S.signin.step = 'code'; S.signin.admin = !!j.admin; }
+  else if (j.setup2fa) { S.signin.step = 'setup'; S.signin.setup = j.setup2fa; }
+  render();
+  setTimeout(function () { var el = document.getElementById(S.signin && S.signin.step === 'code' ? 'in_code' : ''); if (el) el.focus(); }, 60);
+}
+function doCode(id) {
+  var code = codeTyped(id);
+  if (code.length !== 6) return toast('The 6-digit code from your authenticator', true);
+  blurField();
+  api('sign-in', { phone: S.signin.phone, pin: S.signin.pin, code: code, device: navigator.userAgent.slice(0, 40) }).then(signInReply).catch(fail);
+}
+// The portal admin has nobody to reset his, so the storage secret does it.
+function doAdminLost() {
+  var secret = val('in_secret');
+  if (!secret) return toast('The storage secret', true);
+  blurField();
+  api('sign-in', { phone: S.signin.phone, pin: S.signin.pin, secret: secret, device: navigator.userAgent.slice(0, 40) })
+    .then(function (j) { signInReply(j); if (j.token) setTimeout(function () { toast('You are in, and your old authenticator is cleared. Add a new one from the Me page.'); }, 600); }).catch(fail);
 }
 function firstAdmin() {
   blurField();
@@ -428,6 +487,7 @@ function signOut() {
 }
 
 function signInScreen() {
+  if (S.book === 'terms') return termsBook();
   if (S.adminSetup) {
     return '<div class="sheet"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.18em">SMART BUDDIES</div>'
       + '<div class="disp" style="font-size:34px;line-height:1.05;margin-top:6px">Set up<br>the portal</div>'
@@ -441,6 +501,28 @@ function signInScreen() {
       + '<button class="btn ghost" style="margin-top:8px" onclick="S.adminSetup=false;render()">Back</button></div>';
   }
   var s = S.signin;
+  if (s && s.step === 'setup') {
+    return '<div class="sheet"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.18em">SMART BUDDIES</div>'
+      + '<div class="disp" style="font-size:32px;line-height:1.05;margin-top:6px">One more step,<br>' + esc(s.name) + '</div>'
+      + '<div class="muted small" style="margin:10px 0 4px;white-space:normal">Your passcode is set. New members also sign in with a code from an authenticator app, so that nobody can get in as you with your number and four digits alone. It takes two minutes, once.</div>'
+      + authSteps(s.setup, "doCode('in_auth')")
+      + '<button class="btn ghost" style="margin-top:8px" onclick="S.signin=null;render()">Not ' + esc(s.name) + '?</button></div>';
+  }
+  if (s && s.step === 'code') {
+    return '<div class="sheet" style="padding-top:64px"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.18em">SMART BUDDIES</div>'
+      + '<div class="disp" style="font-size:38px;line-height:1;margin-top:6px">Hello ' + esc(s.name) + '</div>'
+      + '<div class="muted small" style="margin:10px 0 16px;white-space:normal">Now the 6-digit code your authenticator app is showing for Smart Buddies.</div>'
+      + codeField('in_code')
+      + '<button class="btn" style="margin-top:16px" onclick="doCode(\'in_code\')">Come in</button>'
+      + '<button class="btn ghost" style="margin-top:8px" onclick="S.signin=null;render()">Not ' + esc(s.name) + '?</button>'
+      + '<div class="muted small" id="authlost" style="margin-top:22px;text-align:center;white-space:normal">'
+      + (s.lost
+        ? 'Ask the portal admin to reset your authenticator. You then sign in with your passcode and link it again.'
+          + (s.admin ? '<div style="margin-top:14px;text-align:left">You are the portal admin, so nobody can reset it for you. Enter the storage secret instead - the one in your Render settings and Apps Script.</div>'
+            + field('in_secret', 'STORAGE SECRET', 'password', '') + '<button class="btn" style="margin-top:12px" onclick="doAdminLost()">Clear my authenticator and come in</button>' : '')
+        : '<a href="#" onclick="S.signin.lost=true;render();return false" style="color:#a3aba5">' + (s.admin ? 'I am the portal admin and have lost my authenticator' : 'Lost your authenticator, or changed phone?') + '</a>')
+      + '</div></div>';
+  }
   return '<div class="sheet" style="padding-top:64px"><div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.18em">SMART BUDDIES</div>'
     + '<div class="disp" style="font-size:38px;line-height:1;margin-top:6px">' + (s ? 'Hello ' + esc(s.name) : 'Private<br>poker party') + '</div>'
     + (s
@@ -451,11 +533,12 @@ function signInScreen() {
         + (s.first ? field('in_pin2', 'AND AGAIN', 'password', '', 'numeric') : '')
         + '<button class="btn" style="margin-top:16px" onclick="doSignIn()">' + (s.first ? 'Save and come in' : 'Come in') + '</button>'
         + '<button class="btn ghost" style="margin-top:8px" onclick="S.signin=null;render()">Not ' + esc(s.name) + '?</button>'
-      : '<div class="muted small" style="margin:10px 0 16px;white-space:normal">Sign in with the mobile number the admin has on the list for you.</div>'
+      : (S.elsewhere ? '<div class="evc" id="elsewhere" style="border-color:#d8b45c;margin-top:14px"><div class="small" style="white-space:normal;line-height:1.45">You were signed out here because your account was signed in on another device. It is one device at a time. If that was not you, sign in again and change your passcode.</div></div>' : '')
+        + '<div class="muted small" style="margin:10px 0 16px;white-space:normal">Sign in with the mobile number the admin has on the list for you.</div>'
         + field('in_phone', 'MOBILE NUMBER', 'tel', '9876543210')
         + '<button class="btn" style="margin-top:16px" onclick="askNumber()">Continue</button>'
         + '<div class="muted small" style="margin-top:22px;text-align:center"><a href="#" onclick="S.adminSetup=true;render();return false" style="color:#a3aba5">Setting the portal up for the first time?</a></div>')
-    + '</div>';
+    + ownerLine() + '</div>';
 }
 // ph is the grey hint; value fills the box with something already there to edit
 function field(id, label, type, ph, mode, value) {
@@ -475,16 +558,20 @@ function home() {
     + (S.me.isAdmin ? '<div class="pill2 g">ADMIN</div>' : '') + '</div>';
   h += S.tab === 'tables' ? tablesTab() : S.tab === 'history' ? historyTab() : meTab();
   h += '</div><div class="tabs">'
-    + tabBtn('tables', 'Tables') + tabBtn('history', 'History') + tabBtn('me', S.me.isAdmin ? 'Portal' : 'Me')
+    + tabBtn('tables', 'Tables') + tabBtn('history', 'History') + tabBtn('me', (S.me.isAdmin ? 'Portal' : 'Me') + countDot(S.mail && S.mail.unread))
     + '</div>';
   return h;
+}
+// a small gold number: something is waiting for him
+function countDot(n) {
+  return n ? ' <span class="dot">' + n + '</span>' : '';
 }
 function tabBtn(id, label) {
   return '<button class="' + (S.tab === id ? 'on' : '') + '" onclick="S.tab=\'' + id + '\';render()">' + label + '</button>';
 }
 
 function tablesTab() {
-  var h = '';
+  var h = authNudge();
   var mayOpen = !S.me || S.me.canOpen !== false;
   h += S.newTable ? newTableForm()
     : (mayOpen
@@ -669,6 +756,7 @@ function generalBook() {
     'Tap the cards in the middle of the table to see them large for a moment. The table menu has a switch for a four-colour deck - clubs green, diamonds blue - and a button that tests the sound and tells you what your phone says about it.',
     'The same menu is where you choose the room your table stands in - Card room, Rooftop or Club library - and its cloth, Emerald or Claret. That is your own phone only; everybody else keeps what they chose.',
     'Music is off until you turn it on with the note button at the top of the table, and it plays on your phone alone. It is kept quiet so the bell for your turn is always heard, and it stops when you leave the table.',
+    'When a hand earns it, the winner gets a line across the bottom of the table - table talk. It is chosen only from what everybody has already seen, so it gives nothing away, and you can turn it off for your own phone in the table menu.',
     'Whoever runs a table can pause it and start it again. Every clock stops with it - the time to act, the minimum time you agreed to stay, and in a tournament the blinds - so a break costs nobody anything. Only a set finishing time stays where it is, because that is a time of day.',
     'The number a table is opened for is only for starting. Once the first hand is dealt it carries on as long as two players have chips.',
     'A tournament is the exception: it has no starting number and never starts by itself. Only the member who opened it has the Start button - nobody else, the portal admin included - and he starts it when he judges enough have sat down. Nobody joins once it has begun. It is play or fold - nobody sits out of one - and whoever runs it can pause it, blinds and all.',
@@ -719,6 +807,20 @@ function generalBook() {
     'Chips are virtual. What you settle between yourselves, and how, is your own business.',
     'The portal keeps a count of how the Texas hands are played and what the all-in pots were worth. That record is the portal admin\u2019s alone: no member can open it, his own figures included, and none of it is ever shown while a hand is being played.',
     'Being taken out of the portal does not erase you. Every game you played, and anything owed either way, stays on the record, and you come back as yourself if the portal admin puts you back.',
+  ]);
+
+  part('Signing in safely', [
+    'An authenticator app adds a second step to signing in: your passcode, then a 6-digit code from the app. With it linked, nobody can sign in as you with your number and four digits alone.',
+    'Members added from now on link one the first time they sign in. Everybody else is advised to, from the Me page, and can remove it again.',
+    'You are asked for the code only when you sign in - a phone that is already signed in stays signed in.',
+    'One device at a time: signing in on a new phone or computer signs you out of the one before, and notifications follow you to the new one once you turn them on there.',
+    'If you lose the phone or cannot get a code, the portal admin resets your authenticator and you link it again.',
+  ]);
+
+  part('Messages and ownership', [
+    'To say something to the portal admin that is not about a hand in progress, use Messages on your Me page. It is a short note, only the two of you see it, and the answer comes back the same way.',
+    'You may have three notes waiting for an answer at a time.',
+    'The portal and everything in it belongs to its owner. The terms are at the foot of your Me page.',
   ]);
 
   part('Where the numbers are', [
@@ -1554,13 +1656,14 @@ function portalSections() {
     var red = all.filter(function (m) { return m.flags && m.flags.red; }).length;
     return [
       { id: 'me', name: 'Me' },
+      { id: 'notes', name: 'Inbox', n: S.mail && S.mail.unread },
       { id: 'members', name: 'Members', n: waiting },
       { id: 'money', name: 'Money', n: red, bad: true },
       { id: 'analysis', name: 'Analysis' },
       { id: 'groups', name: 'Groups' },
     ];
   }
-  var out = [{ id: 'me', name: 'Me' }];
+  var out = [{ id: 'me', name: 'Me' }, { id: 'notes', name: 'Messages', n: S.mail && S.mail.unread }];
   if (S.induct) out.push({ id: 'people', name: 'My people' });
   if (S.me.canOpen) out.push({ id: 'groups', name: 'Groups' });
   return out;
@@ -1582,6 +1685,7 @@ function meTab() {
   var secs = portalSections();
   var cur = secs.some(function (x) { return x.id === S.sec; }) ? S.sec : 'me';
   var h = sectionBar(secs, cur);
+  if (cur === 'notes') return h + notesBlock();
   if (cur === 'members') return h + membersBlock();
   if (cur === 'money') return h + statsBlock();
   if (cur === 'analysis') return h + studyBlock();
@@ -1614,6 +1718,8 @@ function myOwnSection() {
   }
   h += '<button class="btn ghost" style="margin-top:8px" onclick="signOut()">Sign out of this phone</button></div>';
 
+  h += authSection();
+
   // being told when a table goes up
   var ps = pushState();
   h += '<div class="h2">TELL ME WHEN A TABLE IS UP</div><div class="evc">';
@@ -1643,8 +1749,366 @@ function myOwnSection() {
       + '<div class="muted small" style="margin-top:6px;white-space:normal">Everything is kept in one file in one place. This gives you a copy of every member, game and debt to keep '
       + 'somewhere else - your Files, or an email to yourself. It leaves out passcodes and sign-ins, so the copy cannot be used to get in as anybody. Take one now and then, and after any big night.</div>';
   }
-  return h;
+  return h + ownerLine();
 }
+
+// ---------------------------------------------------------------- the authenticator
+// A QR code, drawn here so that nothing about a member's secret ever leaves the portal for some
+// picture-making service. Byte mode, the lightest error correction, sizes 1 to 9: room for 230
+// characters, and the link an authenticator wants is about a hundred.
+var QR_L = [null, [26, 7, 1], [44, 10, 1], [70, 15, 1], [100, 20, 1], [134, 26, 1], [172, 18, 2], [196, 20, 2], [242, 24, 2], [292, 30, 2]];
+var QR_ALIGN = [null, [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46]];
+function qrMatrix(text) {
+  var bytes = [], i, j;
+  var utf = unescape(encodeURIComponent(String(text)));
+  for (i = 0; i < utf.length; i++) bytes.push(utf.charCodeAt(i));
+  var ver = 0;
+  for (i = 1; i <= 9; i++) { if (bytes.length + 2 <= QR_L[i][0] - QR_L[i][1] * QR_L[i][2]) { ver = i; break; } }
+  if (!ver) return null;
+  var total = QR_L[ver][0], ecLen = QR_L[ver][1], blocks = QR_L[ver][2], dataLen = total - ecLen * blocks;
+
+  // the message: what kind, how long, the bytes, then padding to fill
+  var bits = [];
+  var put = function (v, n) { for (var k = n - 1; k >= 0; k--) bits.push((v >>> k) & 1); };
+  put(4, 4); put(bytes.length, 8);
+  bytes.forEach(function (b) { put(b, 8); });
+  for (i = 0; i < 4 && bits.length < dataLen * 8; i++) bits.push(0);
+  while (bits.length % 8) bits.push(0);
+  var data = [];
+  for (i = 0; i < bits.length; i += 8) { var v = 0; for (j = 0; j < 8; j++) v = (v << 1) | bits[i + j]; data.push(v); }
+  for (i = 0; data.length < dataLen; i++) data.push(i % 2 ? 0x11 : 0xEC);
+
+  // the arithmetic the correction codes are done in
+  var exp = [], log = [], x = 1;
+  for (i = 0; i < 255; i++) { exp[i] = x; log[x] = i; x <<= 1; if (x & 256) x ^= 0x11D; }
+  var mul = function (a, b) { return a && b ? exp[(log[a] + log[b]) % 255] : 0; };
+  var gen = [1];
+  for (i = 0; i < ecLen; i++) {
+    var next = [];
+    for (j = 0; j <= gen.length; j++) next[j] = (j < gen.length ? mul(gen[j], exp[i]) : 0) ^ (j > 0 ? gen[j - 1] : 0);
+    gen = next;
+  }
+  // gen is lowest power first; the remainder of data * x^ecLen divided by it
+  var correction = function (block) {
+    var rem = [];
+    for (var k = 0; k < ecLen; k++) rem.push(0);
+    block.forEach(function (b) {
+      var f = b ^ rem.shift(); rem.push(0);
+      for (var k2 = 0; k2 < ecLen; k2++) rem[k2] ^= mul(gen[ecLen - 1 - k2], f);
+    });
+    return rem;
+  };
+  var per = dataLen / blocks, dBlocks = [], eBlocks = [];
+  for (i = 0; i < blocks; i++) { var blk = data.slice(i * per, (i + 1) * per); dBlocks.push(blk); eBlocks.push(correction(blk)); }
+  var stream = [];
+  for (i = 0; i < per; i++) for (j = 0; j < blocks; j++) stream.push(dBlocks[j][i]);
+  for (i = 0; i < ecLen; i++) for (j = 0; j < blocks; j++) stream.push(eBlocks[j][i]);
+
+  // the square itself
+  var n = ver * 4 + 17, m = [], fn = [];
+  for (i = 0; i < n; i++) { m.push([]); fn.push([]); for (j = 0; j < n; j++) { m[i].push(0); fn[i].push(0); } }
+  var set = function (cx, cy, on) { if (cx >= 0 && cy >= 0 && cx < n && cy < n) { m[cy][cx] = on ? 1 : 0; fn[cy][cx] = 1; } };
+  for (i = 0; i < n; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+  [[3, 3], [n - 4, 3], [3, n - 4]].forEach(function (c) {
+    for (var dy = -4; dy <= 4; dy++) for (var dx = -4; dx <= 4; dx++) { var d = Math.max(Math.abs(dx), Math.abs(dy)); set(c[0] + dx, c[1] + dy, d !== 2 && d !== 4); }
+  });
+  var al = QR_ALIGN[ver];
+  al.forEach(function (ay, ai) {
+    al.forEach(function (ax, aj) {
+      if ((ai === 0 && aj === 0) || (ai === 0 && aj === al.length - 1) || (ai === al.length - 1 && aj === 0)) return;
+      for (var dy = -2; dy <= 2; dy++) for (var dx = -2; dx <= 2; dx++) set(ax + dx, ay + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    });
+  });
+  var format = function (mask) {
+    var d = (1 << 3) | mask, rem = d, k;
+    for (k = 0; k < 10; k++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    var f = ((d << 10) | rem) ^ 0x5412;
+    var bit = function (q) { return (f >>> q) & 1; };
+    for (k = 0; k <= 5; k++) set(8, k, bit(k));
+    set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8));
+    for (k = 9; k < 15; k++) set(14 - k, 8, bit(k));
+    for (k = 0; k < 8; k++) set(n - 1 - k, 8, bit(k));
+    for (k = 8; k < 15; k++) set(8, n - 15 + k, bit(k));
+    set(8, n - 8, 1);
+  };
+  format(0);
+  if (ver >= 7) {
+    var vr = ver;
+    for (i = 0; i < 12; i++) vr = (vr << 1) ^ ((vr >>> 11) * 0x1F25);
+    var vbits = (ver << 12) | vr;
+    for (i = 0; i < 18; i++) { var on = (vbits >>> i) & 1, a = n - 11 + i % 3, b = Math.floor(i / 3); set(a, b, on); set(b, a, on); }
+  }
+  // the message, snaking up and down in pairs of columns from the bottom right
+  var at = 0;
+  for (var right = n - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (var vert = 0; vert < n; vert++) {
+      for (j = 0; j < 2; j++) {
+        var px = right - j, up = ((right + 1) & 2) === 0, py = up ? n - 1 - vert : vert;
+        if (!fn[py][px] && at < stream.length * 8) { m[py][px] = (stream[at >>> 3] >>> (7 - (at & 7))) & 1; at++; }
+      }
+    }
+  }
+  // the pattern laid over it so that no part is all dark or all light: try each, keep the calmest
+  var MASKS = [
+    function (mx, my) { return (mx + my) % 2 === 0; }, function (mx, my) { return my % 2 === 0; },
+    function (mx) { return mx % 3 === 0; }, function (mx, my) { return (mx + my) % 3 === 0; },
+    function (mx, my) { return (Math.floor(mx / 3) + Math.floor(my / 2)) % 2 === 0; },
+    function (mx, my) { return (mx * my) % 2 + (mx * my) % 3 === 0; },
+    function (mx, my) { return ((mx * my) % 2 + (mx * my) % 3) % 2 === 0; },
+    function (mx, my) { return ((mx + my) % 2 + (mx * my) % 3) % 2 === 0; },
+  ];
+  var flip = function (k) { for (var fy = 0; fy < n; fy++) for (var fx = 0; fx < n; fx++) if (!fn[fy][fx] && MASKS[k](fx, fy)) m[fy][fx] ^= 1; };
+  var rough = function () {
+    var p = 0, ry, rx, run;
+    for (ry = 0; ry < n; ry++) {
+      for (rx = 1, run = 1; rx < n; rx++) { if (m[ry][rx] === m[ry][rx - 1]) { run++; if (run === 5) p += 3; else if (run > 5) p++; } else run = 1; }
+      for (rx = 1, run = 1; rx < n; rx++) { if (m[rx][ry] === m[rx - 1][ry]) { run++; if (run === 5) p += 3; else if (run > 5) p++; } else run = 1; }
+    }
+    for (ry = 0; ry < n - 1; ry++) for (rx = 0; rx < n - 1; rx++) if (m[ry][rx] === m[ry][rx + 1] && m[ry][rx] === m[ry + 1][rx] && m[ry][rx] === m[ry + 1][rx + 1]) p += 3;
+    return p;
+  };
+  var best = 0, low = Infinity;
+  for (i = 0; i < 8; i++) { flip(i); format(i); var sc = rough(); if (sc < low) { low = sc; best = i; } flip(i); }
+  flip(best); format(best);
+  return m;
+}
+// As a picture: dark on white with the quiet border a scanner needs.
+function qrSvg(text, px) {
+  var m = qrMatrix(text);
+  if (!m) return '';
+  var n = m.length, d = '';
+  for (var y = 0; y < n; y++) for (var x = 0; x < n; x++) if (m[y][x]) d += 'M' + (x + 4) + ' ' + (y + 4) + 'h1v1h-1z';
+  return '<svg id="authqr" xmlns="http://www.w3.org/2000/svg" width="' + px + '" height="' + px + '" viewBox="0 0 ' + (n + 8) + ' ' + (n + 8) + '" shape-rendering="crispEdges">'
+    + '<rect width="100%" height="100%" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+}
+
+// The three steps, the same wherever they are shown: on the way in for somebody who must have
+// one, and on the Me page for somebody who chose to.
+function authKeyShown(key) { return String(key || '').replace(/(.{4})/g, '$1 ').trim(); }
+function authSteps(o, go) {
+  var step = function (n, title, body) {
+    return '<div class="evc" style="margin-top:12px"><div style="display:flex;gap:10px;align-items:baseline">'
+      + '<div class="stepno">' + n + '</div><div class="disp" style="font-size:20px;line-height:1.1">' + title + '</div></div>'
+      + '<div class="small" style="margin-top:8px;white-space:normal;line-height:1.45">' + body + '</div></div>';
+  };
+  return step(1, 'Get an authenticator app',
+      'If you already use <b>Google Authenticator</b> or <b>Microsoft Authenticator</b>, use that. If not, install Google Authenticator from the App Store or Play Store - it is free. '
+      + 'On an iPhone with iOS 18 or later, the built-in <b>Passwords</b> app does the same job.')
+    + step(2, 'Add Smart Buddies to it',
+      'On this phone, tap the button and your authenticator opens with Smart Buddies ready to add.'
+      + '<a class="btn" id="authopen" style="margin-top:10px;display:flex;align-items:center;justify-content:center;text-decoration:none" href="' + esc(o.uri) + '">Open my authenticator</a>'
+      + '<div style="margin-top:12px">If nothing opens: in the app tap <b>+</b>, choose <b>Enter a setup key</b>, call it Smart Buddies, and paste this key.</div>'
+      + '<div id="authkey" class="keybox">' + esc(authKeyShown(o.key)) + '</div>'
+      + '<button class="btn ghost" style="margin-top:8px" onclick="copyText(\'' + esc(o.key) + '\')">Copy the key</button>'
+      + '<div style="margin-top:12px">Signing in on a computer or another phone? Scan this with the app instead.</div>'
+      + '<div style="margin-top:8px;text-align:center">' + qrSvg(o.uri, 196) + '</div>')
+    + step(3, 'Type the code it shows',
+      'The app now shows a 6-digit code for Smart Buddies that changes every 30 seconds. Type the one showing now.'
+      + codeField('in_auth') + '<button class="btn" style="margin-top:12px" onclick="' + go + '">Confirm</button>');
+}
+function codeField(id) {
+  return '<div class="field" style="margin-top:12px"><label for="' + id + '">6-DIGIT CODE</label>'
+    + '<input id="' + id + '" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="letter-spacing:.4em;font-size:22px"></div>';
+}
+function codeTyped(id) { return val(id).replace(/\D/g, ''); }
+
+// On the Me page.
+function authSection() {
+  var has = S.me.twofa, h = '<div class="h2">TWO-STEP SIGN-IN</div><div class="evc" id="authbox">';
+  if (S.auth) {
+    return '<div class="h2">TWO-STEP SIGN-IN</div>' + authSteps(S.auth, 'authConfirm()')
+      + '<button class="btn ghost" style="margin-top:8px" onclick="S.auth=null;render()">Not now</button>';
+  }
+  if (S.authAsk) {
+    return h + '<div class="small" style="white-space:normal">' + (S.authAsk === 'off' ? 'To remove your authenticator, enter a code from it.' : 'To change your authenticator, first enter a code from the one you have now.') + '</div>'
+      + codeField('in_authold')
+      + '<button class="btn" style="margin-top:12px" onclick="' + (S.authAsk === 'off' ? 'authOff()' : 'authBegin()') + '">Continue</button>'
+      + '<button class="btn ghost" style="margin-top:8px" onclick="S.authAsk=null;render()">Cancel</button></div>';
+  }
+  if (has) {
+    h += '<div class="small" style="white-space:normal"><b style="color:#7fd3a4">On.</b> Signing in on a new phone takes your passcode and a code from your authenticator app.'
+      + (S.me.must2fa ? '' : ' You can remove it, but your account is safer with it.') + '</div>'
+      + '<button class="btn ghost" style="margin-top:10px" onclick="S.authAsk=\'change\';render()">Move it to another app or phone</button>'
+      + (S.me.must2fa ? '' : '<button class="btn ghost" style="margin-top:8px" onclick="S.authAsk=\'off\';render()">Remove it</button>');
+  } else {
+    h += '<div class="small" style="white-space:normal"><b style="color:#e7c56f">Off.</b> Anybody who learns your mobile number and four digits can sign in as you. '
+      + 'With an authenticator they would need your phone as well. It takes two minutes, and you are only asked for the code when you sign in on a new phone.</div>'
+      + '<button class="btn" style="margin-top:10px" onclick="authBegin()">Add an authenticator</button>';
+  }
+  return h + '<button class="btn ghost" style="margin-top:8px" onclick="S.book=\'auth\';render()">How it works, step by step</button></div>';
+}
+function authBegin() {
+  var code = S.authAsk ? codeTyped('in_authold') : '';
+  if (S.authAsk && code.length !== 6) return toast('The 6-digit code from your authenticator', true);
+  blurField();
+  api('totp-begin', { code: code }).then(function (j) { S.auth = j; S.authAsk = null; render(); }).catch(fail);
+}
+function authConfirm() {
+  var code = codeTyped('in_auth');
+  if (code.length !== 6) return toast('The 6-digit code from your authenticator', true);
+  blurField();
+  api('totp-confirm', { code: code }).then(function (j) { S.me = j.me; S.auth = null; toast('Your authenticator is linked'); }).catch(fail);
+}
+function authOff() {
+  var code = codeTyped('in_authold');
+  if (code.length !== 6) return toast('The 6-digit code from your authenticator', true);
+  blurField();
+  api('totp-off', { code: code }).then(function (j) { S.me = j.me; S.authAsk = null; toast('Removed'); }).catch(fail);
+}
+// Said once on the Tables page to somebody who has none, and not again once he has answered.
+function authNudge() {
+  var later = false;
+  try { later = localStorage.getItem('sb-2fa-later') === '1'; } catch (e) {}
+  if (!S.me || S.me.twofa || later) return '';
+  return '<div class="evc" id="authnudge" style="border-color:#d8b45c"><div class="disp" style="font-size:20px;line-height:1.1">Protect your account</div>'
+    + '<div class="small" style="margin-top:6px;white-space:normal;line-height:1.45">Add an authenticator app, so that nobody can sign in as you with your number and four digits alone. Two minutes, once.</div>'
+    + '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" style="flex:1" onclick="S.tab=\'me\';S.sec=\'me\';authBegin()">Set it up</button>'
+    + '<button class="btn ghost" style="flex:1" onclick="authLater()">Not now</button></div></div>';
+}
+function authLater() { try { localStorage.setItem('sb-2fa-later', '1'); } catch (e) {} render(); }
+
+// The guide, as a page of its own and as words the portal admin can paste into the group.
+var AUTH_GUIDE = [
+  ['What it is', 'An authenticator is a free app that shows a 6-digit code which changes every 30 seconds. With it linked, signing in to Smart Buddies on a new phone takes your passcode and that code - so your number and four digits alone are not enough for anybody else.'],
+  ['1. Get the app', 'Use Google Authenticator or Microsoft Authenticator if you have one. If not, install Google Authenticator from the App Store or Play Store. On an iPhone with iOS 18 or later the built-in Passwords app also works.'],
+  ['2. Open Smart Buddies', 'Go to the Me page and tap Add an authenticator. A new member is taken there automatically the first time they sign in.'],
+  ['3. Add Smart Buddies to the app', 'Tap Open my authenticator and accept. If nothing opens, copy the setup key, then in the app tap +, choose Enter a setup key, name it Smart Buddies and paste the key. On a computer, scan the square code instead.'],
+  ['4. Confirm', 'Back in Smart Buddies, type the 6-digit code the app is showing and tap Confirm. That is it.'],
+  ['After that', 'A phone that is already signed in stays signed in. You are asked for a code only when you sign in again - on a new phone, or after signing out.'],
+  ['One device at a time', 'Signing in on a new phone or computer signs you out of the one before. That is the rule for everybody.'],
+  ['New phone or lost phone', 'Turn on backup in your authenticator app and the codes move to your new phone with you. If you cannot get a code, ask the portal admin to reset your authenticator, then link it again.'],
+];
+function authGuideText() {
+  return 'SMART BUDDIES - SETTING UP YOUR AUTHENTICATOR\n\n' + AUTH_GUIDE.map(function (g) { return g[0].toUpperCase() + '\n' + g[1]; }).join('\n\n');
+}
+function authGuide() {
+  var h = '<div class="sheet" style="z-index:55">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+    + '<div><div class="disp" style="font-size:28px;line-height:1.05">Two-step sign-in</div>'
+    + '<div class="muted small">Setting up your authenticator, step by step</div></div>'
+    + '<button class="rolechip" onclick="S.book=false;render()">Close</button></div>';
+  AUTH_GUIDE.forEach(function (g) {
+    h += '<div class="evc" style="margin-top:12px"><div class="disp" style="font-size:20px;line-height:1.1">' + g[0] + '</div>'
+      + '<div class="small" style="margin-top:6px;white-space:normal;line-height:1.45">' + g[1] + '</div></div>';
+  });
+  if (S.me && S.me.isAdmin) h += '<button class="btn" style="margin-top:16px" onclick="copyText(authGuideText())">Copy this guide for the group</button>';
+  return h + '<button class="btn ghost" style="margin-top:' + (S.me && S.me.isAdmin ? 8 : 16) + 'px" onclick="S.book=false;render()">Back</button></div>';
+}
+function reset2fa(id) {
+  var name = nameOfMember(id);
+  S.ask = { title: 'Reset ' + name + "'s authenticator?", detail: 'Do this when the phone it was on is lost or changed. Their passcode stays as it is, and they link an authenticator again.', yes: 'Yes, reset it', go: "doReset2fa('" + id + "')" };
+  render();
+}
+function doReset2fa(id) { S.ask = null; api('member-2fa-reset', { memberId: id }).then(function () { toast('Reset'); return refresh(); }).catch(fail); }
+
+// ---------------------------------------------------------------- whose portal this is
+var OWNER = 'Vashanth Somasundaram', OWNED_SINCE = 2026;
+function ownerLine() {
+  return '<div id="ownerline" class="muted small" style="margin-top:26px;text-align:center;white-space:normal">&copy; ' + OWNED_SINCE + ' ' + OWNER + '. All rights reserved.<br>'
+    + '<a href="#" onclick="S.book=\'terms\';render();return false" style="color:#a3aba5">Terms and ownership</a></div>';
+}
+function termsBook() {
+  var h = '<div class="sheet" style="z-index:55">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+    + '<div><div class="disp" style="font-size:28px;line-height:1.05">Terms and ownership</div>'
+    + '<div class="muted small">&copy; ' + OWNED_SINCE + ' ' + OWNER + '. All rights reserved.</div></div>'
+    + '<button class="rolechip" onclick="S.book=false;render()">Close</button></div>';
+  [
+    ['Ownership', 'Smart Buddies, including its name, design, artwork, music, software, game records and all other content, is owned by ' + OWNER + ' ("the Owner"), who holds all rights in it.'],
+    ['Use', 'Access is by the Owner\'s invitation only and is personal to each member. It may be changed, suspended or withdrawn by the Owner at any time, without notice or reason.'],
+    ['No copying', 'No part of the portal may be copied, reproduced, modified, distributed, published or used to build another service without the Owner\'s written permission.'],
+    ['Records and messages', 'Game records, statements and messages sent through the portal are kept by the Owner as part of the portal and may be retained or deleted at the Owner\'s discretion.'],
+    ['Play chips only', 'Chips in the portal are virtual, have no monetary value and cannot be exchanged for money or goods through the portal.'],
+    ['Decisions', 'The Owner\'s decision on any matter concerning the portal, its members or its games is final.'],
+    ['Law', 'These terms are governed by the laws of India, and the courts at Tiruppur, Tamil Nadu have exclusive jurisdiction.'],
+  ].forEach(function (t) {
+    h += '<div class="evc" style="margin-top:12px"><div class="disp" style="font-size:20px;line-height:1.1">' + t[0] + '</div>'
+      + '<div class="small" style="margin-top:6px;white-space:normal;line-height:1.45">' + t[1] + '</div></div>';
+  });
+  return h + '<button class="btn ghost" style="margin-top:16px" onclick="S.book=false;render()">Back</button></div>';
+}
+
+// ---------------------------------------------------------------- notes to and from the portal admin
+// A member sees one thread, his own. The portal admin sees a list of them and opens one at a time.
+function noteBubbles(line, mine) {
+  if (!line.length) return '<div class="muted small" style="margin-top:10px">Nothing here yet.</div>';
+  return '<div id="notes" style="margin-top:10px">' + line.map(function (x) {
+    var me = x.by === mine;
+    return '<div class="note' + (me ? ' me' : '') + '"><div class="ntext">' + esc(x.text) + '</div>'
+      + '<div class="nwhen">' + when(x.at) + (me && x.seen ? ' &middot; read' : '') + '</div></div>';
+  }).join('') + '</div>';
+}
+function noteBox(label, go) {
+  var max = (S.mail && S.mail.max) || 300, d = S.mailDraft || '';
+  return '<div class="field" style="margin-top:12px"><label for="nt_mail">' + label + '</label>'
+    + '<textarea id="nt_mail" rows="3" maxlength="' + max + '" placeholder="A short note" oninput="noteTyped(this)">' + esc(d) + '</textarea></div>'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-top:8px"><div id="mailleft" class="muted small" style="flex:1">' + (max - d.length) + ' left</div>'
+    + '<button class="btn" id="mailsend" style="flex:none;width:auto;padding:0 22px" onclick="' + go + '">Send</button></div>';
+}
+function noteTyped(el) {
+  S.mailDraft = el.value;
+  var left = document.getElementById("mailleft");
+  if (left) left.textContent = (((S.mail && S.mail.max) || 300) - el.value.length) + ' left';
+}
+// reading a thread marks the other side's notes as read, once
+function noteSeen(memberId, unread) {
+  if (!unread || S.mailBusy) return;
+  S.mailBusy = true;
+  api('mail-seen', { memberId: memberId || '' }).then(function (j) { S.mail = j; S.mailBusy = false; render(); }, function () { S.mailBusy = false; });
+}
+function sendNote(memberId) {
+  var el = document.getElementById('nt_mail'), text = (el ? el.value : S.mailDraft || '').trim();
+  if (!text) return toast('Write something first', true);
+  blurField();
+  api('mail-send', { text: text, memberId: memberId || '' }).then(function (j) { S.mail = j; S.mailDraft = ''; S.mailNew = false; toast('Sent'); }).catch(fail);
+}
+function notesBlock() {
+  var m = S.mail || {};
+  if (!S.me.isAdmin) {
+    noteSeen('', m.unread);
+    var h = '<div class="h2">MESSAGES WITH ' + esc((S.adminName || 'the portal admin').toUpperCase()) + '</div>'
+      + '<div class="muted small" style="white-space:normal">For anything that is not about a hand in progress. Only you and ' + esc(S.adminName || 'the portal admin') + ' see this.</div>'
+      + noteBubbles(m.thread || [], 'm');
+    if (m.left === 0) return h + '<div class="evc muted small" style="white-space:normal">You have as many notes waiting as the portal takes. You can write again once there is an answer.</div>';
+    return h + noteBox('YOUR NOTE', "sendNote('')");
+  }
+  var threads = m.threads || [];
+  var open = S.mailOpen && threads.filter(function (t) { return t.memberId === S.mailOpen; })[0];
+  if (S.mailOpen && !open && !S.mailNew) S.mailOpen = '';
+  if (S.mailOpen) {
+    var name = open ? open.name : nameOfMember(S.mailOpen);
+    if (open) noteSeen(open.memberId, open.unread);
+    return '<div style="display:flex;align-items:center;gap:8px;margin-top:16px">'
+      + '<button class="rolechip" onclick="S.mailOpen=\'\';S.mailNew=false;S.mailDraft=\'\';render()">&lsaquo; Inbox</button>'
+      + '<div class="disp" style="font-size:22px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">' + esc(name) + '</div>'
+      + (open ? '<button class="rolechip" onclick="dropNotes(\'' + S.mailOpen + '\')">Delete</button>' : '') + '</div>'
+      + noteBubbles(open ? open.thread : [], 'a')
+      + (open && open.gone ? '<div class="evc muted small">' + esc(name) + ' is not in the portal now, so there is nobody to answer.</div>' : noteBox('YOUR REPLY', "sendNote('" + S.mailOpen + "')"));
+  }
+  var h2 = '<div class="h2">INBOX</div>';
+  if (!threads.length) h2 += '<div class="muted small" style="white-space:normal">No messages. Members write to you from the Messages section of their Me page.</div>';
+  threads.forEach(function (t) {
+    var last = t.thread[t.thread.length - 1];
+    h2 += '<div class="evc noterow" onclick="S.mailOpen=\'' + t.memberId + '\';S.mailDraft=\'\';render()">'
+      + '<div style="display:flex;align-items:center;gap:8px"><div style="font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t.name) + countDot(t.unread) + '</div>'
+      + '<div class="muted small" style="flex:none">' + when(last.at) + '</div></div>'
+      + '<div class="muted small" style="margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (last.by === 'a' ? 'You: ' : '') + esc(last.text) + '</div></div>';
+  });
+  // writing first, to somebody who has not written
+  var others = (S.members || []).filter(function (x) { return !x.isAdmin && x.live; });
+  if (others.length) {
+    h2 += '<div class="h2">WRITE TO A MEMBER</div><select id="mailwho" class="pick" onchange="if(this.value){S.mailOpen=this.value;S.mailNew=true;S.mailDraft=\'\';render()}">'
+      + '<option value="">Choose a member</option>'
+      + others.map(function (x) { return '<option value="' + x.id + '">' + esc(x.shown || x.name) + '</option>'; }).join('') + '</select>';
+  }
+  return h2;
+}
+function dropNotes(id) {
+  S.ask = { title: 'Delete this conversation?', detail: 'It goes for both of you and cannot be brought back.', yes: 'Yes, delete it', go: "doDropNotes('" + id + "')" };
+  render();
+}
+function doDropNotes(id) { S.ask = null; api('mail-drop', { memberId: id }).then(function (j) { S.mail = j; S.mailOpen = ''; toast('Deleted'); }).catch(fail); }
 function doChangePin() {
   blurField();
   api('set-pin', { old: val('cp_old'), pin: val('cp_new') }).then(function () { S.changePin = false; toast('Passcode changed. Other phones were signed out.'); render(); }).catch(fail);
@@ -1794,6 +2258,7 @@ function memberRow(m, inset) {
     + (m.status === 'archived'
       ? ' &middot; removed ' + when(m.removedAt)
       : ' &middot; ' + (m.hasPin ? 'has signed in' : 'has not signed in yet'))
+    + (m.twofa ? ' &middot; authenticator on' : (m.must2fa ? ' &middot; authenticator to be linked' : ''))
     + (m.sponsorWas && !m.sponsorId ? ' &middot; first brought in by ' + esc(m.sponsorWas) : '')
     + (m.join ? '<br>Joining code <b style="letter-spacing:.12em">' + esc(m.join) + '</b> &middot; Send link carries it' : '')
     + '</div></div><div style="flex:none">' + tier + '</div></div>';
@@ -1806,6 +2271,7 @@ function memberRow(m, inset) {
     + (m.tier === 'primary' ? 'Make secondary' : 'Make primary') + '</button>'
     + '<button class="rolechip" onclick="memberLink(\'' + m.id + '\')">Send link</button>'
     + '<button class="rolechip" onclick="resetMember(\'' + m.id + '\')">Reset passcode</button>'
+    + (S.me.isAdmin && (m.twofa || m.must2fa) ? '<button class="rolechip" onclick="reset2fa(\'' + m.id + '\')">Reset authenticator</button>' : '')
     + '<button class="rolechip" style="color:#d2454d;border-color:#6b2a2e" onclick="removeMember(\'' + m.id + '\')">Remove</button>'
     + '</div>';
   return h + '</div>';
@@ -3325,6 +3791,10 @@ function tableMenu(v) {
     + '<button class="btn ghost" style="margin-top:8px" onclick="testSound()">Test the sound</button>'
     + (S.soundSays ? '<div class="small gold" id="soundsays" style="margin-top:6px;white-space:normal">' + esc(S.soundSays) + '</div>' : '');
 
+  h += '<div class="h2">TABLE TALK</div>'
+    + '<button class="btn ghost" id="talkbtn" onclick="toggleTalk()">' + (S.talk ? 'Table talk is on &mdash; turn it off' : 'Table talk is off &mdash; turn it on') + '</button>'
+    + '<div class="muted small" style="margin-top:6px;white-space:normal">A line from the winner when a hand earns one, across the bottom of the table. This phone only.</div>';
+
   h += '<div class="h2">MUSIC</div>'
     + '<button class="btn ghost" onclick="toggleMusic()">' + (S.music ? 'Music is on &mdash; turn it off' : 'Music is off &mdash; turn it on') + '</button>'
     + '<div class="muted small" style="margin-top:6px;white-space:normal">Quiet music behind the game, on this phone only. It plays under the bell and the chips, never over them, and stops when you leave the table.</div>';
@@ -3516,6 +3986,8 @@ function render() {
     : S.spot ? spotSheet()
     : S.review ? reviewSheet()
     : S.groupEdit ? groupSheet()
+    : S.book === 'terms' ? termsBook()
+    : S.book === 'auth' ? authGuide()
     : S.book === 'portal' ? generalBook()
     : S.book ? gameBook()
     : S.rules ? rulesSheet()
@@ -4012,13 +4484,35 @@ function nextSaid() {
   S.sayQ = q;
   if (S.screen === 'table') render();
   clearTimeout(nextSaid.t);
-  nextSaid.t = setTimeout(nextSaid, SAY_FOR_MS);
+  // a line of table talk is gone before the next hand wants the space
+  nextSaid.t = setTimeout(nextSaid, S.sayShow.talk ? TALK_FOR_MS : SAY_FOR_MS);
+}
+
+// ---- table talk ----
+// The portal sends one line with a finished hand when the hand earned one. It is shown once, in
+// the same place as anything else said at the table, under the name of whoever won.
+var TALK_FOR_MS = 3800;
+try { S.talk = localStorage.getItem('sb-talk') !== '0'; } catch (e) { S.talk = true; }
+function toggleTalk() {
+  S.talk = !S.talk;
+  try { localStorage.setItem('sb-talk', S.talk ? '1' : '0'); } catch (e) {}
+  render();
+}
+function watchTalk() {
+  var t = S.v && S.v.talk;
+  // whatever was on the table when he opened it has been and gone
+  if (S.talkSeen === undefined) { S.talkSeen = t ? t.id : ''; return; }
+  if (!t || t.id === S.talkSeen) return;
+  S.talkSeen = t.id;
+  if (!S.talk) return;
+  S.sayQ = (S.sayQ || []).concat([{ fromName: t.who, text: t.text, talk: true }]);
+  if (!S.sayShow) nextSaid();
 }
 function sayBar() {
   var m = S.sayShow;
   if (!m) return '';
-  return '<div class="saybar"><div class="who">' + esc(m.fromName || '') + '</div>'
-    + '<div class="what">' + esc(m.text) + '</div></div>';
+  return '<div class="saybar' + (m.talk ? ' talk' : '') + '"><div class="who">' + esc(m.fromName || '') + '</div>'
+    + '<div class="what">' + (m.talk ? '&ldquo;' + esc(m.text) + '&rdquo;' : esc(m.text)) + '</div></div>';
 }
 
 // ---- the move just made ----
