@@ -34,7 +34,6 @@ align-items:center;justify-content:center;text-align:center;padding:24px}
 /* The table can be dressed differently without touching anything that has to stay readable: the
    cards keep their white, the chips their gold, the names their contrast. Only the cloth, the
    rail and the dark backing behind the card backs and the faces change. */
-#stage[data-felt="midnight"]{--f1:#24507f;--f2:#1a3a5e;--f3:#0e1f35;--rail:#1b2433;--deep:#141c28;--av:#1a2534}
 #stage[data-felt="claret"]{--f1:#7a2634;--f2:#5c1b26;--f3:#330f16;--rail:#2a1a16;--deep:#1f1216;--av:#2a181d}
 button{font-family:inherit;cursor:pointer}
 button:focus-visible,input:focus-visible{outline:2px solid #d8b45c;outline-offset:2px}
@@ -75,6 +74,8 @@ body.four .card.s-c{color:#1c8a3c}
 .pmini{position:relative;width:28px;height:28px;border-radius:14px;background:#1b2a22;border:1px solid #2a312d;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:13px;flex:none}
 .betchip{display:inline-flex;align-items:center;gap:4px;margin-top:2px;padding:1px 7px 1px 4px;border-radius:9px;background:rgba(10,14,12,.72);border:1px solid #4a4a3a;font-size:11px;font-weight:700;color:#f3e9cf;white-space:nowrap}
 
+.betchip.outl,.betchip.outr{position:absolute;top:14px;margin-top:0;white-space:nowrap}
+.betchip.outl{right:calc(100% - 7px)}.betchip.outr{left:calc(100% - 7px)}
 .betchip i{width:11px;height:11px;border-radius:7px;background:radial-gradient(circle at 35% 30%,#f0d089,#c69b3c);border:1px solid #8c6a22;display:block;flex:none}
 .seat{position:absolute;width:64px;display:flex;flex-direction:column;align-items:center;text-align:center;pointer-events:none}
 /* Out of the flow on purpose: in the flow they pushed the whole seat down, so a player holding
@@ -82,6 +83,17 @@ body.four .card.s-c{color:#1c8a3c}
 /* The cards a player turns over sit outside the ring, away from the board, and out of the
    layout so they cannot push the seat off the felt. */
 .tbar{z-index:8}
+/* The room behind the table, and the player's own half below it in the colour of the cloth.
+   Names and chip counts carry a soft dark edge so they read over a picture as they did over
+   black; on a dark patch that edge is invisible. */
+.room{background:#0a0c0b var(--room,none) no-repeat 0 0/390px 404px}
+.mine{background:radial-gradient(120% 80% at 50% 0%,var(--f2),var(--f3) 58%,var(--deep));border-top:2px solid #d8b45c}
+.seat .sname,.seat .sstack,.seat .sbh{text-shadow:0 1px 2px #000,0 0 6px #000,0 0 10px rgba(0,0,0,.9)}
+.seat .sname{color:#e6f3ec}
+.tbar{text-shadow:0 1px 2px #000,0 0 6px #000}
+.tbtn{flex:none;width:44px;height:44px;padding:0;border-radius:22px;border:1px solid #3a423d;background:rgba(14,18,16,.82);color:#f2efe6;font-size:19px;line-height:1;display:flex;align-items:center;justify-content:center;touch-action:manipulation}
+.tbtn.off{filter:grayscale(1) opacity(.6)}
+.tbtn.lit{border-color:#d8b45c;color:#d8b45c;background:rgba(40,34,16,.9)}
 .seat .showc{position:absolute;left:50%;display:flex;transform:translateX(-50%) scale(1)}
 /* As big as each seat can take. The seats along the top have only the gap between them and
    the bar at the top to fan into, so theirs are smaller; the ones lower down have the whole
@@ -126,14 +138,16 @@ body.four .card.s-c{color:#1c8a3c}
 .seat.out .av,.seat.out .sname,.seat.out .sstack,.seat.out .sbh,.seat.out .betchip{opacity:.45}
 .seat.allin .av{border-color:#d2454d}
 .badge{position:absolute;left:-12px;top:-4px;width:22px;height:22px;border-radius:11px;background:#d8b45c;color:#14110a;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
-.sname{margin-top:3px;font-size:11px;color:#bfe0cf;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sname{margin-top:4px;font-size:11px;color:#bfe0cf;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sbh{font-size:9.5px;font-weight:700;line-height:1.2;margin-top:1px}
 .sstack{font-size:12px;font-weight:600}
 /* the player to act has his circle run down, so the whole table can see the time going */
-.seat .tring{position:absolute;left:-6px;top:-6px;width:64px;height:64px;border-radius:32px;pointer-events:none;
+/* (it stands four pixels proud of the picture, not six: at six its lower edge ran under the
+   player's own name, gold behind white, exactly when everybody was looking at him) */
+.seat .tring{position:absolute;left:-4px;top:-4px;width:60px;height:60px;border-radius:30px;pointer-events:none;
   background:conic-gradient(#d8b45c calc(var(--left,1) * 360deg),rgba(216,180,92,.13) 0);
-  -webkit-mask:radial-gradient(circle at center,transparent 27px,#000 28px);
-          mask:radial-gradient(circle at center,transparent 27px,#000 28px)}
+  -webkit-mask:radial-gradient(circle at center,transparent 26px,#000 27px);
+          mask:radial-gradient(circle at center,transparent 26px,#000 27px)}
 .seat .tring.hot{background:conic-gradient(#d2454d calc(var(--left,1) * 360deg),rgba(210,69,77,.16) 0)}
 /* the move just made, sitting above the player's circle for a moment */
 /* Something somebody said, across the bottom of the table. It sits above the buttons rather than
@@ -186,7 +200,12 @@ body.four .card.s-c{color:#1c8a3c}
 .tabs button.on{color:#d8b45c}
 .rolechip{height:34px;padding:0 10px;border-radius:17px;border:1px solid #2a312d;background:transparent;color:#a3aba5;font-size:12px;font-weight:600}
 .rolechip.on{border-color:#d8b45c;color:#d8b45c;background:rgba(216,180,92,.1)}
-input[type=range]{width:100%;height:28px;accent-color:#d8b45c;margin:0}
+.step{flex:none;width:64px;height:60px;border-radius:14px;border:1px solid #3a4038;background:#1a211d;color:#f2efe6;font-size:34px;font-weight:600;line-height:1;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.step:active{background:#2a332d}
+.amt{flex:1;min-width:0;height:60px;border-radius:14px;border:1px solid #d8b45c;background:#0e1210;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.amt span{font-size:10px;color:#a3aba5;letter-spacing:.1em}
+.amt input{width:100%;border:0;background:transparent;color:#f2efe6;text-align:center;font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:.03em;padding:0;outline:0}
+.amt input::placeholder{color:#6f7872}
 .small{font-size:12px;line-height:1.5}
 </style>
 
@@ -243,11 +262,15 @@ function connect() {
   feed.addEventListener('table', function (e) {
     S.v = JSON.parse(e.data);
     // his turn is over once the table no longer offers him anything to do: the lit button goes out
-    // ... and the raise slider goes back to the start, so last turn's figure is never waiting
+    // ... and the raise figure goes back to the minimum, so last turn's amount is never waiting
     // under his thumb on the next one
     // ... and it is over just the same when the next thing he sees is a fresh turn of his own:
     // two-handed, the big blind closes the betting before the flop and opens it after
-    if (!S.v.legal || S.v.turn !== S.turnKey) { S.pressed = null; S.sized = null; S.raiseTo = null; }
+    if (!S.v.legal || S.v.turn !== S.turnKey) {
+      S.pressed = null; S.sized = null; S.raiseTo = null;
+      // if he was part-way through typing a raise when the turn went, the keyboard goes too
+      var typing = document.getElementById('in_raise'); if (typing && document.activeElement === typing) typing.blur();
+    }
     S.turnKey = S.v.turn;
     // the phone's clock may be minutes out; keep the difference so the turn ring runs true
     if (S.v.now) S.skew = Date.now() - S.v.now;
@@ -644,6 +667,8 @@ function generalBook() {
     'Whoever opens a table sets that number, anything from two to seven, and he is one of it: a table opened for four deals when three more have joined him. Somebody sitting out, or with no chips, is not counted. It will not start short of the number.',
     'If somebody stands up again before it deals, it stops and says why rather than going quiet.',
     'Tap the cards in the middle of the table to see them large for a moment. The table menu has a switch for a four-colour deck - clubs green, diamonds blue - and a button that tests the sound and tells you what your phone says about it.',
+    'The same menu is where you choose the room your table stands in - Card room, Rooftop or Club library - and its cloth, Emerald or Claret. That is your own phone only; everybody else keeps what they chose.',
+    'Music is off until you turn it on with the note button at the top of the table, and it plays on your phone alone. It is kept quiet so the bell for your turn is always heard, and it stops when you leave the table.',
     'Whoever runs a table can pause it and start it again. Every clock stops with it - the time to act, the minimum time you agreed to stay, and in a tournament the blinds - so a break costs nobody anything. Only a set finishing time stays where it is, because that is a time of day.',
     'The number a table is opened for is only for starting. Once the first hand is dealt it carries on as long as two players have chips.',
     'A tournament is the exception: it has no starting number and never starts by itself. Only the member who opened it has the Start button - nobody else, the portal admin included - and he starts it when he judges enough have sat down. Nobody joins once it has begun. It is play or fold - nobody sits out of one - and whoever runs it can pause it, blinds and all.',
@@ -2589,7 +2614,22 @@ function cardFace(r, su) {
 function initials(n) { return esc(String(n || '').replace(/[^A-Za-z0-9 ]/g, '').trim().slice(0, 2).toUpperCase() || '?'); }
 
 // ---- where everybody sits ----
-function seatXY(rel, n) { var a = Math.PI / 2 + rel / n * 2 * Math.PI; return { x: CX + RX * Math.cos(a), y: CY + RY * Math.sin(a) }; }
+// Round an ellipse - and then eased apart up and down. Left on the ellipse, a full table had the
+// two top seats' chips lying across the pot and each side seat's bet tucked behind the picture
+// of the seat below it. So the side pair sit higher, clear of the pair below them, and the pot
+// is set a little lower and a little smaller, clear of the pair above it. The top pair cannot go
+// up - the cards they turn over would reach the bar at the top - and the bottom pair cannot go
+// down, or their chips would hang off the felt.
+// Everything that aims at a seat - thrown things, flying chips - asks here, so it all follows.
+function seatXY(rel, n) {
+  var a = Math.PI / 2 + rel / n * 2 * Math.PI;
+  var x = CX + RX * Math.cos(a), y = CY + RY * Math.sin(a);
+  if (rel % n !== 0 && y < CY && y >= CY - 80) y -= 23;
+  return { x: x, y: y };
+}
+// The two seats at the top have the pot directly beneath them, so what they have bet is shown
+// beside the picture, on the side away from the middle, instead of underneath.
+function seatIsTop(rel, n) { return rel % n !== 0 && Math.sin(Math.PI / 2 + rel / n * 2 * Math.PI) * RY < -80; }
 function bullSvg() {
   return '<svg viewBox="0 0 52 52" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none">'
     + '<circle cx="26" cy="26" r="24" fill="none" stroke="#d2454d" stroke-opacity=".55" stroke-width="3"/>'
@@ -2648,7 +2688,7 @@ function fxIngest(v) {
   if (S.fxLive.length) { clearTimeout(S.fxTimer); S.fxTimer = setTimeout(function () { if (S.screen === 'table') render(); }, 3400); }
 }
 // The pot sits in the middle of the felt; chips fly from whoever paid them to there.
-var POT_AT = { x: 195, y: 176 };
+var POT_AT = { x: 195, y: 188 };
 function chipHtml(A) {
   var live = S.chips || [];
   if (!live.length) return '';
@@ -2741,7 +2781,7 @@ function plaque(A, st, x, y, w, rel, hand, RES, n, up) {
       + (st.wants ? '<span class="want">!</span>' : '') + '</div>'
     + line2 + '<div class="sstack">' + fmt(st.stack) + '</div>'
     + (n >= 7 && (rel === 1 || rel === n - 1) ? '' : behindTag(st))
-    + (st.bet > 0 ? '<div class="betchip"><i></i>' + fmt(st.bet) + '</div>' : '')
+    + (st.bet > 0 ? '<div class="betchip' + (seatIsTop(rel, n) ? (x + w / 2 < CX ? ' outl' : ' outr') : '') + '"><i></i>' + fmt(st.bet) + '</div>' : '')
     + (cards ? '<div class="showc">' + cards.map(function (c) { return card(c, 'md'); }).join('') + '</div>' : '')
     + '</div>';
 }
@@ -2771,39 +2811,56 @@ function adapt(v) {
   };
 }
 
+// The blinds, in the space between the buttons. Written out in full while they fit; once a
+// tournament has doubled them past that, in thousands or millions - "12.8k / 25.6k" - because a
+// figure cut off at the edge is worse than a figure abbreviated.
+function shortChips(n) {
+  n = Number(n) || 0;
+  var cut = function (x) { return String(Math.round(x * 100) / 100); };
+  return n >= 1e6 ? cut(n / 1e6) + 'M' : n >= 1e4 ? cut(n / 1e3) + 'k' : fmt(n);
+}
+function blindsText(sb, bb) {
+  var full = fmt(sb) + ' / ' + fmt(bb);
+  return full.length > 13 ? shortChips(sb) + ' / ' + shortChips(bb) : full;
+}
 function tableScreen() {
   var v = S.v;
   if (!v) return '<div class="sheet"><div class="muted" style="margin-top:40px">Opening the table…</div></div>';
   var A = adapt(v), hand = v.hand, n = A.seats.length, me = A.you;
   if (S.peekHand !== v.handNo) { S.peekHand = v.handNo; S.lock = false; S.peek = false; }
 
-  var h = '<div class="abs" style="inset:0;background:#0a0c0b">';
+  var h = '<div class="abs room" style="inset:0">';
   // the strip across the top
-  h += '<div class="abs tbar" style="left:0;top:0;width:390px;height:56px;padding:0 8px 0 12px;display:flex;align-items:center;gap:10px">'
-    + '<button class="rolechip" style="height:28px;flex:none" onclick="leaveTable()">&#8592;</button>'
-    + '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.14em">ROOM ' + esc(v.code) + '</div>'
+  // Four buttons a thumb can find without looking - back, sound, music, menu - and between them
+  // the room, the blinds, and which hand it is. The blinds sit on the first line, where they are
+  // never cut short: the second line gives way first when a game's name is long, and the word
+  // ROOM steps aside for blinds that need its space.
+  h += '<div class="abs tbar" style="left:0;top:0;width:390px;height:48px;padding:0 6px;display:flex;align-items:center;gap:7px">'
+    + '<button class="tbtn" aria-label="Back" onclick="leaveTable()">&#8592;</button>'
+    + '<div style="flex:1;min-width:0"><div class="gold" style="font-size:11px;font-weight:600;letter-spacing:.1em;white-space:nowrap">' + (blindsText(v.blinds.sb, v.blinds.bb).length > 11 ? '' : 'ROOM ') + esc(v.code)
+    + ' <span id="blinds" style="color:#f2efe6;letter-spacing:.02em;font-size:12px;margin-left:6px">' + blindsText(v.blinds.sb, v.blinds.bb) + '</span></div>'
     + '<div class="muted" style="margin-top:2px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
     + (v.handNo ? 'Hand ' + v.handNo : 'Not started') + ' &middot; ' + esc(v.formatName)
     + (v.lastHands ? ' &middot; <span class="gold">' + v.lastHands + ' to go</span>'
        : v.endAt ? ' &middot; <span class="gold">till ' + clock(v.endAt) + '</span>' : '')
     + '</div></div>'
-    + '<div style="height:28px;padding:0 12px;border-radius:14px;border:1px solid #2a312d;background:#141917;font-size:13px;font-weight:600;display:flex;align-items:center;flex:none">'
-    + fmt(v.blinds.sb) + ' / ' + fmt(v.blinds.bb) + '</div>'
-    // Sound is the one setting you reach for mid-hand - the room got loud, or somebody is asleep
-    // next door - so it sits on the table itself rather than behind the menu.
-    + '<button class="rolechip" style="height:30px;flex:none;width:34px;padding:0;font-size:15px'
-    + (LOUD ? '' : ';opacity:.45') + '" title="' + (LOUD ? 'Sound on' : 'Sound off') + '" onclick="toggleSound()">'
+    // Sound and music are the settings reached for mid-hand - the room got loud, or somebody is
+    // asleep next door - so they sit on the table itself rather than behind the menu.
+    + '<button class="tbtn' + (LOUD ? '' : ' off') + '" id="soundbtn" aria-label="' + (LOUD ? 'Sound on' : 'Sound off') + '" onclick="toggleSound()">'
     + (LOUD ? '&#128266;' : '&#128263;') + '</button>'
-    + '<button class="rolechip" style="height:30px;flex:none" onclick="S.menu=!S.menu;render()">&#9776;</button></div>';
+    + '<button class="tbtn' + (S.music ? ' lit' : ' off') + '" id="musicbtn" aria-label="' + (S.music ? 'Music on' : 'Music off') + '" onclick="toggleMusic()">&#9835;</button>'
+    + '<button class="tbtn" id="menubtn" aria-label="Menu" onclick="S.menu=!S.menu;render()">&#9776;</button></div>';
 
   // the felt, and your own half below it
   h += '<div class="abs felt" style="left:30px;top:106px;width:330px;height:240px"></div>';
-  h += '<div class="abs" style="left:0;top:' + MINE + 'px;width:390px;height:' + (844 - MINE) + 'px;background:linear-gradient(#18231d,#0c110f 62%);border-top:2px solid #d8b45c"></div>';
+  h += '<div class="abs mine" style="left:0;top:' + MINE + 'px;width:390px;height:' + (844 - MINE) + 'px"></div>';
 
   // the pot
   h += '<div class="abs" style="left:0;top:152px;width:390px;display:flex;flex-direction:column;align-items:center">'
     + '<div style="font-size:11px;font-weight:600;letter-spacing:.16em;color:#bfe0cf">POT</div>'
-    + '<div class="disp gold" style="font-size:38px;line-height:1">' + fmt(hand ? hand.pot : 0) + '</div></div>';
+    // set just clear of the chips of the two seats above it, and of the board below - which
+    // starts higher when there are two or three boards to fit, so the figure is smaller there
+    + '<div class="disp gold" style="font-size:' + (hand && hand.boards && hand.boards.length > 1 ? 26 : 32) + 'px;line-height:1;margin-top:8px">' + fmt(hand ? hand.pot : 0) + '</div></div>';
 
   // which cards made the winning hand, so the rest can be dimmed
   var RES = (hand && hand.finished && hand.result) ? hand.result : null;
@@ -2828,11 +2885,11 @@ function tableScreen() {
       for (var j = 0; j < 5; j++) bc += b[j] ? card(b[j], 'sm' + ((S.win && !S.win[b[j]]) ? ' dim' : '')) : '<div class="card sm empty"></div>';
       bc += '</div>';
     });
-    h += '<div class="abs" onclick="zoomBoard()" style="left:0;top:198px;width:390px;display:flex;flex-direction:column;gap:4px">' + bc + '</div>';
+    h += '<div class="abs" onclick="zoomBoard()" style="left:0;top:201px;width:390px;display:flex;flex-direction:column;gap:4px">' + bc + '</div>';
   }
 
   // what just happened, under the board
-  var stTop = multi ? 198 + boards.length * 38 + 2 : 272;
+  var stTop = multi ? 201 + boards.length * 38 + 2 : 272;
   var status = '';
   if (RES) {
     status = Object.keys(RES.won || {}).map(function (id) {
@@ -3040,12 +3097,18 @@ function controls(v, A, RES) {
 
   var min = L.minRaiseTo, max = L.maxRaiseTo;
   var cur = (S.raiseTo && S.raiseTo >= min && S.raiseTo <= max) ? S.raiseTo : min;
-  var h = '<div style="padding-top:14px;display:flex;align-items:baseline;justify-content:space-between">'
-    + '<div class="gold" style="font-size:12px;font-weight:700;letter-spacing:.14em">YOUR TURN</div>'
-    + (L.canRaise ? '<div style="display:flex;align-items:baseline;gap:8px"><span class="muted" style="font-size:13px">Raise to</span>'
-      + '<span class="disp" id="rv" style="font-size:26px">' + fmt(cur) + '</span></div>' : '') + '</div>';
+  var h = '<div style="padding-top:14px"><div class="gold" style="font-size:12px;font-weight:700;letter-spacing:.14em">YOUR TURN</div></div>';
   if (L.canRaise) {
-    h += '<input type="range" style="margin-top:8px" min="' + min + '" max="' + max + '" step="1" value="' + cur + '" oninput="onRange(this.value)">';
+    // The amount, with a minus on one side and a plus on the other. A slider had the whole of a
+    // deep stack to cover in the width of a thumb, so a hair's movement was hundreds of chips;
+    // a tap is one big blind, every time, and holding the button keeps it going. The figure
+    // itself can be tapped and typed over for an exact amount.
+    S.raiseLim = { min: min, max: max, bb: (v.blinds && v.blinds.bb) || 1 };
+    h += '<div style="display:flex;gap:8px;margin-top:8px">'
+      + '<button class="step" id="rminus" onpointerdown="stepHold(-1,event)" aria-label="Less">&minus;</button>'
+      + '<label class="amt"><span>RAISE TO &middot; TAP TO TYPE</span>'
+      + '<input id="in_raise" inputmode="numeric" autocomplete="off" value="' + fmt(cur) + '" onfocus="this.placeholder=this.value;this.value=\'\'" oninput="typedRaise(this.value)" onblur="setRaise(S.raiseTo||S.raiseLim.min)" onkeydown="if(event.key===\'Enter\')this.blur()"></label>'
+      + '<button class="step" id="rplus" onpointerdown="stepHold(1,event)" aria-label="More">+</button></div>';
     // A pot-sized raise is not the pot. You call first, and then raise by the pot as it stands
     // after that call - so with 300 in the middle and 200 to call, a pot raise is to 700, not 300.
     // Taking the raw pot figure put every one of these buttons below the minimum raise, where they
@@ -3055,6 +3118,7 @@ function controls(v, A, RES) {
       return Math.min(max, Math.max(min, Math.round(L.myBet + L.toCall + f * after)));
     };
     h += '<div style="display:flex;gap:6px;margin-top:8px">'
+      + quick('Min', min, cur)
       + quick('½ pot', potTo(0.5), cur)
       + quick('¾ pot', potTo(0.75), cur)
       + quick('Pot', potTo(1), cur)
@@ -3067,15 +3131,50 @@ function controls(v, A, RES) {
       : '<button class="act' + pressed('call') + '" style="flex:1;background:#1f3328" onclick="act(\'call\')">Call ' + fmt(L.toCall || 0) + '</button>')
     + (L.canRaise ? '<button class="act' + pressed('raise') + '" id="rb" style="flex:1;background:#d8b45c;color:#14110a" onclick="act(\'raise\',S.raiseTo||' + min + ')">Raise ' + fmt(cur) + '</button>' : '')
     + '</div>';
-  h += '<div class="muted" style="margin-top:6px;text-align:center;font-size:11px">No-limit &middot; minimum raise to ' + fmt(min) + '</div>';
+  h += '<div class="muted" style="margin-top:6px;text-align:center;font-size:11px;white-space:normal">' + (L.potLimit ? 'Pot-limit' : 'No-limit') + (L.canRaise ? ' &middot; minimum raise to ' + fmt(min) + ' &middot; + and &minus; move it one big blind (' + fmt((v.blinds && v.blinds.bb) || 0) + ')' : '') + '</div>';
   return h;
 }
 
-function onRange(x) {
-  S.raiseTo = Number(x); S.sized = null;           // moved by hand: no sizing button is the one in force any more
-  var e = document.getElementById('rv'); if (e) e.textContent = fmt(S.raiseTo);
+// The raise figure, set from anywhere: held inside what the table allows, and written straight
+// onto the screen rather than redrawn - a redraw would take the button out from under a thumb
+// that is holding it, and the Raise button out from under one about to press it.
+function setRaise(x) {
+  var m = S.raiseLim; if (!m) return;
+  x = Math.round(Number(x)); if (!isFinite(x)) x = m.min;
+  S.raiseTo = Math.max(m.min, Math.min(m.max, x)); S.sized = null;
+  var e = document.getElementById('in_raise'); if (e && document.activeElement !== e) e.value = fmt(S.raiseTo);
+  var b = document.getElementById('rb'); if (b) b.textContent = 'Raise ' + fmt(S.raiseTo);
+  var lit = document.querySelectorAll('.chip.lit'); for (var i = 0; i < lit.length; i++) lit[i].classList.remove('lit');
+}
+// Typing: nothing is corrected while the figure is half-written - "1" on the way to "1500" is
+// not a mistake - but the Raise button always says what would really be raised to.
+function typedRaise(txt) {
+  var m = S.raiseLim, d = String(txt).replace(/[^0-9]/g, '');
+  if (!d) return;                                  // tapped and not typed: the figure stands
+  var n = Number(d);
+  S.raiseTo = Math.max(m.min, Math.min(m.max, n)); S.sized = null;
   var b = document.getElementById('rb'); if (b) b.textContent = 'Raise ' + fmt(S.raiseTo);
 }
+// One big blind a tap. Held down it repeats, and after a couple of seconds goes five at a time,
+// so a long way is not a hundred taps. It stops when the finger lifts - wherever it lifts.
+var stepTimer = null;
+function stepOnce(dir, mult) {
+  var m = S.raiseLim; if (!m || !S.v || !S.v.legal) return stepStop();
+  setRaise((S.raiseTo || m.min) + dir * m.bb * (mult || 1));
+}
+function stepHold(dir, ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  var typing = document.getElementById('in_raise'); if (typing && document.activeElement === typing) typing.blur();
+  stepStop(); stepOnce(dir);
+  var n = 0;
+  stepTimer = setTimeout(function again() {
+    n += 1; stepOnce(dir, n > 20 ? 5 : 1);
+    stepTimer = setTimeout(again, 90);
+  }, 400);
+}
+function stepStop() { clearTimeout(stepTimer); stepTimer = null; }
+['pointerup', 'pointercancel', 'blur'].forEach(function (k) { window.addEventListener(k, stepStop); });
+
 // A sizing button stays lit while its amount is the one that will be raised to, so the button
 // and the figure beside it can never say different things.
 function quick(label, amount, cur) {
@@ -3131,6 +3230,9 @@ function sitHere() {
 
 function act(type, amount) {
   if (S.pressed) return;                           // one press a turn: a second tap is not a second action
+  // a phone can leave the keyboard up on the raise figure after a button is tapped, and nothing
+  // is redrawn under somebody typing - so put it away, or the screen would stay on this turn
+  var typing = document.getElementById('in_raise'); if (typing && document.activeElement === typing) typing.blur();
   S.pressed = type; render();
   api('act', { code: S.code, type: type, amount: amount }).catch(function (e) { S.pressed = null; render(); fail(e); });
 }
@@ -3191,6 +3293,16 @@ function tableMenu(v) {
     }
   }
 
+  h += '<div class="h2">THE ROOM</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap">';
+  ROOMS.forEach(function (r) {
+    h += '<button class="rolechip' + (S.room === r.id ? ' on' : '') + '" style="display:flex;align-items:center;gap:6px"'
+      + ' onclick="setRoom(\'' + r.id + '\')">'
+      + '<span style="width:12px;height:12px;border-radius:7px;background:' + r.dot + ';border:1px solid rgba(255,255,255,.25);display:inline-block"></span>'
+      + r.name + '</button>';
+  });
+  h += '</div>';
+
   h += '<div class="h2">THE TABLE</div>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap">';
   FELTS.forEach(function (f) {
@@ -3212,6 +3324,10 @@ function tableMenu(v) {
     + '<div class="muted small" style="margin-top:6px;white-space:normal">A bell when it is your turn, a tick when it passes to somebody else, and the chips going in.</div>'
     + '<button class="btn ghost" style="margin-top:8px" onclick="testSound()">Test the sound</button>'
     + (S.soundSays ? '<div class="small gold" id="soundsays" style="margin-top:6px;white-space:normal">' + esc(S.soundSays) + '</div>' : '');
+
+  h += '<div class="h2">MUSIC</div>'
+    + '<button class="btn ghost" onclick="toggleMusic()">' + (S.music ? 'Music is on &mdash; turn it off' : 'Music is off &mdash; turn it on') + '</button>'
+    + '<div class="muted small" style="margin-top:6px;white-space:normal">Quiet music behind the game, on this phone only. It plays under the bell and the chips, never over them, and stops when you leave the table.</div>';
 
   // what the game admin can do
   if (v.iRunIt) {
@@ -3418,7 +3534,9 @@ function render() {
   var was = [].map.call(stage.querySelectorAll('.sheet'), function (el) { return el.scrollTop; });
   stage.innerHTML = html;
   applyFelt();
+  applyRoom();
   applyFour();
+  tuneMusic();                               // left the table, signed out: it stops with the screen
   if (key === render.key) {
     var panes = stage.querySelectorAll('.sheet');
     if (panes.length === was.length) for (var i = 0; i < panes.length; i++) if (was[i]) panes[i].scrollTop = was[i];
@@ -3548,10 +3666,10 @@ function celebrateSky(level, title, who) {
 // so a redraw cannot lose it.
 var FELTS = [
   { id: '', name: 'Emerald', dot: '#1a6a4d' },
-  { id: 'midnight', name: 'Midnight', dot: '#24507f' },
   { id: 'claret', name: 'Claret', dot: '#7a2634' },
 ];
 try { S.felt = localStorage.getItem('sb-felt') || ''; } catch (e) { S.felt = ''; }
+if (!FELTS.some(function (f) { return f.id === S.felt; })) S.felt = '';      // a cloth that is no longer offered
 // Four colours rather than two: clubs green and diamonds blue, so a flush is seen rather than
 // worked out. A choice, on the phone it is made on, like the cloth.
 try { S.four = localStorage.getItem('sb-four') === '1'; } catch (e) { S.four = false; }
@@ -3571,6 +3689,119 @@ function setFelt(id) {
   try { localStorage.setItem('sb-felt', S.felt); } catch (e) {}
   applyFelt();
   render();
+}
+
+// ---- the room the table stands in ----
+// Three rooms, drawn here rather than fetched, so they weigh nothing and cannot fail to arrive.
+// Like the cloth, the room is one person's choice on their own phone. It is painted once and
+// handed to the stage as a picture, not rebuilt with the table - the table redraws every time
+// somebody acts, and a few hundred shapes each time would be felt on an older phone.
+var ROOMS = [
+  { id: 'card', name: 'Card room', dot: '#3a5a48' },
+  { id: 'roof', name: 'Rooftop', dot: '#24345f' },
+  { id: 'library', name: 'Club library', dot: '#5a3f24' },
+];
+var roomArt = (function () {
+var open = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 404" width="390" height="404" preserveAspectRatio="none">';
+var vig = (id, a) => '<radialGradient id="' + id + '" cx=".5" cy=".5" r=".75"><stop offset=".5" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="' + a + '"/></radialGradient>';
+var lg = (id, stops) => '<linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1">' + stops.map(([o, c, a]) => '<stop offset="' + o + '" stop-color="' + c + '"' + (a != null ? ' stop-opacity="' + a + '"' : '') + '/>').join('') + '</linearGradient>';
+var rnd = (seed) => () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+var topShade = '<rect width="390" height="46" fill="url(#hd)"/>';
+var hd = lg('hd', [[0, '#000', 0.78], [1, '#000', 0]]);
+
+function cardRoom() {
+  var s = open + '<defs>' + hd + lg('wall', [[0, '#1d2a26'], [1, '#0d1412']]) + lg('wood', [[0, '#40261a'], [1, '#22130c']]) + lg('floor', [[0, '#27170f'], [1, '#0b0705']])
+    + lg('shelf', [[0, '#c99a4c', 0.8], [1, '#8a5722', 0.65]]) + lg('night', [[0, '#0c1a33'], [1, '#1c3558']])
+    + '<radialGradient id="glow" cx=".5" cy="0" r="1"><stop offset="0" stop-color="#ffd98a" stop-opacity=".4"/><stop offset=".5" stop-color="#f2b55a" stop-opacity=".1"/><stop offset="1" stop-color="#f2b55a" stop-opacity="0"/></radialGradient>' + vig('vig', 0.66) + '</defs>';
+  s += '<rect width="390" height="300" fill="url(#wall)"/>';
+  for (var x = 0; x <= 390; x += 39) s += '<rect x="' + x + '" width="1" height="300" fill="#0a100e" opacity=".55"/>';
+  s += '<rect y="196" width="390" height="5" fill="#35210f"/><rect y="201" width="390" height="100" fill="url(#wood)"/>';
+  for (var x = 13; x < 390; x += 52) s += '<rect x="' + x + '" y="212" width="40" height="70" rx="2" fill="none" stroke="#190e07" stroke-width="2" opacity=".8"/>';
+  var bar = (x0, w) => {
+    var o = '<rect x="' + (x0 - 5) + '" y="50" width="' + (w + 10) + '" height="48" rx="4" fill="#281910" stroke="#523519" stroke-width="2"/><rect x="' + x0 + '" y="56" width="' + w + '" height="36" fill="url(#shelf)"/>';
+    var x = x0 + 4, k = x0;
+    while (x < x0 + w - 8) {
+      k = (k * 37 + 11) % 101; var bw = 5 + k % 4, bh = 18 + k % 12, col = ['#2c4a2f', '#5b2b16', '#1d2f44', '#5a3f10', '#3a1420', '#274038'][k % 6];
+      o += '<rect x="' + x + '" y="' + (92 - bh) + '" width="' + bw + '" height="' + bh + '" rx="1.5" fill="' + col + '"/><rect x="' + (x + bw / 2 - 1.2) + '" y="' + (86 - bh) + '" width="2.4" height="7" fill="' + col + '"/>'
+        + '<rect x="' + (x + 1) + '" y="' + (92 - bh * 0.55) + '" width="' + (bw - 2) + '" height="' + (bh * 0.28) + '" fill="#f3e3b8" opacity=".45"/>';
+      x += bw + 3 + k % 3;
+    }
+    return o + '<rect x="' + (x0 - 2) + '" y="92" width="' + (w + 4) + '" height="4" fill="#3b2414"/>';
+  };
+  s += bar(14, 84) + bar(292, 84);
+  s += '<rect x="150" y="46" width="90" height="96" rx="45" fill="#281910" stroke="#523519" stroke-width="2"/><clipPath id="win"><rect x="156" y="52" width="78" height="84" rx="39"/></clipPath><g clip-path="url(#win)"><rect x="156" y="52" width="78" height="84" fill="url(#night)"/><circle cx="216" cy="70" r="7" fill="#f6edc9" opacity=".9"/>';
+  [[158, 102, 14], [172, 90, 12], [184, 108, 16], [200, 96, 11], [211, 112, 13], [224, 100, 12]].forEach(([x, y, w], i) => {
+    s += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="40" fill="#0a1220"/>';
+    for (var r = 0; r < 4; r++) for (var c = 0; c < 2; c++) if ((i + r * 2 + c) % 3) s += '<rect x="' + (x + 2 + c * 5) + '" y="' + (y + 4 + r * 7) + '" width="2.4" height="3" fill="#ffd27a" opacity=".85"/>';
+  });
+  s += '</g><rect x="194" y="52" width="2" height="84" fill="#523519"/>';
+  s += '<rect y="300" width="390" height="104" fill="url(#floor)"/>';
+  for (var i = -6; i <= 6; i++) s += '<path d="M' + (195 + i * 22) + ' 300 L' + (195 + i * 70) + ' 404" stroke="#000" stroke-opacity=".35"/>';
+  [78, 195, 312].forEach((x) => { s += '<ellipse cx="' + x + '" cy="30" rx="150" ry="230" fill="url(#glow)"/>'; });
+  return s + '<rect width="390" height="404" fill="url(#vig)"/>' + topShade + '</svg>';
+}
+function rooftop() {
+  var r = rnd(7);
+  var s = open + '<defs>' + hd + lg('sky', [[0, '#070b1c'], [0.6, '#16234a'], [1, '#3a2f5a']]) + lg('deck', [[0, '#1c1a22'], [1, '#08080b']]) + vig('vig', 0.6)
+    + '<radialGradient id="bulb"><stop offset="0" stop-color="#ffe7a8" stop-opacity=".95"/><stop offset=".25" stop-color="#ffcf73" stop-opacity=".35"/><stop offset="1" stop-color="#ffcf73" stop-opacity="0"/></radialGradient></defs>';
+  s += '<rect width="390" height="404" fill="url(#sky)"/>';
+  for (var i = 0; i < 70; i++) s += '<circle cx="' + (r() * 390).toFixed(1) + '" cy="' + (r() * 170).toFixed(1) + '" r="' + (0.4 + r() * 0.8).toFixed(2) + '" fill="#fff" opacity="' + (0.35 + r() * 0.6).toFixed(2) + '"/>';
+  s += '<circle cx="318" cy="70" r="15" fill="#f4ecd0"/><circle cx="312" cy="66" r="15" fill="#0d1532"/>';
+  // far towers, then near ones
+  var x = -6;
+  while (x < 390) { var w = 16 + r() * 22, h = 50 + r() * 80; s += '<rect x="' + x.toFixed(1) + '" y="' + (262 - h).toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + h.toFixed(1) + '" fill="#141c38"/>'; for (var yy = 262 - h + 5; yy < 256; yy += 7) for (var xx = x + 3; xx < x + w - 3; xx += 5) if (r() < 0.32) s += '<rect x="' + xx.toFixed(1) + '" y="' + yy.toFixed(1) + '" width="2" height="3" fill="#ffd98a" opacity=".7"/>'; x += w + 1; }
+  x = -10;
+  while (x < 390) { var w = 26 + r() * 30, h = 30 + r() * 62; s += '<rect x="' + x.toFixed(1) + '" y="' + (270 - h).toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + (h + 4).toFixed(1) + '" fill="#090d1c"/>'; for (var yy = 270 - h + 6; yy < 262; yy += 8) for (var xx = x + 4; xx < x + w - 4; xx += 6) if (r() < 0.28) s += '<rect x="' + xx.toFixed(1) + '" y="' + yy.toFixed(1) + '" width="2.6" height="3.6" fill="#ffc35e" opacity=".85"/>'; x += w + 2; }
+  // the parapet, the deck
+  s += '<rect y="268" width="390" height="8" fill="#2b2a33"/><rect y="276" width="390" height="128" fill="url(#deck)"/>';
+  for (var i = -7; i <= 7; i++) s += '<path d="M' + (195 + i * 24) + ' 276 L' + (195 + i * 72) + ' 404" stroke="#000" stroke-opacity=".4"/>';
+  // the string of lights, in two swags
+  [[-10, 195], [195, 400]].forEach(([a, b]) => { s += '<path d="M' + a + ' 52 Q' + (a + b) / 2 + ' 86 ' + b + ' 52" fill="none" stroke="#2a2a34" stroke-width="1"/>'; for (var t = 0.08; t < 1; t += 0.12) { var px = (1 - t) * (1 - t) * a + 2 * (1 - t) * t * (a + b) / 2 + t * t * b, py = (1 - t) * (1 - t) * 52 + 2 * (1 - t) * t * 86 + t * t * 52; s += '<circle cx="' + px.toFixed(1) + '" cy="' + (py + 3).toFixed(1) + '" r="13" fill="url(#bulb)"/>'; } });
+  return s + '<rect width="390" height="404" fill="url(#vig)"/>' + topShade + '</svg>';
+}
+function library() {
+  var r = rnd(21);
+  var s = open + '<defs>' + hd + lg('wall', [[0, '#2b2118'], [1, '#120d09']]) + lg('floor', [[0, '#2a160e'], [1, '#0a0504']]) + lg('case', [[0, '#2c1a10'], [1, '#170d07']]) + vig('vig', 0.68)
+    + '<radialGradient id="fire" cx=".5" cy=".8" r=".7"><stop offset="0" stop-color="#ffd27a"/><stop offset=".35" stop-color="#f08a2c"/><stop offset="1" stop-color="#5a1608"/></radialGradient>'
+    + '<radialGradient id="warm" cx=".5" cy=".3" r=".8"><stop offset="0" stop-color="#ffb25a" stop-opacity=".22"/><stop offset="1" stop-color="#ff9a3c" stop-opacity="0"/></radialGradient></defs>';
+  s += '<rect width="390" height="300" fill="url(#wall)"/>';
+  var shelves = (x0, w) => {
+    var o = '<rect x="' + x0 + '" y="40" width="' + w + '" height="240" fill="url(#case)" stroke="#4a2c18" stroke-width="2"/>';
+    for (var y = 46; y < 270; y += 38) {
+      var x = x0 + 4;
+      while (x < x0 + w - 6) { var bw = 3.5 + r() * 4.5, bh = 22 + r() * 10, col = ['#2a3640', '#22343a', '#3a3222', '#1d2a44', '#4f4630', '#28303a', '#6a6248', '#1f3a34', '#34404a'][Math.floor(r() * 7)]; if (r() < 0.93) { o += '<rect x="' + x.toFixed(1) + '" y="' + (y + 32 - bh).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" fill="' + col + '"/>'; if (r() < 0.5) o += '<rect x="' + x.toFixed(1) + '" y="' + (y + 32 - bh + 4).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="1.4" fill="#d8b45c" opacity=".7"/>'; } x += bw + 0.8; }
+      o += '<rect x="' + x0 + '" y="' + (y + 32) + '" width="' + w + '" height="4" fill="#3a2212"/>';
+    }
+    return o;
+  };
+  s += shelves(-4, 122) + shelves(272, 122);
+  // the fireplace between them
+  s += '<rect x="134" y="34" width="122" height="12" fill="#4a2c18"/><rect x="142" y="46" width="106" height="120" fill="#24130b" stroke="#4a2c18" stroke-width="2"/>'
+    + '<rect x="160" y="62" width="70" height="52" rx="3" fill="#120907" stroke="#b8892f" stroke-width="2"/><ellipse cx="195" cy="90" rx="20" ry="16" fill="#1f2a22"/>'
+    + '<path d="M158 250 L158 176 Q195 150 232 176 L232 250 Z" fill="#0a0504"/><ellipse cx="195" cy="236" rx="30" ry="34" fill="url(#fire)" opacity=".95"/><rect x="134" y="250" width="122" height="8" fill="#3a2212"/>';
+  s += '<rect y="290" width="390" height="114" fill="url(#floor)"/>';
+  for (var i = -6; i <= 6; i++) s += '<path d="M' + (195 + i * 22) + ' 290 L' + (195 + i * 70) + ' 404" stroke="#000" stroke-opacity=".35"/>';
+  return s + '<rect width="390" height="404" fill="url(#warm)"/><rect width="390" height="404" fill="url(#vig)"/>' + topShade + '</svg>';
+}
+
+  var made = {};
+  return function (id) {
+    if (!made[id]) made[id] = 'url("data:image/svg+xml,' + encodeURIComponent(id === 'roof' ? rooftop() : id === 'library' ? library() : cardRoom()) + '")';
+    return made[id];
+  };
+})();
+try { S.room = localStorage.getItem('sb-room') || 'card'; } catch (e) { S.room = 'card'; }
+if (!ROOMS.some(function (r) { return r.id === S.room; })) S.room = 'card';
+function applyRoom() {
+  var st = document.getElementById('stage');
+  if (!st || st.getAttribute('data-room') === S.room) return;
+  st.setAttribute('data-room', S.room);
+  st.style.setProperty('--room', roomArt(S.room));
+}
+function setRoom(id) {
+  S.room = ROOMS.some(function (r) { return r.id === id; }) ? id : 'card';
+  try { localStorage.setItem('sb-room', S.room); } catch (e) {}
+  applyRoom(); render();
 }
 
 // ---- sound ----
@@ -3659,6 +3890,47 @@ function toggleSound() {
   render();
 }
 
+// ---- music ----
+// One piece, fetched the first time somebody asks for it and kept by the phone after that. It is
+// recorded quiet - well under the bell - because a phone does not let a page turn a tune down:
+// on an iPhone the volume of a track belongs to the side buttons and nothing else. Where the
+// phone does allow it, the music also dips for a moment when it becomes your turn.
+// It is off until somebody turns it on, plays only at a table, and never starts by itself: a
+// phone will not begin a tune without a touch, so it begins on the touch that asks for it, or on
+// the first touch after coming back.
+var MUSIC = null, MUSIC_LEVEL = 0.85, duckTimer = null;
+try { S.music = localStorage.getItem('sb-music') === '1'; } catch (e) { S.music = false; }
+function musicEl() {
+  if (!MUSIC) {
+    MUSIC = new Audio('/music.mp3');
+    MUSIC.loop = true; MUSIC.preload = 'none';
+    try { MUSIC.volume = MUSIC_LEVEL; } catch (e) {}
+  }
+  return MUSIC;
+}
+// Should it be playing at this moment? Then see that it is; otherwise see that it is not.
+function tuneMusic() {
+  var want = !!(S.music && S.screen === 'table' && S.token && !document.hidden);
+  if (!want) { if (MUSIC && !MUSIC.paused) MUSIC.pause(); return; }
+  var m = musicEl();
+  if (m.paused) { try { var p = m.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+}
+function toggleMusic() {
+  S.music = !S.music;
+  try { localStorage.setItem('sb-music', S.music ? '1' : '0'); } catch (e) {}
+  try { if (S.music && navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  tuneMusic(); render();
+}
+function duckMusic() {
+  if (!MUSIC || MUSIC.paused) return;
+  try { MUSIC.volume = MUSIC_LEVEL * 0.3; } catch (e) {}
+  clearTimeout(duckTimer);
+  duckTimer = setTimeout(function () { try { if (MUSIC) MUSIC.volume = MUSIC_LEVEL; } catch (e) {} }, 1100);
+}
+document.addEventListener('touchend', tuneMusic, { passive: true });
+document.addEventListener('click', tuneMusic, { passive: true });
+document.addEventListener('visibilitychange', tuneMusic);
+
 // ---- whose turn it is, out loud ----
 // The bell is for your turn and nothing else, so it keeps meaning something. Everyone else moving
 // gets a tick, which is enough to follow the betting with the phone face down on the table.
@@ -3671,7 +3943,9 @@ function watchTurn() {
   var first = S.turnSeen === undefined;
   S.turnSeen = id;
   if (first || !id) return;                 // arriving at a table is not the turn changing
-  sfx(S.v.me && id === S.v.me.id ? 'mine' : 'pass');
+  var mine = !!(S.v.me && id === S.v.me.id);
+  if (mine) duckMusic();                    // nothing is to sit on top of the bell
+  sfx(mine ? 'mine' : 'pass');
 }
 
 // ---- what people say to each other ----

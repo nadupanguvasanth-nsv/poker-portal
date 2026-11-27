@@ -1743,6 +1743,7 @@ const FILES = {
   '/icon-192.png': ['icon-192.png', 'image/png'],
   '/icon-512.png': ['icon-512.png', 'image/png'],
   '/poster.jpg': ['poster.jpg', 'image/jpeg'],
+  '/music.mp3': ['music.mp3', 'audio/mpeg'],
 };
 
 // Nonsense arrives sooner or later - a half-sent request, a stray crawler, a bug in a phone.
@@ -1875,8 +1876,20 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && file) {
       const full = path.join(__dirname, file[0]);
       if (!fs.existsSync(full)) { res.writeHead(404); return res.end('not built yet'); }
-      res.writeHead(200, { 'content-type': file[1], 'cache-control': file[0].endsWith('.html') ? 'no-cache' : 'max-age=86400' });
-      return res.end(fs.readFileSync(full));
+      const body = fs.readFileSync(full);
+      const head = { 'content-type': file[1], 'cache-control': file[0].endsWith('.html') ? 'no-cache' : file[0].endsWith('.mp3') ? 'max-age=2592000' : 'max-age=86400', 'accept-ranges': 'bytes' };
+      // An iPhone will not play sound it cannot ask for in pieces: it sends "bytes=0-1" first,
+      // and if the whole file comes back instead of those two bytes it gives up without a word.
+      const want = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ''));
+      if (want && (want[1] || want[2])) {
+        let from = want[1] ? Number(want[1]) : Math.max(0, body.length - Number(want[2]));
+        let to = want[1] && want[2] ? Math.min(Number(want[2]), body.length - 1) : body.length - 1;
+        if (!(from <= to) || from >= body.length) { res.writeHead(416, { 'content-range': 'bytes */' + body.length }); return res.end(); }
+        res.writeHead(206, { ...head, 'content-range': 'bytes ' + from + '-' + to + '/' + body.length, 'content-length': to - from + 1 });
+        return res.end(body.subarray(from, to + 1));
+      }
+      res.writeHead(200, { ...head, 'content-length': body.length });
+      return res.end(body);
     }
     res.writeHead(404); res.end('not found');
   } catch (err) {
