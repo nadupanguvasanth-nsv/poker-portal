@@ -8,7 +8,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Smart Buddies">
-<link rel="apple-touch-icon" href="/icon-192.png">
+<!-- The ?v= is there because a phone keeps a picture for a day once it has it, and an iPhone
+     copies the icon only at the moment the portal is added to the home screen: without a new
+     address it would go on adding the old one. Raise the number whenever a picture changes. -->
+<link rel="apple-touch-icon" href="/icon-192.png?v=3">
 <meta property="og:title" content="Smart Buddies &middot; Private Poker Party">
 <meta property="og:description" content="Our own poker table. Chips only, settle up between ourselves.">
 <meta property="og:image" content="{{BASE}}/poster.jpg">
@@ -163,15 +166,18 @@ body.four .card.s-c{color:#1c8a3c}
 .saybar.up{bottom:auto;top:62px}
 .dogclip{flex:none;width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid #d8b45c;background:#17130c}
 .party{position:relative;margin-bottom:20px}
-.party .air{position:relative;height:66px}
-.party .frame{aspect-ratio:960/456;border-radius:14px;overflow:hidden;background:#0f3d2e url(/poster.jpg) center/cover}
+.party .frame{aspect-ratio:960/456;border-radius:14px;overflow:hidden;background:#0f3d2e url(/poster.jpg?v=3) center/cover}
 .party video{display:block;width:100%;height:100%;object-fit:cover}
-.dogsay{position:absolute;bottom:9px;max-width:262px;background:#f4ecd8;color:#17130c;border-radius:14px;padding:7px 12px 8px;opacity:0;transition:opacity .35s;box-shadow:0 4px 14px rgba(0,0,0,.45)}
-.dogsay.on{opacity:1}
-.dogsay .who{font-family:'Inter',sans-serif;font-size:9.5px;font-weight:800;letter-spacing:.14em;color:#8a6a1c}
-.dogsay .what{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:15px;line-height:1.2;margin-top:1px;white-space:normal}
-.dogtail{position:absolute;bottom:0;width:0;height:0;margin-left:-8px;border-left:8px solid transparent;border-right:8px solid transparent;border-top:10px solid #f4ecd8;opacity:0;transition:opacity .35s}
-.dogtail.on{opacity:1}
+/* What they say goes inside the picture, over the table in front of whoever is speaking, with the
+   tail pointing up at him: never across a face. Shown and hidden outright, with no fade - on an
+   iPhone the fade left the words a faint haze. */
+.party .air{position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden;border-radius:14px}
+.dogsay{position:absolute;top:54%;max-width:270px;background:#f4ecd8;color:#17130c;border-radius:13px;padding:6px 12px 7px;visibility:hidden}
+.dogsay.on{visibility:visible}
+.dogsay .who{font-family:'Inter',sans-serif;font-size:10.5px;font-weight:800;letter-spacing:.14em;color:#6f5210}
+.dogsay .what{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:16px;font-weight:600;line-height:1.18;margin-top:1px;white-space:normal}
+.dogtail{position:absolute;top:calc(54% - 9px);width:0;height:0;margin-left:-8px;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:10px solid #f4ecd8;visibility:hidden}
+.dogtail.on{visibility:visible}
 .saybar.talk{background:#17130c;border-color:#d8b45c;text-align:center;padding:10px 14px}
 .saybar.talk .what{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:17px;line-height:1.25;color:#f4e6c0}
 @keyframes sayin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
@@ -540,8 +546,8 @@ function signInScreen() {
   }
   // The party, at the head of the first screen: the dogs at their table, moving, and saying what
   // they think of each other. Its shape is fixed in the styles so the page does not jump.
-  return '<div class="sheet" style="padding-top:' + (s ? 64 : 10) + 'px">'
-    + (s ? '' : '<div class="party" id="loginpic"><div class="air"><div class="dogsay" id="dogsay"><div class="who"></div><div class="what"></div></div><div class="dogtail" id="dogtail"></div></div><div class="frame" id="partyframe"></div></div>')
+  return '<div class="sheet" style="padding-top:' + (s ? 64 : 22) + 'px">'
+    + (s ? '' : '<div class="party" id="loginpic"><div class="frame" id="partyframe"></div><div class="air" id="partyair"></div></div>')
     + '<div class="gold" style="font-size:11px;font-weight:700;letter-spacing:.18em">SMART BUDDIES</div>'
     + '<div class="disp" style="font-size:38px;line-height:1;margin-top:6px">' + (s ? 'Hello ' + esc(s.name) : 'Private<br>poker party') + '</div>'
     + (s
@@ -570,7 +576,7 @@ var DOGS = [
   { name: 'Duchess', at: [0.69, 0.795, 0.835, 0.835, 0.725], lines: ['The river gives. The river takes.', 'What are we playing next?', 'Some days the deck just likes you.', 'Half a pot is better than a whole lesson.'] },
   { name: 'Doc', at: [0.9, 0.965, 1.1, 0.965, 0.91], lines: ["Trust me. I'm bluffing.", "There's always a shot. You just have to find it.", 'A good fold. Probably.', 'You will never know. That is the beauty of it.'] },
 ];
-var PARTY = { v: null, timer: 0, turn: -1, who: null, last: '', since: 0 };
+var PARTY = { v: null, box: null, tail: null, timer: 0, turn: -1, who: null, since: 0 };
 var PARTY_SECS = 10, DOG_SAYS_MS = 4200, DOG_QUIET_MS = 700;
 // The film runs forwards and then backwards so that it never jumps; `secs` is where it is.
 function dogAt(d, secs) {
@@ -592,19 +598,27 @@ function partyOn() {
   if (!PARTY.v && !still) {
     var v = document.createElement('video');
     v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true;
-    v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('poster', '/poster.jpg');
-    v.setAttribute('aria-hidden', 'true'); v.preload = 'auto'; v.src = '/party.mp4';
+    v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('poster', '/poster.jpg?v=3');
+    v.setAttribute('aria-hidden', 'true'); v.preload = 'auto'; v.src = '/party.mp4?v=3';
     PARTY.v = v;
   }
   if (PARTY.v && PARTY.v.parentNode !== frame) frame.appendChild(PARTY.v);
+  // The bubble is kept the same way, so that a redraw does not blank what is being said.
+  if (!PARTY.box) {
+    PARTY.box = document.createElement('div'); PARTY.box.className = 'dogsay'; PARTY.box.id = 'dogsay';
+    PARTY.box.innerHTML = '<div class="who"></div><div class="what"></div>';
+    PARTY.tail = document.createElement('div'); PARTY.tail.className = 'dogtail'; PARTY.tail.id = 'dogtail';
+  }
+  var air = document.getElementById('partyair');
+  if (air && PARTY.box.parentNode !== air) { air.appendChild(PARTY.box); air.appendChild(PARTY.tail); }
   // A phone saving its battery will not start a film by itself. The picture stays, and they talk.
   if (PARTY.v) { var p = PARTY.v.play(); if (p && p.catch) p.catch(function () {}); }
   if (!PARTY.timer) PARTY.timer = setInterval(partyTick, 100);
   partyTick();
 }
 function partyTick() {
-  var box = document.getElementById('dogsay'), tail = document.getElementById('dogtail');
-  if (!box || !tail) return;
+  var box = PARTY.box, tail = PARTY.tail;
+  if (!box || !box.parentNode) return;
   var now = Date.now(), secs = PARTY.v ? PARTY.v.currentTime || 0 : 0;
   if (!PARTY.who || now - PARTY.since > DOG_SAYS_MS + DOG_QUIET_MS || !PARTY.since) {
     // the next one round the table who is in the picture, and a line he did not say last time
@@ -617,14 +631,11 @@ function partyTick() {
     PARTY.who = d; PARTY.since = now;
     box.firstChild.textContent = d.name.toUpperCase();
     box.lastChild.textContent = '\u201c' + d.said + '\u201d';
-  } else if (!box.lastChild.textContent) {
-    box.firstChild.textContent = PARTY.who.name.toUpperCase();
-    box.lastChild.textContent = '\u201c' + PARTY.who.said + '\u201d';
   }
   var on = now - PARTY.since < DOG_SAYS_MS, x = dogAt(PARTY.who, secs), wide = box.parentNode.offsetWidth, w = box.offsetWidth;
-  // the tail points at him; the words stay on the page
+  // the tail points up at him; the words stay inside the picture
   tail.style.left = Math.round(x * wide) + 'px';
-  box.style.left = Math.round(Math.min(wide - w, Math.max(0, x * wide - w / 2))) + 'px';
+  box.style.left = Math.round(Math.min(wide - w - 6, Math.max(6, x * wide - w / 2))) + 'px';
   box.className = 'dogsay' + (on ? ' on' : ''); tail.className = 'dogtail' + (on ? ' on' : '');
 }
 

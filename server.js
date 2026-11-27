@@ -1699,9 +1699,10 @@ const MANIFEST = JSON.stringify({
   background_color: '#0a0c0b', theme_color: '#0a0c0b',
   start_url: '/', scope: '/',
   icons: [
-    { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-    { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-    { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    // ?v= for the same reason as in the page: raise it whenever the pictures change
+    { src: '/icon-192.png?v=3', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/icon-512.png?v=3', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/icon-512.png?v=3', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
   ],
 });
 
@@ -1837,7 +1838,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/manifest.webmanifest') {
-      res.writeHead(200, { 'content-type': 'application/manifest+json', 'cache-control': 'max-age=86400' });
+      res.writeHead(200, { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' });
       return res.end(MANIFEST);
     }
 
