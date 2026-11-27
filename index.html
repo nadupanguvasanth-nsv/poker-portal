@@ -1893,7 +1893,7 @@ function authSteps(o, go) {
       + '<div class="small" style="margin-top:8px;white-space:normal;line-height:1.45">' + body + '</div></div>';
   };
   return step(1, 'Get an authenticator app',
-      'If you already use <b>Google Authenticator</b> or <b>Microsoft Authenticator</b>, use that. If not, install Google Authenticator from the App Store or Play Store - it is free. '
+      'If you already use an authenticator app - <b>Google Authenticator</b>, <b>Microsoft Authenticator</b>, <b>Zoho OneAuth</b> or any other - use that. If not, install Google Authenticator from the App Store or Play Store - it is free. '
       + 'On an iPhone with iOS 18 or later, the built-in <b>Passwords</b> app does the same job.')
     + step(2, 'Add Smart Buddies to it',
       'On this phone, tap the button and your authenticator opens with Smart Buddies ready to add.'
@@ -1904,7 +1904,8 @@ function authSteps(o, go) {
       + '<div style="margin-top:12px">Signing in on a computer or another phone? Scan this with the app instead.</div>'
       + '<div style="margin-top:8px;text-align:center">' + qrSvg(o.uri, 196) + '</div>')
     + step(3, 'Type the code it shows',
-      'The app now shows a 6-digit code for Smart Buddies that changes every 30 seconds. Type the one showing now.'
+      'The app now shows a 6-digit code for Smart Buddies that changes every 30 seconds. Type the one showing now. '
+      + 'If the app has more than one Smart Buddies entry, delete the older ones and use the newest.'
       + codeField('in_auth') + '<button class="btn" style="margin-top:12px" onclick="' + go + '">Confirm</button>');
 }
 function codeField(id) {
@@ -1918,7 +1919,14 @@ function authSection() {
   var has = S.me.twofa, h = '<div class="h2">TWO-STEP SIGN-IN</div><div class="evc" id="authbox">';
   if (S.auth) {
     return '<div class="h2">TWO-STEP SIGN-IN</div>' + authSteps(S.auth, 'authConfirm()')
-      + '<button class="btn ghost" style="margin-top:8px" onclick="S.auth=null;render()">Not now</button>';
+      + '<button class="btn ghost" style="margin-top:8px" onclick="authLater()">Not now</button>'
+      + (has ? '' : '<button class="btn ghost" id="authfresh" style="margin-top:8px" onclick="authBegin(true)">Start again with a new key</button>');
+  }
+  // Half-way through linking when the phone went off to the authenticator app and reloaded the
+  // portal on the way back: put the same steps, with the same key, back on the screen.
+  if (!has && !S.authAsk && !S.authBack && authLinking()) {
+    S.authBack = true;
+    api('totp-begin', {}).then(function (j) { S.auth = j; render(); }).catch(function () { authLinking(false); });
   }
   if (S.authAsk) {
     return h + '<div class="small" style="white-space:normal">' + (S.authAsk === 'off' ? 'To remove your authenticator, enter a code from it.' : 'To change your authenticator, first enter a code from the one you have now.') + '</div>'
@@ -1938,17 +1946,31 @@ function authSection() {
   }
   return h + '<button class="btn ghost" style="margin-top:8px" onclick="S.book=\'auth\';render()">How it works, step by step</button></div>';
 }
-function authBegin() {
+// Whether this phone is in the middle of linking: remembered for half an hour, so a reload on the
+// way back from the authenticator app picks up where it left off. Call with false to forget.
+function authLinking(on) {
+  try {
+    if (on === undefined) return Date.now() - Number(localStorage.getItem('sb-2fa-linking') || 0) < 30 * 60000;
+    if (on) localStorage.setItem('sb-2fa-linking', String(Date.now())); else localStorage.removeItem('sb-2fa-linking');
+  } catch (e) { /* private browsing: it only means no picking up after a reload */ }
+  return false;
+}
+function authLater() { authLinking(false); S.auth = null; render(); }
+function authBegin(fresh) {
   var code = S.authAsk ? codeTyped('in_authold') : '';
   if (S.authAsk && code.length !== 6) return toast('The 6-digit code from your authenticator', true);
   blurField();
-  api('totp-begin', { code: code }).then(function (j) { S.auth = j; S.authAsk = null; render(); }).catch(fail);
+  api('totp-begin', { code: code, fresh: !!fresh }).then(function (j) {
+    S.auth = j; S.authAsk = null; authLinking(true);
+    if (fresh) toast('New key. Delete the old Smart Buddies entry in your app');
+    render();
+  }).catch(fail);
 }
 function authConfirm() {
   var code = codeTyped('in_auth');
   if (code.length !== 6) return toast('The 6-digit code from your authenticator', true);
   blurField();
-  api('totp-confirm', { code: code }).then(function (j) { S.me = j.me; S.auth = null; toast('Your authenticator is linked'); }).catch(fail);
+  api('totp-confirm', { code: code }).then(function (j) { S.me = j.me; S.auth = null; authLinking(false); toast('Your authenticator is linked'); }).catch(fail);
 }
 function authOff() {
   var code = codeTyped('in_authold');
@@ -1971,7 +1993,7 @@ function authLater() { try { localStorage.setItem('sb-2fa-later', '1'); } catch 
 // The guide, as a page of its own and as words the portal admin can paste into the group.
 var AUTH_GUIDE = [
   ['What it is', 'An authenticator is a free app that shows a 6-digit code which changes every 30 seconds. With it linked, signing in to Smart Buddies on a new phone takes your passcode and that code - so your number and four digits alone are not enough for anybody else.'],
-  ['1. Get the app', 'Use Google Authenticator or Microsoft Authenticator if you have one. If not, install Google Authenticator from the App Store or Play Store. On an iPhone with iOS 18 or later the built-in Passwords app also works.'],
+  ['1. Get the app', 'Use the authenticator app you already have - Google Authenticator, Microsoft Authenticator, Zoho OneAuth or any other. If not, install Google Authenticator from the App Store or Play Store. On an iPhone with iOS 18 or later the built-in Passwords app also works.'],
   ['2. Open Smart Buddies', 'Go to the Me page and tap Add an authenticator. A new member is taken there automatically the first time they sign in.'],
   ['3. Add Smart Buddies to the app', 'Tap Open my authenticator and accept. If nothing opens, copy the setup key, then in the app tap +, choose Enter a setup key, name it Smart Buddies and paste the key. On a computer, scan the square code instead.'],
   ['4. Confirm', 'Back in Smart Buddies, type the 6-digit code the app is showing and tap Confirm. That is it.'],

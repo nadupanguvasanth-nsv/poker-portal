@@ -360,6 +360,10 @@ function makePeople(ctx) {
     // is already linked takes a code from the old one first.
     totpBegin(m, b) {
       if (m.totp) useCode(m, m.totp, b.code, 'To change your authenticator, first enter a code from the one you have now');
+      // The key already offered stands until it is confirmed. A phone that goes off to the
+      // authenticator app and comes back has often reloaded the portal, and a new key on every
+      // tap would leave the app holding one the portal has already thrown away.
+      if (m.totpNew && !b.fresh) return { key: m.totpNew, uri: uriFor(m, m.totpNew) };
       return offer(m);
     },
     totpConfirm(m, b) {
