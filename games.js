@@ -1,15 +1,19 @@
 'use strict';
 // Copyright (c) 2026 Vashanth Somasundaram. All rights reserved. See LICENSE.
-// A table: who is sitting at it, whose turn it is, which game this hand is, and the money.
+// A table: who is sitting at it, whose turn it is, which game this hand is, and the chips.
 //
-// Four formats:
+// Five formats:
 //   holdem      Texas hold'em, every hand.
+//   single      One of the variants, every hand, with no Texas in between.
 //   mixed       Texas, and one hand of the chosen variant at the end of each orbit of the button.
 //               That hand is dealt from a button of its own, which starts at the seat before the
 //               Texas button and walks the other way round, one seat each orbit.
 //   roe         Round of each: an orbit of Texas, then an orbit of the variant, and so on.
 //   tournament  Everybody starts with the same chips, blinds double every five minutes, nobody
-//               joins late and nobody buys more. It ends when one player holds the lot.
+//               joins late and nobody buys more. It ends when one player holds the lot. A
+//               tournament plays any of the four above - Texas unless whoever opens it says
+//               otherwise - but never a bomb pot: an ante that doubles with the blinds would be
+//               the whole of a stack within a few levels.
 
 const { Hand, VARIANTS } = require('./engine');
 const crypto = require('crypto');
@@ -20,12 +24,27 @@ const CODE = () => crypto.randomBytes(8).toString('base64url').replace(/[^A-Z0-9
 const SEATS = Number(process.env.SEATS || 7);          // a seven-handed table, first come first served
 const FORMATS = {
   holdem: { name: "Texas Hold'em", needsVariant: false },
+  single: { name: 'Single game', needsVariant: true },
   mixed: { name: "Hold'em with a variant each orbit", needsVariant: true },
   roe: { name: 'Round of each', needsVariant: true },
   tournament: { name: 'Tournament', needsVariant: false },
 };
 // the variants a member may pick for mixed and round-of-each
 const PICKABLE = ['omaha4', 'omaha5', 'bomb2', 'bomb5', 'bomb5x3'];
+// what a tournament may play, and the variants it may play it with
+const PLAYS = ['holdem', 'single', 'mixed', 'roe'];
+const TOURNEY_PICKABLE = PICKABLE.filter((v) => !VARIANTS[v].bomb);
+// The one check on what is being opened, used by the table itself and by the lobby before it.
+// Returns what is wrong with it in words, or nothing.
+function badGame(format, variant, play) {
+  if (!FORMATS[format]) return 'Pick a game';
+  if (format !== 'tournament') return FORMATS[format].needsVariant && !PICKABLE.includes(variant) ? 'Pick the variant to go with it' : '';
+  const p = play || 'holdem';
+  if (!PLAYS.includes(p)) return 'Pick what the tournament plays';
+  if (!FORMATS[p].needsVariant) return '';
+  if (VARIANTS[variant] && VARIANTS[variant].bomb) return 'A tournament does not play bomb pots';
+  return TOURNEY_PICKABLE.includes(variant) ? '' : 'Pick the variant to go with it';
+}
 
 const TOURNEY = {
   stack: Number(process.env.TOURNEY_STACK || 10000),
@@ -92,12 +111,13 @@ function tourneySettings(s = {}) {
 }
 
 class Table {
-  constructor({ format, variant, admin, settings, title }) {
-    if (!FORMATS[format]) throw new Error('Pick a game');
-    if (FORMATS[format].needsVariant && !PICKABLE.includes(variant)) throw new Error('Pick the variant to go with it');
+  constructor({ format, variant, play, admin, settings, title }) {
+    const wrong = badGame(format, variant, play);
+    if (wrong) throw new Error(wrong);
     this.code = CODE();
     this.format = format;
-    this.variant = FORMATS[format].needsVariant ? variant : null;
+    if (format === 'tournament') this.play = play || 'holdem';   // what the tournament plays
+    this.variant = FORMATS[this.plays()].needsVariant ? variant : null;
     this.adminId = admin.id;                 // the member who started it runs it
     this.adminName = admin.name;
     this.title = title || '';
@@ -191,9 +211,19 @@ class Table {
   // In a mixed game the variant button marks a seat, not a dealer. The button travels as it
   // always does; when it lands on the seat the variant button is sitting on, that player deals the
   // variant instead of Texas, and only then does the variant button step back one seat.
+  // How the hands go round: the format itself, or for a tournament the one it was opened to play.
+  // (A tournament saved before there was a choice has none recorded, and was Texas.)
+  plays() { return this.format === 'tournament' ? (this.play || 'holdem') : this.format; }
+  // What to call it. A tournament says what it plays when that is not simply Texas.
+  formatName() {
+    if (this.format !== 'tournament') return FORMATS[this.format].name;
+    return { holdem: 'Tournament', single: 'Tournament', mixed: 'Mixed tournament', roe: 'Round-of-each tournament' }[this.plays()];
+  }
   variantForHand() {
-    if (this.format === 'holdem' || this.format === 'tournament') return 'holdem';
-    if (this.format === 'mixed') return this.button === this.varButton ? this.variant : 'holdem';
+    const how = this.plays();
+    if (how === 'holdem') return 'holdem';
+    if (how === 'single') return this.variant;
+    if (how === 'mixed') return this.button === this.varButton ? this.variant : 'holdem';
     return this.roeVariant ? this.variant : 'holdem';     // roe
   }
   buttonForHand() { return this.button; }   // one button deals, always
@@ -225,7 +255,7 @@ class Table {
   advance() {
     const seats = this.occupied();
     if (seats.length < 2) return;
-    if (this.format === 'mixed') {
+    if (this.plays() === 'mixed') {
       // The seat holding the variant button can empty - that player busts or walks off - and then
       // the travelling button can never land on it, so the variant would stop coming round for the
       // rest of the night. Put it on a seat somebody is actually sitting in.
@@ -237,14 +267,14 @@ class Table {
     // waiting for the button to come back to one particular seat: that seat can bust or walk off
     // mid-orbit, the button never lands there again, and the game quietly stays on one variant for
     // the rest of the night.
-    if (this.format === 'roe' && this.button >= 0) {
+    if (this.plays() === 'roe' && this.button >= 0) {
       this.orbitSeen = (this.orbitSeen || []).filter((s) => this.seats[s]);
       // the seat the hand was actually dealt from, which is not always where the button was left
       const dealtFrom = this.dealSeats().includes(this.button) ? this.button : this.nextSeat(this.button);
       if (!this.orbitSeen.includes(dealtFrom)) this.orbitSeen.push(dealtFrom);
     }
     this.button = this.nextSeat(this.button);
-    if (this.format !== 'roe') return;
+    if (this.plays() !== 'roe') return;
     if (!this.dealSeats().every((s) => this.orbitSeen.includes(s))) return;   // still going round
     this.roeVariant = !this.roeVariant;          // round of each: turn and turn about
     this.orbitSeen = [];
@@ -331,7 +361,7 @@ class Table {
       this.startedAt = Date.now();
       if (this.format === 'tournament') this.levelAt = Date.now() + this.levelMs();
     }
-    this.say(`Hand ${this.handNo}: ${spec.name}${variant !== 'holdem' ? ' (variant hand)' : ''}`);
+    this.say(`Hand ${this.handNo}: ${spec.name}${variant !== 'holdem' && this.plays() !== 'single' ? ' (variant hand)' : ''}`);
     return this.hand;
   }
 
@@ -362,4 +392,4 @@ class Table {
   }
 }
 
-module.exports = { Table, FORMATS, PICKABLE, VARIANTS, SEATS, TOURNEY, NO_CAP, tourneyBlinds, tourneyStack, tourneySettings, DEFAULTS, cleanSettings, rid };
+module.exports = { Table, FORMATS, PICKABLE, PLAYS, TOURNEY_PICKABLE, badGame, VARIANTS, SEATS, TOURNEY, NO_CAP, tourneyBlinds, tourneyStack, tourneySettings, DEFAULTS, cleanSettings, rid };

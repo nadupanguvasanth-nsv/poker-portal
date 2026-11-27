@@ -1,24 +1,7 @@
 'use strict';
-// Settlement and PDF account statements. No dependencies: the PDF is written by hand.
-
-// ---- settlement: biggest loser pays biggest winner, and so on ----
-function settle(rows) {
-  const losers = rows.filter((r) => r.net < 0).map((r) => ({ id: r.id, name: r.name, left: -r.net })).sort((a, b) => b.left - a.left);
-  const winners = rows.filter((r) => r.net > 0).map((r) => ({ id: r.id, name: r.name, left: r.net })).sort((a, b) => b.left - a.left);
-  const transfers = [];
-  let i = 0, j = 0;
-  while (i < losers.length && j < winners.length) {
-    const amt = Math.min(losers[i].left, winners[j].left);
-    if (amt > 0) transfers.push({ from: losers[i].id, fromName: losers[i].name, to: winners[j].id, toName: winners[j].name, amount: amt });
-    losers[i].left -= amt; winners[j].left -= amt;
-    if (losers[i].left === 0) i++;
-    if (winners[j].left === 0) j++;
-    // keep the biggest-first order after a partial payment
-    losers.sort((a, b) => (a.left === 0) - (b.left === 0) || b.left - a.left); i = losers.findIndex((x) => x.left > 0); if (i < 0) i = losers.length;
-    winners.sort((a, b) => (a.left === 0) - (b.left === 0) || b.left - a.left); j = winners.findIndex((x) => x.left > 0); if (j < 0) j = winners.length;
-  }
-  return transfers;
-}
+// The score sheet for a night: one player's chips, as a PDF. It says what he took, what he
+// finished with and the difference, with his chips hand by hand - and nothing about anybody
+// else, or between one player and another. No dependencies: the PDF is written by hand.
 
 // one row per session the player was part of: chips at the start, at the end, and what they won or lost
 // (chips added by the banker during the session are not counted as winnings)
@@ -78,14 +61,14 @@ function stamp(ms, tz) {
 const dateOnly = (ms, tz) => { try { return new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }).format(ms); } catch (e) { return new Date(ms).toDateString(); } };
 const timeOnly = (ms, tz) => { try { return new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: true }).format(ms).toUpperCase(); } catch (e) { return ''; } };
 
-function statementPdf(final, personId, tz) {
+function scoreSheetPdf(final, personId, tz) {
   tz = tz || process.env.STATEMENT_TZ || 'Asia/Kolkata';
   const me = final.people.find((p) => p.id === personId);
   if (!me) return null;
   const d = new Doc(`Smart Buddies  |  Room ${final.code}  |  ${me.name}  |  Times shown in ${tz}`);
   // header band
   d.rect(0, 842 - 118, 595, 118, DARK);
-  d.text(final.live ? 'SMART BUDDIES  -  STATEMENT SO FAR' : 'SMART BUDDIES  -  ACCOUNT STATEMENT', 40, 842 - 38, 9, GOLDL, { bold: true });
+  d.text(final.live ? 'SMART BUDDIES  -  CHIP SCORE SO FAR' : 'SMART BUDDIES  -  CHIP SCORE SHEET', 40, 842 - 38, 9, GOLDL, { bold: true });
   d.text(me.name, 40, 842 - 76, 30, '#f2efe6', { bold: true });
   d.text('Room ID', 555, 842 - 38, 8, '#a3aba5', { align: 'right' });
   d.text(final.code, 555, 842 - 56, 18, GOLDL, { align: 'right', bold: true });
@@ -94,7 +77,7 @@ function statementPdf(final, personId, tz) {
   d.y = 842 - 118 - 26;
 
   // summary boxes
-  const boxes = [[me.carried >= me.invested && me.invested > 0 ? 'STARTED WITH' : 'TOTAL BOUGHT IN', fmt(me.invested), INK], [final.live ? 'CHIPS NOW' : 'FINAL CHIP COUNT', fmt(me.final), INK], [final.live ? (me.net >= 0 ? 'UP SO FAR' : 'DOWN SO FAR') : me.net >= 0 ? 'NET WON' : 'NET LOST', signed(me.net), me.net > 0 ? GREEN : me.net < 0 ? RED : INK]];
+  const boxes = [[me.carried >= me.invested && me.invested > 0 ? 'STARTED WITH' : 'CHIPS TAKEN', fmt(me.invested), INK], [final.live ? 'CHIPS NOW' : 'FINAL CHIP COUNT', fmt(me.final), INK], [final.live ? (me.net >= 0 ? 'UP SO FAR' : 'DOWN SO FAR') : me.net >= 0 ? 'CHIPS UP' : 'CHIPS DOWN', signed(me.net), me.net > 0 ? GREEN : me.net < 0 ? RED : INK]];
   const bw = (515 - 20) / 3;
   boxes.forEach((b, i) => {
     const x = 40 + i * (bw + 10);
@@ -104,23 +87,7 @@ function statementPdf(final, personId, tz) {
   });
   d.y -= 56 + 26;
 
-  // settlement
   const section = (title) => { d.need(40); d.text(title, 40, d.y, 9, GOLD, { bold: true }); d.line(40, d.y - 6, 555, d.y - 6, LINE, 0.6); d.y -= 22; };
-  if (!final.live) {
-  section('SETTLEMENT');
-  // transfers are named by member; older records named them by seat, so both are matched
-  const meKeys = [me.memberId, me.id].filter(Boolean);
-  const mine = final.transfers.filter((x) => meKeys.includes(x.from) || meKeys.includes(x.to));
-  if (!mine.length) { d.text(me.net === 0 ? 'You finished even. Nothing to settle.' : 'Nothing to settle.', 40, d.y, 11, INK); d.y -= 20; }
-  mine.forEach((x) => {
-    d.need(24);
-    const pay = meKeys.includes(x.from);
-    d.text(pay ? `You pay ${x.toName}` : `${x.fromName} pays you`, 40, d.y, 12, INK, { bold: true });
-    d.text((pay ? '-' : '+') + fmt(x.amount) + ' chips', 555, d.y, 12, pay ? RED : GREEN, { align: 'right', bold: true });
-    d.y -= 20;
-  });
-  d.y -= 10;
-  }
 
   // chart
   d.need(210);
@@ -157,22 +124,24 @@ function statementPdf(final, personId, tz) {
   d.y = cy - 26;
 
   // buy-in timings
-  section('BUY-INS AND CHIP MOVEMENTS');
+  section('CHIPS TAKEN AND RETURNED');
   d.text('DATE AND TIME', 40, d.y, 7.5, MUTED, { bold: true }); d.text('ENTRY', 190, d.y, 7.5, MUTED, { bold: true }); d.text('CHIPS', 555, d.y, 7.5, MUTED, { bold: true, align: 'right' }); d.y -= 14;
   me.ledger.forEach((l) => {
     d.need(18);
-    const label = l.kind === 'buyin' ? (l.by === 'carried over' ? 'Chips carried over from the last game' : 'Buy-in') : l.kind === 'cashout' ? 'Cashed out' : 'Banker adjustment' + (l.reason ? ' - ' + l.reason : '');
+    const label = l.kind === 'buyin' ? (l.by === 'carried over' ? 'Chips carried over from the last game' : 'Chips taken') : l.kind === 'cashout' ? 'Chips returned' : 'Chip adjustment' + (l.reason ? ' - ' + l.reason : '');
     d.text(stamp(l.t, tz), 40, d.y, 9.5, INK); d.text(label, 190, d.y, 9.5, INK);
     d.text(signed(l.amount), 555, d.y, 9.5, l.amount < 0 ? RED : INK, { align: 'right' });
     d.line(40, d.y - 5, 555, d.y - 5, LINE, 0.3); d.y -= 16;
   });
   d.need(30);
   d.line(40, d.y + 6, 555, d.y + 6, INK, 0.8); d.y -= 8;
-  d.text(me.carried >= me.invested && me.invested > 0 ? 'Total put in (carried over)' : 'Total bought in', 190, d.y, 9.5, INK, { bold: true }); d.text(fmt(me.invested), 555, d.y, 9.5, INK, { align: 'right', bold: true }); d.y -= 16;
+  d.text(me.carried >= me.invested && me.invested > 0 ? 'Total chips (carried over)' : 'Total chips taken', 190, d.y, 9.5, INK, { bold: true }); d.text(fmt(me.invested), 555, d.y, 9.5, INK, { align: 'right', bold: true }); d.y -= 16;
   d.text(final.live ? 'Chips now' : 'Final chip count', 190, d.y, 9.5, INK, { bold: true }); d.text(fmt(me.final), 555, d.y, 9.5, INK, { align: 'right', bold: true }); d.y -= 20;
   d.need(30);
-  d.text('Chips are virtual. Settle the amounts above between yourselves in whatever way you have agreed.', 40, d.y, 8, MUTED);
+  d.text('Played with virtual chips, for recreation among friends. Chips have no money value and cannot be bought,', 40, d.y, 8, MUTED); d.y -= 11;
+  d.text('sold or cashed through the portal. This sheet is a chip score and nothing else.', 40, d.y, 8, MUTED); d.y -= 11;
+  d.text('The app developer and the portal admin are not liable for what players do outside the game.', 40, d.y, 8, MUTED);
   return d.build();
 }
 
-module.exports = { settle, statementPdf };
+module.exports = { scoreSheetPdf };

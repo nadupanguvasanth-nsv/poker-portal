@@ -3,7 +3,7 @@
 //
 // There are two kinds of thing in here and it matters which is which.
 //
-// The first is counting. How often somebody puts money in before the flop, how often he raises
+// The first is counting. How often somebody puts chips in before the flop, how often he raises
 // rather than calls, how often he bets the flop having raised before it. These are facts: the
 // portal watched every hand and it is adding up what it saw. They can be wrong only if the
 // counting is wrong.
@@ -283,7 +283,7 @@ const STREET_CARDS = { preflop: 0, flop: 3, turn: 4, river: 5 };
 // A figure inside a sentence, in big blinds where the stakes are known. Chips only mean something
 // to somebody who remembers what the table was playing for that night; big blinds mean the same
 // thing on every table there has ever been.
-function money(n, big) {
+function chipsText(n, big) {
   if (!big) return Math.round(n || 0).toLocaleString('en-IN');
   const v = (n || 0) / big;
   return (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + 'bb';
@@ -362,8 +362,8 @@ function findings(rec, forId, big) {
       kind: mineEq >= 55 ? 'good' : mineEq >= 40 ? 'fold' : 'call',
       text: 'all in against ' + (rec.allIn.ids.length - 1)
         + (rec.allIn.ids.length === 2 ? ' man' : ' men') + ' with ' + mineEq
-        + ' chances in 100. Your share of the ' + money(rec.pot || 0, big) + ' pot was '
-        + money(fair, big) + '; you took ' + money(took, big) + '.',
+        + ' chances in 100. Your share of the ' + chipsText(rec.pot || 0, big) + ' pot was '
+        + chipsText(fair, big) + '; you took ' + chipsText(took, big) + '.',
     });
   }
   return out;
@@ -510,4 +510,4 @@ function remarks(r, big, who) {
   return out;
 }
 
-module.exports = { equities, money, buttonOf, riverCalls, report, remarks, readHand, expand, findings, spots, STUDY_KINDS, STUDY_STREETS };
+module.exports = { equities, chipsText, buttonOf, riverCalls, report, remarks, readHand, expand, findings, spots, STUDY_KINDS, STUDY_STREETS };

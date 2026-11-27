@@ -28,7 +28,7 @@ const LINES = {
   bust: [
     "If you can't spot the sucker at the table, it's you.",
     'Thank you for your contribution.',
-    'The bank is open if you need it.',
+    'More chips at the counter, if you need them.',
     'One seat lighter. Who is next?',
   ],
   river: [
@@ -55,11 +55,11 @@ const LINES = {
   ],
   patience: [
     'Patience pays. Eventually.',
-    'I fold, I fold, I fold. Then I get paid.',
+    'I fold, I fold, I fold. Then I collect.',
     'Good things come to those who wait for cards.',
   ],
   big: [
-    "Scared money don't make money.",
+    'Fortune favours the bold.',
     'That is how you build a stack.',
     'Stack them neatly, please.',
     'Chips and a chair. That is all I ask for.',

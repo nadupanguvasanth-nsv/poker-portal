@@ -5,7 +5,7 @@
 // Any member can start a table, and whoever starts it is its game admin. The portal admin can see
 // and do everything, everywhere. Nobody else can touch a table they do not run.
 
-const { Table, FORMATS, PICKABLE, SEATS, TOURNEY, cleanSettings } = require('./games');
+const { Table, SEATS, TOURNEY, badGame } = require('./games');
 const HOUSE = require('./house');
 
 function makeLobby(ctx) {
@@ -27,9 +27,8 @@ function makeLobby(ctx) {
   // What the lobby list shows: enough to choose a table, and nothing private.
   function card(t, m) {
     const mine = t.byMember(m.id);
-    const fmt = FORMATS[t.format];
     return {
-      code: t.code, format: t.format, formatName: fmt.name, variant: t.variant,
+      code: t.code, format: t.format, play: t.plays(), formatName: t.formatName(), variant: t.variant,
       variantName: t.variant ? require('./engine').VARIANTS[t.variant].name : '',
       admin: t.adminName, adminId: t.adminId, iRunIt: runs(t, m),
       status: t.status, paused: !!t.paused, players: t.seated().length, seats: SEATS, free: t.freeSeats(),
@@ -41,21 +40,12 @@ function makeLobby(ctx) {
       // whose regular game this is, and whether the person looking is in it
       groupName: t.groupName || '', inGroup: !t.groupId || (t.groupMembers || []).includes(m.id) || runs(t, m),
       // the portal's own figures, so the rules sheet states what the server actually enforces
-      house: {
-        graceSeconds: Math.round(HOUSE.START_GRACE_MS / 1000),
-        roundTo: HOUSE.ROUND_TO,
-        yellowHours: Math.round(HOUSE.YELLOW_AFTER_MS / 3600e3),
-        redHours: Math.round(HOUSE.RED_AFTER_MS / 3600e3),
-        redAtDebts: HOUSE.RED_AT_DEBTS,
-      },
+      house: { graceSeconds: Math.round(HOUSE.START_GRACE_MS / 1000) },
       blinds: t.blinds(), minBuyin: t.settings.minBuyin, startedAt: t.startedAt, createdAt: t.createdAt,
       handNo: t.handNo, level: t.format === 'tournament' ? t.level : 0,
       iAmIn: !!mine, asked: t.requests.some((r) => r.memberId === m.id),
       waiting: t.status === 'waiting' ? t.canStart() : '',
-      // A flag follows the name wherever the name appears. Everybody sees the mark; what is
-      // behind it is for the person themselves, whoever brought them in, and the portal admin.
       names: t.seated().map((p) => p.name),
-      marks: t.seated().map((p) => ({ name: p.name, flag: (ctx.flagOf && ctx.flagOf(p.memberId)) || '' })),
       requests: runs(t, m) ? t.requests.slice() : [],
       leaveAsks: runs(t, m) ? t.seated().filter((p) => p.leaveAsk && !p.leaveOk).map((p) => ({ id: p.id, name: p.name })) : [],
     };
@@ -71,7 +61,7 @@ function makeLobby(ctx) {
   // The message the game admin sends to the group chat.
   function invite(t, base) {
     const when = new Date(t.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: process.env.TZ_LABEL || 'Asia/Kolkata' });
-    const what = FORMATS[t.format].name + (t.variant ? ' with ' + require('./engine').VARIANTS[t.variant].name : '');
+    const what = t.formatName() + (t.variant ? (t.plays() === 'single' ? ': ' : ' with ') + require('./engine').VARIANTS[t.variant].name : '');
     const terms = t.format === 'tournament'
       ? `${t.settings.minBuyin.toLocaleString('en-IN')} chips each, blinds ${t.blinds().sb}/${t.blinds().bb} doubling every ${Math.round((t.settings.levelMs || TOURNEY.levelMs) / 60000)} minutes`
       : `blinds ${t.blinds().sb}/${t.blinds().bb}`;
@@ -86,8 +76,9 @@ function makeLobby(ctx) {
     // ---- starting one ----
     open(m, b) {
       const format = String(b.format || 'holdem');
-      if (!FORMATS[format]) throw httpErr(400, 'Pick a game');
-      if (FORMATS[format].needsVariant && !PICKABLE.includes(b.variant)) throw httpErr(400, 'Pick the variant to go with it');
+      const play = format === 'tournament' ? String(b.play || 'holdem') : '';
+      const wrong = badGame(format, b.variant, play);
+      if (wrong) throw httpErr(400, wrong);
       const running = [...tables.values()].filter((t) => t.status !== 'ended' && t.adminId === m.id);
       if (running.length >= 2) throw httpErr(400, 'You are already running two tables. Finish one first.');
       // A table opened to one of his groups: the people in it walk in as they would anywhere,
@@ -100,7 +91,7 @@ function makeLobby(ctx) {
         if (group.ownerId !== m.id && !m.isAdmin) throw httpErr(403, 'That is not your group');
       }
       let t;
-      try { t = new Table({ format, variant: b.variant, admin: m, settings: b.settings, title: b.title }); }
+      try { t = new Table({ format, variant: b.variant, play, admin: m, settings: b.settings, title: b.title }); }
       catch (err) { throw httpErr(400, err.message); }
       if (group) {
         t.groupId = group.id;

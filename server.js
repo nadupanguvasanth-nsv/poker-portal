@@ -14,14 +14,14 @@ const crypto = require('crypto');
 const { makeStore } = require('./store');
 const { makePeople } = require('./portal');
 const { makeLobby } = require('./lobby');
-const { Table, FORMATS, PICKABLE, SEATS, TOURNEY, NO_CAP, VARIANTS } = require('./games');
+const { Table, FORMATS, PICKABLE, PLAYS, TOURNEY_PICKABLE, SEATS, TOURNEY, NO_CAP, VARIANTS } = require('./games');
 const { CATEGORY } = require('./engine');
 const talk = require('./talk');
-const { settle, statementPdf } = require('./statement');
+const { scoreSheetPdf } = require('./statement');
 const study = require('./study');
 const { gameText } = require('./export');
 const { STUDY_KINDS, STUDY_STREETS } = study;
-const { START_GRACE_MS, ROUND_TO, YELLOW_AFTER_MS, RED_AFTER_MS, RED_AT_DEBTS } = require('./house');
+const { START_GRACE_MS } = require('./house');
 const webpush = require('./webpush');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -239,14 +239,7 @@ const people = makePeople({ state, changed, httpErr, secret: () => process.env.D
       feeds.delete(c);
     }
   } });
-// A flag follows the name: the lobby and the table both show it, so the mark is handed to them
-// rather than each working it out. It is only ever the colour - what is behind it stays with the
-// person, whoever brought them in, and the portal admin.
-const flagOf = (memberId) => {
-  const f = flagsFor(memberId);
-  return f.red ? 'red' : f.yellow ? 'yellow' : '';
-};
-const lobby = makeLobby({ state, changed, httpErr, people, broadcast, flagOf });
+const lobby = makeLobby({ state, changed, httpErr, people, broadcast });
 
 // ---------------------------------------------------------------- the view each phone gets
 function handView(t, me) {
@@ -288,7 +281,7 @@ function tableView(t, member) {
   const b = t.blinds();
   return {
     now: Date.now(),
-    code: t.code, title: t.title, format: t.format, formatName: FORMATS[t.format].name,
+    code: t.code, title: t.title, format: t.format, play: t.plays(), formatName: t.formatName(),
     variant: t.variant, variantName: t.variant ? VARIANTS[t.variant].name : '',
     admin: t.adminName, adminId: t.adminId, iRunIt: iRun,
     // whether the start button is his: at a tournament, only whoever opened it
@@ -300,8 +293,8 @@ function tableView(t, member) {
     levelAt: t.format === 'tournament' ? t.levelAt : 0,
     waiting: t.status === 'waiting' ? t.canStart() : '',
     // say so before it happens, so nobody is surprised by the variant hand
-    nextVariant: t.format === 'mixed' && t.variant && t.nextSeat(t.button) === t.varButton ? VARIANTS[t.variant].name : '',
-    varSeat: t.format === 'mixed' ? t.varButton : -1,
+    nextVariant: t.plays() === 'mixed' && t.variant && t.nextSeat(t.button) === t.varButton ? VARIANTS[t.variant].name : '',
+    varSeat: t.plays() === 'mixed' ? t.varButton : -1,
     seats: t.seats.map((id, seat) => {
       if (!id) return null;
       const p = t.players.get(id);
@@ -311,7 +304,6 @@ function tableView(t, member) {
         away: t.format === 'tournament' ? !!p.absent : !!(p.away || p.dropped), offline: !!p.dropped, busted: !!p.busted, place: p.place || 0,
         leaveAsk: !!p.leaveAsk, leaveOk: !!p.leaveOk,
         isAdmin: p.memberId === t.adminId, me: !!(mine && p.id === mine.id),
-        flag: flagOf(p.memberId),          // everybody at the table can see who owes from before
       };
     }),
     me: mine ? { id: mine.id, memberId: mine.memberId, seat: mine.seat, stack: mine.stack, bought: mine.bought, away: t.format === 'tournament' ? !!mine.absent : !!mine.away, out: !!mine.out,
@@ -331,7 +323,9 @@ function tableView(t, member) {
     leaveAsks: iRun ? t.seated().filter((p) => p.leaveAsk && !p.leaveOk).map((p) => ({ id: p.id, name: p.name })) : [],
     notes: t.notes.slice(-10),
     // the line for the hand just finished, if it earned one; gone as soon as the next is dealt
-    talk: t.talk && t.hand && t.hand.finished && t.talk.no === t.handNo ? { id: t.talk.id, who: t.talk.who, text: t.talk.text } : null,
+    talk: t.talk && t.hand && t.hand.finished && t.talk.no === t.handNo ? { id: t.talk.id, kind: t.talk.kind, who: t.talk.who, text: t.talk.text } : null,
+    // and something one of the five dogs has to say about what just happened at the table
+    aside: t.aside && Date.now() - t.aside.at < ASIDE_MS ? { id: t.aside.id, dog: t.aside.dog, text: t.aside.text } : null,
     log: t.log.slice(-40),
     fx: (t.fx || []).filter((f) => Date.now() - f.at < FX_LIFE_MS).slice(-10),
     reactions: {
@@ -535,6 +529,28 @@ function tableTalk(t, h) {
   t.talk = { id: t.code + ':' + t.handNo, no: t.handNo, kind: said.kind, who: who.name, text: said.text };
 }
 
+// The five dogs from the sign-in screen have opinions about the table as well: one about somebody
+// sitting down in the middle of a game, another about the game changing. Never about the cards.
+const ASIDE_MS = 8000;
+const ASIDE_CHANCE = Number(process.env.TALK_CHANCE || 0.6);    // the game changes every orbit; she need not remark on all of them
+const ASIDES = {
+  captain: ['Who invited you anyway?', 'Fresh chips. How kind.', 'Pull up a chair. Bring chips.', 'Another one. Deal them in, then.'],
+  duchess: ['What are we playing next? Oh, {game}. Lovely.', '{game}? My favourite.', 'A new game. The same result, I expect.', '{game}. Do try to keep up.'],
+};
+// Somebody new has sat down at a table that is already playing.
+function newFace(t, seatedBefore) {
+  if (t.status !== 'playing' || !t.handNo || t.seated().length <= seatedBefore) return;
+  dogSays(t, 'captain');
+  broadcast(t);
+}
+function dogSays(t, dog, fill) {
+  if (process.env.TABLE_TALK === 'off') return;
+  const pool = ASIDES[dog].filter((x) => !t.aside || x !== t.aside.raw);
+  const raw = pool[Math.floor(Math.random() * pool.length)];
+  t.asideN = (t.asideN || 0) + 1;
+  t.aside = { id: t.code + ':a' + t.asideN, dog, raw, text: raw.replace('{game}', fill || ''), at: Date.now() };
+}
+
 function afterAction(t) {
   const h = t.hand;
   if (!h) return;
@@ -586,14 +602,13 @@ const SAYINGS = {
   oneorbit:{ text: 'One more orbit and I am done' },
   nice:    { text: 'Nice hand' },
   leave:   { text: 'I need to leave early', acts: 'leave' },
-  topup:   { text: 'Buy me back in if I run out', acts: 'buyback' },
+  topup:   { text: 'Top me up if I run out', acts: 'buyback' },
   pausepls:{ text: 'Can we take a short break?' },
   // from whoever runs it
   soon:    { text: 'Starting in a minute', admin: true },
   yours:   { text: 'Your turn - are you there?', admin: true },
   brk:     { text: 'Taking a short break', admin: true },
   wrap:    { text: 'We are wrapping up soon', admin: true },
-  paypls:  { text: 'Please settle up when you can', admin: true },
 };
 
 function maybeAutoStart(t) {
@@ -640,7 +655,9 @@ function nextHand(t) {
   t.tickLevel();
   const why = t.canStart();
   if (why) { t.status = t.startedAt ? 'waiting' : t.status; t.say(why); broadcast(t); broadcastLobby(); return; }
+  const played = t.hand && t.hand.variant;
   try { t.deal(); } catch (err) { t.say(err.message); broadcast(t); return; }
+  if (played && t.hand.variant !== played && Math.random() < ASIDE_CHANCE) dogSays(t, 'duchess', VARIANTS[t.hand.variant].name);
   armTurn(t);
   changed(); broadcast(t); broadcastLobby();
 }
@@ -737,21 +754,6 @@ function keepRound(t, h) {
 }
 
 // ---------------------------------------------------------------- ending a game
-// Round every stack to the nearest step, then put whatever the rounding invented or lost onto
-// the biggest stack, so the total is exactly what was in play.
-function roundStacks(players, step) {
-  const out = {};
-  let total = 0, after = 0, biggest = null;
-  for (const p of players) {
-    total += p.stack;
-    const r = Math.round(p.stack / step) * step;
-    out[p.id] = r; after += r;
-    if (!biggest || p.stack > biggest.stack) biggest = p;
-  }
-  if (biggest && after !== total) out[biggest.id] -= (after - total);
-  return out;
-}
-
 function endGame(t, why) {
   if (t.status === 'ended') return;
   clearTimers(t);
@@ -760,9 +762,9 @@ function endGame(t, why) {
   t.hand = null;
   t.say(why || 'The game has ended');
 
-  // A table where no hand was ever dealt has nothing to settle: everybody still holds exactly what
-  // they bought in with. A record of all zeroes in the accounts helps nobody and buries the real
-  // games, so it is closed without one.
+  // A table where no hand was ever dealt has no score: everybody still holds exactly the chips
+  // he took. A record of all zeroes helps nobody and buries the real games, so it is closed
+  // without one.
   if (!t.handNo) {
     changed();
     broadcast(t); broadcastLobby();
@@ -771,22 +773,19 @@ function endGame(t, why) {
   }
 
   const b = t.blinds();
-  // Settle in round numbers. Nobody wants to be told they owe 11,663. Rounding each stack on its
-  // own does NOT keep the total - three stacks each rounding up invent 150 chips out of nothing -
-  // so whatever the rounding made or lost lands on the biggest stack: one named person, the
-  // smallest distortion, and the books tally exactly as they must.
-  const rounded = roundStacks(t.list(), ROUND_TO);
-
+  // The record of a night is a chip score and nothing else: the chips each player took, the
+  // chips he finished with, and the difference, to the chip. The portal works out nothing
+  // between one player and another.
   const people_ = t.list().map((p) => ({
     id: p.id, memberId: p.memberId, name: p.name,
-    invested: p.bought, final: rounded[p.id], net: rounded[p.id] - p.bought, rawFinal: p.stack,
+    invested: p.bought, final: p.stack, net: p.stack - p.bought,
     place: p.place || 0, busted: p.busted || 0,
     carried: 0, ledger: p.ledger, history: [], sessions: [],
   }));
   const record = {
     id: t.code + '-' + t.createdAt.toString(36),
-    code: t.code, title: t.title || FORMATS[t.format].name,
-    format: t.format, formatName: FORMATS[t.format].name,
+    code: t.code, title: t.title || t.formatName(),
+    format: t.format, play: t.plays(), formatName: t.formatName(),
     variant: t.variant, variantName: t.variant ? VARIANTS[t.variant].name : '',
     adminId: t.adminId, admin: t.adminName,
     startedAt: t.startedAt || t.createdAt, endedAt: t.endedAt, at: t.endedAt, hands: t.handNo,
@@ -794,11 +793,6 @@ function endGame(t, why) {
     people: people_,
     curve: t.curve || {},                    // everybody's chips, hand by hand
     study: t.study || [],                    // every Texas hand, for the numbers
-    // Who pays who, named by member rather than by seat. A player id belongs to one night at one
-    // table; a debt outlives both, and everything that acts on it afterwards - marking it paid,
-    // confirming it, the flags, the books - knows people by their membership. Settling on seat
-    // ids made records that looked perfectly right and that nobody could ever mark as paid.
-    transfers: settle(people_.map((p) => ({ ...p, id: p.memberId || p.id }))),
     rounds: t.rounds,
   };
   if (t.format === 'tournament') {
@@ -813,26 +807,19 @@ function endGame(t, why) {
   for (const p of t.list()) tellMember(p.memberId, 'ended', { code: t.code, id: record.id });
 
   // Everybody who played gets told on their phone, whether or not they are still looking at the
-  // portal. The person most likely to have shut it is the one who left early - and he is the one
-  // who most needs to know what the night came to and who he owes.
+  // portal. The person most likely to have shut it is the one who left early.
   for (const person of people_) {
-    const owes = (record.transfers || []).filter((x) => x.from === person.id);
-    const owed = (record.transfers || []).filter((x) => x.to === person.id);
-    let line;
-    if (owes.length) line = `You owe ${owes.map((x) => `${x.toName} ${x.amount.toLocaleString('en-IN')}`).join(', ')}.`;
-    else if (owed.length) line = `${owed.map((x) => `${x.fromName} ${x.amount.toLocaleString('en-IN')}`).join(', ')} to come to you.`;
-    else line = 'You finished level.';
     notify([person.memberId], {
       title: 'The game is over',
-      body: `${record.formatName}: you ${person.net > 0 ? 'are up ' : person.net < 0 ? 'are down ' : 'finished on '}`
-        + `${Math.abs(person.net).toLocaleString('en-IN')}. ${line}`,
+      body: `${record.formatName}: you finished ${person.net > 0 ? 'up ' : person.net < 0 ? 'down ' : 'level, on '}`
+        + `${Math.abs(person.net).toLocaleString('en-IN')} chips.`,
       url: '/', tag: 'done-' + t.code, badge: 1,
     });
   }
   return record;
 }
 
-// Replays for the last few games; the accounts stay for good.
+// Replays for the last few games; the scores stay for good.
 function pruneReplays() {
   let kept = 0;
   for (const g of state.history) {
@@ -890,16 +877,15 @@ const routes = {
     const m = people.auth(b);
     return {
       me: people.publicMember(m),
+      fair: people.fairOwed(b),              // has this device still to be shown how the cards are dealt?
       tables: lobby.list(m),
-      // The portal admin is given everybody's flags with the list, because a statistics page
-      // that shows who is up and down but not who owes money is the half of it he does not need.
       // The portal admin gets everybody - waiting, in, and taken out - because that is his list to
       // run. A primary member gets only the people he brought in: he needs to see how they are
       // getting on, and he has no business with anybody else's mobile number.
       members: m.isAdmin
-        ? people.everyone().map((x) => ({ ...people.publicMember(x), flags: flagsFor(x.id), join: people.joinFor(m, x) }))
+        ? people.everyone().map((x) => ({ ...people.publicMember(x), join: people.joinFor(m, x) }))
         : people.canOpen(m)
-          ? people.sponsored(m.id).map((x) => ({ ...people.publicMember(x), flags: flagsFor(x.id), join: people.joinFor(m, x) }))
+          ? people.sponsored(m.id).map((x) => ({ ...people.publicMember(x), join: people.joinFor(m, x) }))
           : [],
       // His own groups - the portal admin sees everybody's.
       groups: people.canOpen(m) ? people.groups(m) : [],
@@ -912,18 +898,12 @@ const routes = {
       induct: m.isAdmin ? null : (people.canOpen(m)
         ? { used: people.sponsored(m.id).length, cap: people.INDUCT_CAP }
         : null),
-      // What a flag on one of his people is actually for. He is answerable for them and is
-      // expected to have a word, and you cannot have a word about a debt you cannot see.
-      owedBy: people.canOpen(m) && !m.isAdmin
-        ? people.sponsored(m.id).reduce((acc, x) => {
-          const his = openDebts().filter((d) => d.from === x.id);
-          if (his.length) acc[x.id] = his;
-          return acc;
-        }, {})
-        : {},
       formats: Object.entries(FORMATS).map(([id, f]) => ({ id, ...f })),
       // the whole spec of each game, so the rule book is written out of the rules themselves
       variants: PICKABLE.map((id) => ({ id, name: VARIANTS[id].name })),
+      // what a tournament may play, and with which variants - it never plays a bomb pot
+      plays: PLAYS.map((id) => ({ id, name: FORMATS[id].name })),
+      tourneyVariants: TOURNEY_PICKABLE.map((id) => ({ id, name: VARIANTS[id].name })),
       games: Object.keys(VARIANTS).map((id) => {
         const v = VARIANTS[id];
         return { id, name: v.name, hole: v.hole, omaha: !!v.omaha, boards: v.boards, bomb: !!v.bomb, pl: !!v.pl, max: v.max };
@@ -935,14 +915,7 @@ const routes = {
       storage: m.isAdmin ? store.name : '',
       saveError: m.isAdmin ? store.error() : '',
       push: { key: state.vapid ? state.vapid.publicKey : '', on: !!(m.subs && m.subs.length) && !m.pushOff },
-      // what is outstanding, so nobody has to go looking for it
-      flags: flagsFor(m.id),
-      toPay: openDebts().filter((d) => d.from === m.id),
-      toGet: openDebts().filter((d) => d.to === m.id),
       mail: mailFor(m),
-      flagged: m.isAdmin
-        ? Object.values(state.members).filter((x) => x.red).map((x) => ({ id: x.id, name: x.name, why: x.red.why, at: x.red.at }))
-        : [],
     };
   },
   // A phone asking to be told when something happens. One member may have a few: a phone, an
@@ -999,7 +972,7 @@ const routes = {
     // being put forward, by whom, and that it is the portal admin who decides.
     const share = `${m.nick || m.name} would like to bring somebody into Smart Buddies.\n\n`
       + `${who.name}\n${who.phone}\n\n`
-      + `${m.nick || m.name} vouches for ${who.name}: passing on how we play, and chasing it up if ${who.name} does not settle after a game.\n\n`
+      + `${m.nick || m.name} vouches for ${who.name}, and will pass on how we play.\n\n`
       + `Say now if you would rather not, or if you know the number is wrong. `
       + `${(boss && (boss.nick || boss.name)) || 'The portal admin'} lets them in or turns them away once you have all had your say - nothing is sent to ${who.name} until then.`;
     return { ...who, share };
@@ -1021,11 +994,12 @@ const routes = {
   },
 
   // Taking somebody out of the portal, and putting them back. Only the portal admin, and nothing
-  // is ever deleted: their games, their accounts and what they owe stay attached to them.
+  // is ever deleted: their games and their scores stay attached to them.
   'member-remove'(b) { const m = people.auth(b); people.adminOnly(m); return people.remove(b); },
   'member-restore'(b) { const m = people.auth(b); people.adminOnly(m); return people.restore(b); },
   'member-reset'(b) { const m = people.auth(b); people.adminOnly(m); return people.resetPin(b); },
   // --- the authenticator ---
+  'fair-seen'(b) { return people.fairSeen(people.auth(b), b); },
   'totp-begin'(b) { return people.totpBegin(people.auth(b), b); },
   'totp-confirm'(b) { return people.totpConfirm(people.auth(b), b); },
   'totp-off'(b) { return people.totpOff(people.auth(b), b); },
@@ -1044,7 +1018,7 @@ const routes = {
 
   // A copy of the portal for the portal admin to keep somewhere else. Everything is in one file
   // in one place, and one bad day - a slip, a fault, somebody who should not have got in - would
-  // otherwise be the end of every game and every debt on record. The copy has the members, the
+  // otherwise be the end of every game on record. The copy has the members, the
   // games and the groups. It leaves out what would let its finder sign in as anybody: passcodes,
   // the phones signed in, joining codes and notification keys.
   backup(b) {
@@ -1319,7 +1293,7 @@ const routes = {
     // everybody else's phone, so a game can be got up without chasing people in the group chat
     notify(people.members().map((x) => x.id).filter((id) => id !== m.id), {
       title: 'A table is up',
-      body: `${m.nick || m.name} has started ${FORMATS[t.format].name}. ${t.freeSeats()} of ${SEATS} seats free.`,
+      body: `${m.nick || m.name} has started ${t.formatName()}. ${t.freeSeats()} of ${SEATS} seats free.`,
       url: '/', tag: 'table-' + t.code, badge: 1,
     });
     return { code: t.code, invite: lobby.invite(t, publicUrl()) };
@@ -1327,24 +1301,9 @@ const routes = {
   'table-join'(b) {
     const m = people.auth(b);
     const t = lobby.need(b.code);
-    // Somebody who owes money from a previous night does not sit down as if nothing happened. Red
-    // keeps him out altogether; yellow turns taking a free seat into asking, so whoever runs the
-    // table knows what he is letting in.
-    const f = flagsFor(m.id);
-    if (f.red) throw httpErr(403, `You have a red flag - ${f.redWhy}. ${adminName()} has to lift it.`);
-    if (f.yellow && !lobby.runs(t, m)) {
-      if (!t.requests.some((r) => r.memberId === m.id)) {
-        t.requests.push({ memberId: m.id, name: m.name, at: Date.now(), flagged: f.yellow });
-        broadcast(t); broadcastLobby(); changed();
-        notify([t.adminId], {
-          title: 'Someone wants in',
-          body: `${m.nick || m.name} is asking to join, and owes from ${f.yellow} game${f.yellow === 1 ? '' : 's'}.`,
-          url: '/', tag: 'ask-' + t.code, badge: 1,
-        });
-      }
-      return { asked: true, flagged: f.yellow };
-    }
+    const sat = t.seated().length;
     const r = lobby.join(m, b);
+    newFace(t, sat);
     maybeAutoStart(t);
     broadcastLobby();
     // if they had to ask, the person running it needs to know, wherever their phone is
@@ -1360,7 +1319,9 @@ const routes = {
   'table-decide'(b) {
     const m = people.auth(b);
     const t = lobby.need(b.code);
+    const sat = t.seated().length;
     const r = lobby.decide(m, b);
+    newFace(t, sat);
     maybeAutoStart(t);            // letting somebody in may be the fourth player
     broadcastLobby();
     if (b.ok && b.memberId) {
@@ -1420,67 +1381,6 @@ const routes = {
       changed(); broadcast(t); broadcastLobby();
     }
     return { paused: !!t.paused };
-  },
-
-  // The payer saying he has paid. A claim, not a receipt: it does not settle the debt or lift a
-  // flag, but it is on the record and the person owed can see it when he comes to confirm.
-  'pay-mark'(b) {
-    const m = people.auth(b);
-    const g = state.history.find((x) => x.id === b.id);
-    if (!g) throw httpErr(404, 'No such game');
-    const x = (g.transfers || []).find((y) => y.from === b.from && y.to === b.to);
-    if (!x) throw httpErr(404, 'Nothing owed between those two');
-    if (x.from !== m.id && !m.isAdmin) throw httpErr(403, 'Only the person paying can mark it paid');
-    if (x.confirmedAt) return { already: true };
-    x.paidAt = Date.now(); x.paidBy = m.id;
-    changed();
-    notify([x.to], {
-      title: 'Says he has paid you',
-      body: `${x.fromName} marked ${x.amount.toLocaleString('en-IN')} as paid. Confirm it when it lands.`,
-      url: '/', tag: 'paid-' + g.id, badge: 1,
-    });
-    return { ok: true, paidAt: x.paidAt };
-  },
-
-  // The person owed saying the money arrived. This is what settles it. The portal admin can enter
-  // it on his behalf when he cannot be reached - recorded as such, because in anything to do with
-  // money who entered a record matters as much as what it says.
-  'pay-confirm'(b) {
-    const m = people.auth(b);
-    const g = state.history.find((x) => x.id === b.id);
-    if (!g) throw httpErr(404, 'No such game');
-    const x = (g.transfers || []).find((y) => y.from === b.from && y.to === b.to);
-    if (!x) throw httpErr(404, 'Nothing owed between those two');
-    const onBehalf = x.to !== m.id;
-    if (onBehalf && !m.isAdmin) throw httpErr(403, 'Only the person owed can confirm it');
-    if (x.confirmedAt) return { already: true };
-    x.confirmedAt = Date.now();
-    x.confirmedBy = m.id;
-    x.confirmedByName = m.name;
-    x.onBehalf = onBehalf;
-    changed();
-    reviewFlags();
-    notify([x.from], {
-      title: 'Settled',
-      body: `${x.toName} confirmed your ${x.amount.toLocaleString('en-IN')}.`
-        + (onBehalf ? ` Entered by ${m.name}.` : ''),
-      url: '/', tag: 'done-' + g.id,
-    });
-    return { ok: true, onBehalf };
-  },
-
-  // Lifting a red flag. The portal admin's alone, and deliberate: paying clears the yellow by
-  // itself, but a red stays until he takes it off.
-  'flag-clear'(b) {
-    const m = people.auth(b);
-    if (!m.isAdmin) throw httpErr(403, 'Only the portal admin can lift a red flag');
-    const who = state.members[String(b.memberId || '')];
-    if (!who) throw httpErr(404, 'No such member');
-    if (!who.red) return { already: true };
-    delete who.red;
-    changed();
-    notify([who.id], { title: 'You are clear', body: `${m.name} lifted your red flag. You can sit down again.`, url: '/', badge: 1 });
-    return { ok: true };
   },
 
   // Calling the last few hands, so everybody knows where they stand before the night ends.
@@ -1589,16 +1489,16 @@ const routes = {
     }
     const waiting = p.topUp || 0;
     if (p.stack + waiting + amount < t.settings.minBuyin && amount < t.settings.minBuyin) {
-      throw httpErr(400, `The minimum buy-in is ${t.settings.minBuyin}`);
+      throw httpErr(400, `The least you can take is ${t.settings.minBuyin} chips`);
     }
     if (inPlay(t, p)) {
       p.topUp = waiting + amount;
-      t.say(`${p.name} is buying in for ${amount} at the end of this hand`);
+      t.say(`${p.name} takes ${amount} chips at the end of this hand`);
       changed(); broadcast(t); broadcastLobby();
       return { stack: p.stack, bought: p.bought, waiting: p.topUp };
     }
     t.give(p, amount);
-    t.say(`${p.name} bought in for ${amount}`);
+    t.say(`${p.name} took ${amount} chips`);
     changed(); broadcast(t); broadcastLobby();
     return { stack: p.stack, bought: p.bought, waiting: 0 };
   },
@@ -1611,10 +1511,10 @@ const routes = {
     const t = lobby.need(b.code);
     const p = t.byMember(m.id);
     if (!p) throw httpErr(403, 'You are not at this table');
-    if (t.format === 'tournament') throw httpErr(400, 'Nobody buys more chips in a tournament');
+    if (t.format === 'tournament') throw httpErr(400, 'Nobody takes more chips in a tournament');
     p.auto = !!b.on;
     t.say(p.auto
-      ? `${p.name} will buy back in for ${t.settings.minBuyin} if the chips run out`
+      ? `${p.name} will be topped up with ${t.settings.minBuyin} if the chips run out`
       : `${p.name} turned off buying back in`);
     changed(); broadcast(t); broadcastLobby();
     return { auto: p.auto, amount: t.settings.minBuyin };
@@ -1656,9 +1556,9 @@ const routes = {
     // the ones that do something as well as say it
     if (line.acts === 'leave') return { ...lobby.askLeave(m, b), said: line.text };
     if (line.acts === 'buyback') {
-      if (t.format === 'tournament') throw httpErr(400, 'Nobody buys more chips in a tournament');
+      if (t.format === 'tournament') throw httpErr(400, 'Nobody takes more chips in a tournament');
       p.auto = true;
-      t.say(`${p.name} will buy back in for ${t.settings.minBuyin} if the chips run out`);
+      t.say(`${p.name} will be topped up with ${t.settings.minBuyin} if the chips run out`);
     }
     if (line.acts === 'out' && t.format === 'tournament') throw httpErr(400, 'Nobody is dealt out of a tournament - it is play or fold');
     if (line.acts === 'out' && p) { p.away = true; p.dropped = false; t.say(`${p.name} is sitting out`); }
@@ -1754,7 +1654,7 @@ const routes = {
   },
 
   // Taking a game out of the records. Only the portal admin, and only him: a game is everybody's
-  // account of who owes who, so a player cannot quietly remove one he did badly in. It goes for
+  // score for the night, so a player cannot quietly remove one he did badly in. It goes for
   // good - the replays with it - which is why the app asks before calling this.
   'history-remove'(b) {
     const m = people.auth(b);
@@ -1777,82 +1677,13 @@ function myHistory(m) {
     // with the history it put all of them on the phone of anybody who had played, there to be
     // read by anyone who knew where to look. It was also most of the weight: sixty nights of it
     // is over a megabyte, fetched every time the portal opened. The count is all a phone needs.
-    .map((g) => ({ ...g, rounds: undefined, study: undefined,
+    .map((g) => ({ ...g, rounds: undefined, study: undefined, transfers: undefined,
       // how many hands there are to study is the portal admin's to know; nobody else has a use for it
       replays: g.rounds ? g.rounds.length : 0, studied: m.isAdmin ? (g.study || []).length : 0 }));
 }
 
 const publicUrl = () => process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
-// ---------------------------------------------------------------- settling up
-// A debt is settled when the person owed says he has been paid, and not before. The payer can say
-// he has paid, and that is worth recording, but it is a claim rather than a receipt - in a game
-// where everybody knows everybody, one person's word that money arrived is the only thing worth
-// treating as true.
-
-// every debt in the records that is still open, oldest first
-function openDebts() {
-  const out = [];
-  for (const g of state.history) {
-    for (const x of g.transfers || []) {
-      if (x.confirmedAt) continue;
-      out.push({
-        gameId: g.id, at: g.at, title: g.title, when: g.at,
-        from: x.from, fromName: x.fromName, to: x.to, toName: x.toName,
-        amount: x.amount, paidAt: x.paidAt || 0, paidBy: x.paidBy || '',
-      });
-    }
-  }
-  return out.sort((a, b) => a.at - b.at);
-}
-
-// Yellow is worked out rather than stored, so paying clears it the moment the receipt is
-// confirmed and nobody has to remember to lift it. Red is stored, because it stays until the
-// portal admin lifts it by hand even after the money has arrived.
-function flagsFor(memberId) {
-  const now = Date.now();
-  const mine = openDebts().filter((d) => d.from === memberId);
-  const yellow = mine.filter((d) => now - d.at > YELLOW_AFTER_MS);
-  const m = state.members[memberId];
-  const red = !!(m && m.red);
-  return {
-    yellow: red ? 0 : yellow.length,
-    red,
-    redWhy: red ? m.red.why : '',
-    redAt: red ? m.red.at : 0,
-    owes: mine.length,
-    oldestAt: mine.length ? mine[0].at : 0,
-  };
-}
-
-// Anything that has gone past the long window, or anybody carrying too many at once, turns red
-// and stays red. Run on a timer and after anything that could change it.
-function reviewFlags() {
-  const now = Date.now();
-  const by = {};
-  for (const d of openDebts()) (by[d.from] = by[d.from] || []).push(d);
-  let changed_ = false;
-  for (const [memberId, debts] of Object.entries(by)) {
-    const m = state.members[memberId];
-    if (!m || m.red) continue;
-    const old = debts.find((d) => now - d.at > RED_AFTER_MS);
-    // Three at once means three that have gone yellow, not three that merely exist. Somebody who
-    // loses three games in one evening has not done anything wrong yet - nobody could have paid
-    // that fast - and barring him for it would punish losing rather than not settling up.
-    const yellows = debts.filter((d) => now - d.at > YELLOW_AFTER_MS);
-    const why = old ? `a debt unsettled for more than ${Math.round(RED_AFTER_MS / 3600e3)} hours`
-      : yellows.length >= RED_AT_DEBTS ? `${yellows.length} games unsettled at once` : '';
-    if (!why) continue;
-    m.red = { at: now, why };
-    changed_ = true;
-    notify([memberId], {
-      title: 'You cannot sit down',
-      body: `${why}. Settle up and ask ${adminName()} to lift it.`,
-      url: '/', tag: 'red', badge: 1,
-    });
-  }
-  if (changed_) changed();
-}
 function adminName() {
   const a = Object.values(state.members).find((m) => m.isAdmin);
   return a ? a.name : 'the portal admin';
@@ -1882,6 +1713,12 @@ const FILES = {
   '/icon-512.png': ['icon-512.png', 'image/png'],
   '/poster.jpg': ['poster.jpg', 'image/jpeg'],
   '/music.mp3': ['music.mp3', 'audio/mpeg'],
+  '/party.mp4': ['party.mp4', 'video/mp4'],
+  '/dog-ace.webp': ['dog-ace.webp', 'image/webp'],
+  '/dog-captain.webp': ['dog-captain.webp', 'image/webp'],
+  '/dog-major.webp': ['dog-major.webp', 'image/webp'],
+  '/dog-duchess.webp': ['dog-duchess.webp', 'image/webp'],
+  '/dog-doc.webp': ['dog-doc.webp', 'image/webp'],
 };
 
 // Nonsense arrives sooner or later - a half-sent request, a stray crawler, a bug in a phone.
@@ -1968,20 +1805,20 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/feed') return feed(req, res, url);
 
-    if (req.method === 'GET' && url.pathname === '/api/statement') {
+    if (req.method === 'GET' && url.pathname === '/api/score-sheet') {
       const m = people.whoIs(url.searchParams.get('token'));
       if (!m) { res.writeHead(401); return res.end('sign in'); }
       const g = state.history.find((x) => x.id === url.searchParams.get('id'));
       if (!g) { res.writeHead(404); return res.end('no such game'); }
       if (!m.isAdmin && !g.people.some((p) => p.memberId === m.id)) { res.writeHead(403); return res.end('not yours'); }
-      // Your own statement, or - for the portal admin, who keeps the books - any player's, asked
+      // Your own score sheet, or - for the portal admin, who keeps the scores - any player's, asked
       // for by seat. Without one named he gets the first player's, which is what he had before.
       const who = url.searchParams.get('who');
       const mine = (m.isAdmin && who ? g.people.find((p) => p.id === who) : null)
         || g.people.find((p) => p.memberId === m.id)
         || (m.isAdmin ? g.people[0] : null);
       if (!mine) { res.writeHead(403); return res.end('not yours'); }
-      const pdf = statementPdf(g, mine.id);
+      const pdf = scoreSheetPdf(g, mine.id);
       res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `inline; filename="${g.title.replace(/\W+/g, '-')}.pdf"` });
       return res.end(pdf);
     }
@@ -2015,8 +1852,8 @@ const server = http.createServer(async (req, res) => {
       const full = path.join(__dirname, file[0]);
       if (!fs.existsSync(full)) { res.writeHead(404); return res.end('not built yet'); }
       const body = fs.readFileSync(full);
-      const head = { 'content-type': file[1], 'cache-control': file[0].endsWith('.html') ? 'no-cache' : file[0].endsWith('.mp3') ? 'max-age=2592000' : 'max-age=86400', 'accept-ranges': 'bytes' };
-      // An iPhone will not play sound it cannot ask for in pieces: it sends "bytes=0-1" first,
+      const head = { 'content-type': file[1], 'cache-control': file[0].endsWith('.html') ? 'no-cache' : /\.mp[34]$/.test(file[0]) ? 'max-age=2592000' : 'max-age=86400', 'accept-ranges': 'bytes' };
+      // An iPhone will not play sound or video it cannot ask for in pieces: it sends "bytes=0-1" first,
       // and if the whole file comes back instead of those two bytes it gives up without a word.
       const want = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ''));
       if (want && (want[1] || want[2])) {
@@ -2090,7 +1927,6 @@ const tick = setInterval(() => {
     }
     if (t.status === 'ended' && !keepTable(t)) lobby.forget(t.code);
   }
-  reviewFlags();          // debts do not age quietly
 }, 10000);
 if (tick.unref) tick.unref();
 
@@ -2122,6 +1958,11 @@ const ready = (async () => {
 
     if (ok(saved.history, 'array')) state.history = saved.history;
     else if (saved.history !== undefined) dropped.push('history');
+    // The portal records a game and its chip scores and nothing between members. Records made
+    // before that was so carried who-pays-who lines and a flag on anybody who had not; neither
+    // is kept, shown or acted on any longer, so neither is carried forward.
+    for (const g of state.history) delete g.transfers;
+    for (const m of Object.values(state.members)) delete m.red;
     // names written before names were restricted
     const tidied = people.tidy();
     if (tidied) console.log('Tidied ' + tidied + ' name(s) that carried characters a name may not have.');

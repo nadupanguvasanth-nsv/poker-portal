@@ -32,6 +32,9 @@ const joinCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 const isPin = (s) => /^\d{4}$/.test(String(s || ''));
 // New members are made to link an authenticator. The tests of everything else switch this off.
 const MUST_2FA = process.env.NEW_MEMBER_2FA !== 'off';
+// The notice on how the cards are dealt, shown at each sign-in. The tests sign in thousands of
+// times and switch it off; fairtest.js switches it back on for itself.
+const FAIR_NOTICE = process.env.FAIR_NOTICE !== 'off';
 
 // Passcodes are stored as a salted hash. Four digits is not much, so the lock-out above is what
 // actually protects them; the hash only means the stored file never carries the number itself.
@@ -95,10 +98,10 @@ function makePeople(ctx) {
   // Everybody whose record exists, and everybody who is actually in the portal. A member is one
   // of three things: waiting on the portal admin to approve the induction, in and playing, or
   // taken out. Only the middle one counts as a member for everything the portal does - signing
-  // in, being told a table is up, being added up in the books.
+  // in, being told a table is up, being added up in the standings.
   //
-  // Taking somebody out does NOT delete them. Their games, their accounts, what they owe and what
-  // they are owed all hang off their identity, and deleting the record would leave that history
+  // Taking somebody out does NOT delete them. Their games and their scores all
+  // hang off their identity, and deleting the record would leave that history
   // pointing at nobody - and worse, adding the same number back later would mint a stranger with
   // the same name and an empty past. So they are archived: same record, same identity, no way in.
   const everyone = () => Object.values(state.members);
@@ -295,6 +298,19 @@ function makePeople(ctx) {
       const m = whoIs(b && b.token);
       if (!m) throw httpErr(401, 'Please sign in again');
       return m;
+    },
+    // How the cards are dealt is put in front of every member once each time he signs in. This is
+    // whether the device asking has still to be shown it, and the note that it has been.
+    fairOwed(b) {
+      if (!FAIR_NOTICE) return false;
+      const m = whoIs(b && b.token);
+      const s = m && (m.sessions || []).find((x) => x.token === String(b.token));
+      return !!s && !s.fair;
+    },
+    fairSeen(m, b) {
+      const s = (m.sessions || []).find((x) => x.token === String(b.token));
+      if (s && !s.fair) { s.fair = Date.now(); m.fairAt = s.fair; changed(); }
+      return { ok: true };
     },
     adminOnly(m) {
       if (!m.isAdmin) throw httpErr(403, 'Only the portal admin can do that');
