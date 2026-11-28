@@ -132,10 +132,20 @@ body.four .card.s-c{color:#1c8a3c}
   12%{transform:translate(calc(var(--dx)*.12),calc(var(--dy)*.12 - 10px)) scale(1);opacity:1}
   80%{opacity:1}
   100%{transform:translate(var(--dx),var(--dy)) scale(.72);opacity:0}}
+/* and going out: from the pot to whoever won it */
+.chipfly.win{z-index:7}
+.chipfly.win b{color:#9bf0b0;font-size:11px}
+@keyframes chipout{0%{transform:translate(0,0) scale(.6);opacity:0}
+  14%{transform:translate(calc(var(--dx)*.1),calc(var(--dy)*.1 - 12px)) scale(1.1);opacity:1}
+  82%{opacity:1}
+  100%{transform:translate(var(--dx),var(--dy)) scale(.8);opacity:0}}
 .fxbub{background:#141917;border:1px solid #2a312d;border-radius:20px;padding:4px 8px;font-size:30px;margin:-22px 0 0 -26px}
 .fxbtn{width:34px;height:34px;border-radius:17px;border:1px solid #2a312d;background:#1b2a22;font-size:20px;line-height:1;padding:0;flex:none}
 .av{position:relative;width:52px;height:52px;border-radius:26px;background:var(--av);border:2px solid #2a312d;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:20px}
-.seat.turn .av{border-color:#d8b45c;box-shadow:0 0 0 4px rgba(216,180,92,.25)}
+.seat.turn .av{border-color:#d8b45c;box-shadow:0 0 0 4px rgba(216,180,92,.25);isolation:isolate;color:#17120a;text-shadow:0 0 4px #ffe9a8,0 0 8px #ffd76a}
+/* whose turn it is: the innermost ring of his disc lit, and beating, so the eye finds him */
+.seat.turn .av:before{content:'';position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;z-index:-1;background:radial-gradient(circle,#fff6cf 0,#ffd95e 55%,#f0b429 100%);box-shadow:0 0 12px 3px rgba(255,214,94,.85);animation:turnbeat 1.1s ease-in-out infinite}
+@keyframes turnbeat{0%,100%{transform:scale(.9);box-shadow:0 0 8px 2px rgba(255,214,94,.6)}50%{transform:scale(1.18);box-shadow:0 0 16px 6px rgba(255,214,94,.95)}}
 /* A player who has folded or gone is dimmed - but not the cards he chose to turn over. Dimming
    the whole seat dimmed those too, and a child cannot be brighter than the parent it sits in, so
    the one thing everybody is leaning in to look at was the faintest thing on the table. */
@@ -145,6 +155,15 @@ body.four .card.s-c{color:#1c8a3c}
 .sname{margin-top:4px;font-size:11px;color:#bfe0cf;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sbh{font-size:9.5px;font-weight:700;line-height:1.2;margin-top:1px}
 .sstack{font-size:12px;font-weight:600}
+/* the blinds, marked like the button: small blind and big blind, lower on the same side */
+.badge.blind{top:auto;bottom:-5px;left:-13px;width:24px;height:18px;border-radius:9px;font-size:10px;font-weight:800;letter-spacing:.02em;box-shadow:0 1px 3px rgba(0,0,0,.6)}
+.badge.sb{background:#f3efe2;color:#14110a}
+.badge.bb{background:#3f7fd0;color:#fff}
+/* two small cards beside whoever is still in the hand */
+.incards{position:absolute;right:-13px;bottom:-5px;width:24px;height:20px;pointer-events:none}
+.incards i{position:absolute;bottom:0;width:13px;height:18px;border-radius:2.5px;background:#f47b20;border:1.5px solid #fff3e2;box-shadow:0 1px 3px rgba(0,0,0,.65)}
+.incards i:first-child{left:0;transform:rotate(-10deg)}
+.incards i:last-child{left:9px;transform:rotate(9deg)}
 /* the player to act has his circle run down, so the whole table can see the time going */
 /* (it stands four pixels proud of the picture, not six: at six its lower edge ran under the
    player's own name, gold behind white, exactly when everybody was looking at him) */
@@ -334,6 +353,7 @@ function connect() {
     // the phone's clock may be minutes out; keep the difference so the turn ring runs true
     if (S.v.now) S.skew = Date.now() - S.v.now;
     watchActs();            // did somebody just call or raise? flash it on their seat
+    watchWins();            // has the hand just been won? send the pot to whoever won it
     watchSaid();            // and has anybody said anything to you?
     watchTalk();            // and did the hand just finished earn a line?
     watchAside();           // and has one of the dogs something to say about it?
@@ -750,6 +770,7 @@ function newTableForm() {
     h += '<div class="h2">THE TOURNAMENT</div><div style="display:flex;gap:8px">'
       + miniField('n_stack', 'CHIPS EACH', S.lastStack || 10000, 'oninput="tourneyEcho()" onblur="tourneySnap()"')
       + miniField('n_level', 'MINUTES A LEVEL', S.lastLevel || 5, 'oninput="tourneyEcho()" onblur="tourneySnap()"')
+      + miniField('n_turn', 'SECONDS A TURN', S.lastTurn || 40)
       + '</div><div class="muted small" style="margin-top:6px;white-space:normal">A tournament never starts by itself and has no number to reach. '
       + 'You start it, when you judge that enough have sat down - it only takes two to play. Nobody can join once you have.</div><div class="muted small" id="t_echo" style="margin-top:8px;white-space:normal">' + tourneyLine(S.lastStack || 10000, S.lastLevel || 5) + '</div>'
       + '<div class="muted small" style="margin-top:8px;white-space:normal">Chips go in tens of thousands &mdash; 10,000, 20,000, 50,000 and so on. Anything in between is taken to the nearest. No late entries, nobody takes more chips, and the last player holding everything wins.</div>';
@@ -823,7 +844,9 @@ function doOpen() {
   if (chosen === 'tournament') {
     S.lastStack = tStack(val('n_stack'));
     S.lastLevel = tLevel(val('n_level'));
-    body.settings = { stack: S.lastStack, levelMin: S.lastLevel };
+    // how long each player has to act, his to set here as at any other table
+    S.lastTurn = Math.max(10, Math.min(300, Math.floor(Number(val('n_turn'))) || 40));
+    body.settings = { stack: S.lastStack, levelMin: S.lastLevel, turnSeconds: S.lastTurn };
   } else {
     // how many it takes to start: his call, between two and the number of seats, and remembered
     S.lastPlayers = Math.max(2, Math.min(S.seats || 7, Math.floor(Number(val('n_players'))) || 4));
@@ -1128,6 +1151,7 @@ function tableCard(t) {
   h += '<div style="display:flex;gap:8px;margin-top:12px">';
   if (t.iAmIn) h += '<button class="btn" style="flex:1;height:46px" onclick="openTable(\'' + t.code + '\')">Open the table</button>';
   else if (t.asked) h += '<button class="btn ghost" style="flex:1;height:46px" disabled>Waiting for ' + esc(t.admin) + '</button>';
+  else if (t.format === 'tournament' && t.startedAt) h += '<button class="btn ghost" style="flex:1;height:46px" disabled>In play &middot; no late entries</button>';
   else if (!t.free) h += '<button class="btn ghost" style="flex:1;height:46px" disabled>Full</button>';
   else h += '<button class="btn" style="flex:1;height:46px" onclick="joinTable(\'' + t.code + '\')">' + (t.status === 'playing' ? 'Ask to join' : 'Take a seat') + '</button>';
   // You do not have to commit to a seat to come in and look. Walk into the room, watch a hand,
@@ -3126,12 +3150,14 @@ function behindTag(st) {
 
 // ---- bombs and flowers ----
 function fxPos(A, id) {
-  var n = A.seats.length, ms = A.you.seat;
+  // somebody watching has no seat of his own: the table is laid out for him from the first seat,
+  // and the place at the bottom is a player's like any other
+  var n = A.seats.length, ms = A.you.seat < 0 ? 0 : A.you.seat;
   for (var s = 0; s < n; s++) {
     var st = A.seats[s];
     if (st && st.id === id) {
       var rel = (s - ms + n) % n;
-      if (rel === 0) return { x: 245, y: 462 };
+      if (rel === 0 && !A.you.watching) return { x: 245, y: 462 };
       var p = seatXY(rel, n);
       return { x: p.x, y: p.y };
     }
@@ -3172,7 +3198,7 @@ function fxIngest(v) {
 var POT_AT = { x: 195, y: 188 };
 function chipHtml(A) {
   var live = S.chips || [];
-  if (!live.length) return '';
+  if (!live.length && !(S.wins || []).length) return '';
   var now = Date.now(), h = '';
   live.forEach(function (c) {
     var age = now - c.t0;
@@ -3184,7 +3210,36 @@ function chipHtml(A) {
       + 'animation:chipin 1.1s cubic-bezier(.3,.1,.3,1) both;animation-delay:-' + age + 'ms">'
       + '<i></i><b>' + kfmt(c.amount) + '</b></div>';
   });
+  // and when the hand is over, the pot goes out to whoever won it: three chips, one after another
+  (S.wins || []).forEach(function (c) {
+    var age = now - c.t0;
+    if (age > 1700) return;
+    var to = fxPos(A, c.id);
+    if (!to) return;
+    for (var k = 0; k < 3; k++) {
+      h += '<div class="chipfly win" style="left:' + POT_AT.x + 'px;top:' + POT_AT.y + 'px;'
+        + '--dx:' + Math.round(to.x - POT_AT.x) + 'px;--dy:' + Math.round(to.y - POT_AT.y) + 'px;'
+        + 'animation:chipout 1.2s cubic-bezier(.3,.1,.3,1) both;animation-delay:' + (k * 160 - age) + 'ms">'
+        + '<i></i>' + (k === 2 ? '<b>+' + kfmt(c.amount) + '</b>' : '') + '</div>';
+    }
+  });
   return h;
+}
+// The result of a hand has just reached this phone: send the pot to the winners. Once a hand,
+// and not for a hand that was already over when the table was opened.
+function watchWins() {
+  var v = S.v, h = v && v.hand;
+  if (!h) { S.winSeen = ''; return; }
+  var key = v.code + ':' + h.no;
+  if (!h.finished || !h.result) { if (S.winSeen !== key) S.winOpen = key; return; }
+  if (S.winSeen === key) return;
+  S.winSeen = key;
+  if (S.winOpen !== key) return;             // arrived after it was over: nothing to watch go
+  var won = h.result.won || {};
+  S.wins = Object.keys(won).filter(function (id) { return won[id] > 0; }).map(function (id) { return { id: id, amount: won[id], t0: Date.now() }; });
+  if (S.wins.length) sfx('chip');
+  clearTimeout(watchWins.t);
+  watchWins.t = setTimeout(function () { S.wins = []; if (S.screen === 'table') render(); }, 1750);
 }
 
 function fxHtml(A) {
@@ -3245,14 +3300,19 @@ function plaque(A, st, x, y, w, rel, hand, RES, n, up) {
   // at a showdown the cards come up on their own; otherwise only what they chose to show
   var atShowdown = RES && st.cards && st.cards.length && st.cards[0] !== '??';
   var cards = atShowdown ? st.cards : (st.shown || null);
+  // two small cards beside everybody still in the hand, so that who is in and who has folded is
+  // seen at a glance; your own are in front of you, and cards turned face up speak for themselves
+  var holding = rel !== 0 && st.inHand && !st.folded && hand && !hand.finished && !cards;
   var bar = st.isTurn && hand && hand.deadline
     ? '<span class="tring" id="tb' + st.id + '"></span><span class="tsec" id="ts' + st.id + '" style="display:none"></span>' : '';
   return '<div class="abs ' + cls + '" style="left:' + x + 'px;top:' + y + 'px;width:' + w + 'px">'
     + flash
     + '<div class="av' + (flash ? ' acted' : '') + '">' + initials(st.name) + bull + bar
       + (st.isButton ? '<span class="badge">D</span>' : '')
+      + (st.blind ? '<span class="badge blind ' + st.blind.toLowerCase() + '">' + st.blind + '</span>' : '')
+      + (holding ? '<span class="incards"><i></i><i></i></span>' : '')
       + (st.wants ? '<span class="want">!</span>' : '') + '</div>'
-    + line2 + '<div class="sstack">' + fmt(st.stack) + '</div>'
+    + line2 + '<div class="sstack">' + fmt(st.live) + '</div>'
     + (n >= 7 && (rel === 1 || rel === n - 1) ? '' : behindTag(st))
     + (st.bet > 0 ? '<div class="betchip' + (seatIsTop(rel, n) ? (x + w / 2 < CX ? ' outl' : ' outr') : '') + '"><i></i>' + fmt(st.bet) + '</div>' : '')
     + (cards ? '<div class="showc">' + cards.map(function (c) { return card(c, 'md'); }).join('') + '</div>' : '')
@@ -3271,16 +3331,22 @@ function adapt(v) {
     var p = hp[st.id] || null;
     seats.push({
       id: st.id, seat: s, name: st.name, stack: st.stack, bought: st.bought,
+      // what he has in front of him this moment: a bet comes off it as it is made, not when
+      // the round is over. Between hands it is what the table holds for him.
+      live: p && hand && !hand.finished ? p.stack : st.stack,
       away: st.away, busted: st.busted, wants: !!(st.leaveAsk && !st.leaveOk),
       bet: p ? p.bet : 0, folded: p ? p.folded : false, allIn: p ? p.allIn : false,
       inHand: !!p, cards: p ? p.cards : null, shown: p ? p.shown : null, willShow: p ? (p.willShow || []) : [],
       isTurn: !!(hand && hand.turnId === st.id && !hand.finished),
       isButton: !!(hand && hand.button === s),
+      blind: hand && hand.sb === s ? 'SB' : hand && hand.bb === s ? 'BB' : '',
     });
   }
   return {
     code: v.code, handNo: v.handNo, seats: seats, hand: hand,
-    you: { id: v.me ? v.me.id : '', seat: v.me ? v.me.seat : -1, watching: !v.me },
+    // somebody out of a tournament has given up his seat and is watching like anybody else who
+    // walked in to look: the whole table is drawn for him, with no place of his own at it
+    you: { id: v.me ? v.me.id : '', seat: v.me && !v.me.out ? v.me.seat : -1, watching: !v.me || !!v.me.out },
   };
 }
 
@@ -3472,7 +3538,12 @@ function actionPanel(v, A, RES) {
 }
 
 function controls(v, A, RES) {
-  if (v.status === 'ended') return '<div style="padding-top:18px"><button class="btn" onclick="leaveTable()">Back to the tables</button></div>';
+  // The game is over and the table is left as it finished. Nobody is sent away: stay and look,
+  // talk it over, and go when you like - the table is cleared when the last person has left it.
+  if (v.status === 'ended') return '<div style="padding-top:14px"><div class="evc" id="endcard" style="margin:0;border-color:#d8b45c">'
+    + '<div class="gold" style="font-weight:600;font-size:15px;white-space:normal">' + esc(v.endWhy || 'The game has ended') + '</div>'
+    + '<div class="muted small" style="white-space:normal;margin-top:3px">Stay as long as you like. The table closes when everybody has left, and the game is in History.</div></div>'
+    + '<button class="btn" style="margin-top:10px" onclick="leaveTable()">Back to the tables</button></div>';
   // Paused: the clock is off and no hand is coming until whoever runs it says so. Say that plainly
   // rather than leaving people looking at buttons that will not work.
   if (v.paused) {
@@ -3484,6 +3555,16 @@ function controls(v, A, RES) {
       + (v.me && v.me.away && v.format !== 'tournament' ? '<button class="btn ghost" id="backin" style="margin-top:8px" onclick="setAway(false)">Join the next hand when it starts</button>' : '')
       + '</div>';
   }
+  // Out of chips in a tournament. He keeps the room - he can watch it to the end - and he can go
+  // whenever he likes; what he cannot do is be left looking at "waiting for the others".
+  if (v.me && v.me.out && v.format === 'tournament') {
+    var nth = function (n) { var t = n % 100, u = n % 10; return n + (t > 10 && t < 14 ? 'th' : u === 1 ? 'st' : u === 2 ? 'nd' : u === 3 ? 'rd' : 'th'); };
+    return '<div style="padding-top:14px"><div class="evc" id="outcard" style="margin:0;border-color:#d8b45c">'
+      + '<div class="gold" style="font-weight:600;font-size:15px">You are out' + (v.me.place ? ' &middot; ' + nth(v.me.place) + ' of ' + v.me.field : '') + '</div>'
+      + '<div class="muted small" style="white-space:normal;margin-top:3px">Your chips are gone, so you are dealt no more hands. '
+      + 'You are still in the room: stay and watch how it ends, or leave whenever you like.</div></div>'
+      + '<button class="btn ghost" style="margin-top:10px" onclick="leaveTable()">Back to the tables</button></div>';
+  }
   // Somebody who walked in to look rather than to play. Without this he falls through to the
   // betting controls and is told to wait for the others, which he is not doing at all - he has no
   // seat and no chips in this game.
@@ -3493,9 +3574,12 @@ function controls(v, A, RES) {
     var h = '<div style="padding-top:14px"><div class="evc" style="margin:0">'
       + '<div style="font-weight:600;font-size:14px">You are watching</div>'
       + '<div class="muted small" style="white-space:normal;margin-top:3px">No seat and no chips here yet. '
-      + (free ? 'There ' + (free === 1 ? 'is one seat' : 'are ' + free + ' seats') + ' free.' : 'Every seat is taken.')
+      + (v.format === 'tournament' && v.startedAt ? '' : free ? 'There ' + (free === 1 ? 'is one seat' : 'are ' + free + ' seats') + ' free.' : 'Every seat is taken.')
       + '</div></div>';
-    if (free) {
+    // a tournament takes nobody once it has started, however many seats have emptied since
+    var shut = v.format === 'tournament' && v.startedAt;
+    if (shut) h += '<div class="muted small" id="nolate" style="margin-top:10px;white-space:normal">This tournament has started. It takes no late entries.</div>';
+    else if (free) {
       h += '<button class="btn" style="margin-top:10px" onclick="sitHere()">'
         + (v.status === 'playing' ? 'Ask for a seat' : 'Take a seat') + '</button>';
     }
@@ -3565,6 +3649,8 @@ function controls(v, A, RES) {
         + (v.pre ? 'Set. When it reaches you: check if nobody has bet, fold if somebody has. Tap again to take it back.'
           : 'Decide now: when it reaches you, check if nobody has bet and fold if somebody has.') + '</div>';
     }
+    // everybody left is all in and the rest of the board is being dealt out, a street at a time
+    if (v.dealing) return '<div style="padding-top:22px"><div class="evc" id="dealing" style="margin:0;border-color:#d8b45c"><div class="gold" style="font-weight:600">All in</div><div class="muted small" style="margin-top:2px">The rest of the cards are coming.</div></div></div>';
     return '<div style="padding-top:22px"><div class="evc" style="margin:0"><div class="muted small">Waiting for the others</div></div>' + pre + showRow(v, A) + '</div>';
   }
 
@@ -3847,6 +3933,11 @@ function tableMenu(v) {
     if (v.endAt) {
       h += '<div class="evc" style="margin:10px 0 0;border-color:#d8b45c"><div class="gold" style="font-weight:600">Finishing at ' + clock(v.endAt) + '</div>'
         + '<div class="muted small" style="white-space:normal;margin-top:3px">The hand being played then is played out before the game closes.</div></div>'
+        // one tap to play on, counted from the finish already set rather than from now
+        + '<div class="muted small" style="margin-top:10px">Extend the game</div><div style="display:flex;gap:8px;margin-top:6px" id="extend">'
+        + [[15, '+15 min'], [30, '+30 min'], [60, '+1 hour']].map(function (x) {
+          return '<button class="rolechip" style="flex:1;height:38px;font-size:12px" onclick="setEndAt(' + (v.endAt + x[0] * 60000) + ')">' + x[1] + '</button>';
+        }).join('') + '</div>'
         + '<button class="btn ghost" style="margin-top:8px" onclick="setEndAt(0)">No finishing time</button>';
     } else {
       h += '<div class="muted small" style="margin-top:10px;white-space:normal">Or say when the game finishes.</div>'

@@ -27,6 +27,52 @@ const webpush = require('./webpush');
 const PORT = Number(process.env.PORT || 3000);
 const NEXT_HAND_MS = Number(process.env.NEXT_HAND_MS || 4000);
 const SHOW_MS = Number(process.env.SHOW_MS || 8000);
+// The hand a game ends on - the one that decides a tournament, or the last of a table that is
+// closing - is looked at longer than any other: this much on top of a hand's usual time.
+const FINAL_MS = Number(process.env.FINAL_MS || 8000);
+// Both of those - the last hand of a tournament staying up, and a close asked for between two
+// hands waiting for the one on show - can be switched off, so that the tests which close hundreds
+// of tables need not wait eight seconds for each. marktest.js is the one that tests them.
+const LINGER = process.env.LINGER !== 'off';
+// When the betting is over before the board is - everybody left is all in - the rest of the cards
+// are not thrown down at once with the result. They come as a dealer would bring them: the flop,
+// a pause, the turn, a pause, the river, a moment to take it in, and only then who won. The
+// portal itself has finished the hand by then; it is what each phone is shown that is held back.
+const DEAL_LEAD_MS = Number(process.env.DEAL_LEAD_MS || 900);     // before the first card comes
+const DEAL_STEP_MS = Number(process.env.DEAL_STEP_MS || 1800);    // between one street and the next
+const DEAL_REST_MS = Number(process.env.DEAL_REST_MS || 1700);    // on the last card, before the result
+const RUNOUT = process.env.RUNOUT !== 'off';                      // the tests switch it off; marktest.js tests it
+const boardLen = (h) => Math.max(0, ...h.boards.map((b) => b.length));
+// Set the run-out going for a hand that has just finished, if it has cards nobody has seen dealt.
+// Returns how long it will take.
+function startRunout(t, h) {
+  clearRunout(t);
+  if (!RUNOUT || !h.result || h.result.uncontested) return 0;
+  const full = boardLen(h);
+  // how much of the board was down when the last bet went in
+  const from = t.seen && t.seen.no === t.handNo ? t.seen.n : (VARIANTS[h.variant].bomb ? full : 0);
+  const stages = [3, 4, 5].filter((n) => n > from && n <= full);
+  if (!stages.length) return 0;
+  const now = Date.now();
+  const total = DEAL_LEAD_MS + (stages.length - 1) * DEAL_STEP_MS + DEAL_REST_MS;
+  t.runout = { no: t.handNo, from, start: now, until: now + total, mark: t.log[t.log.length - 1] || null,
+    stages: stages.map((n, i) => ({ n, at: now + DEAL_LEAD_MS + i * DEAL_STEP_MS })) };
+  // every phone is sent the table again as each street comes, and once more when the result does
+  t.runoutTimers = t.runout.stages.map((s) => setTimeout(() => broadcast(t), s.at - now + 20))
+    .concat([setTimeout(() => { celebrate(t, h); broadcast(t); }, total + 20)]);
+  return total;
+}
+function clearRunout(t) { (t.runoutTimers || []).forEach(clearTimeout); t.runoutTimers = []; t.runout = null; }
+// Where the run-out has got to: how many cards of each board are down. Null when there is none.
+function dealing(t) {
+  const r = t.runout;
+  if (!r || !t.hand || r.no !== t.handNo || t.status === 'ended') return null;
+  const now = Date.now();
+  if (now >= r.until) return null;
+  let upto = r.from;
+  for (const s of r.stages) if (now >= s.at) upto = s.n;
+  return { upto, mark: r.mark };
+}
 const RUNIT_SECONDS = Number(process.env.RUNIT_SECONDS || 20);   // how long the run-it vote waits
 const FX_GAP_MS = 900;                                           // one reaction at a time, per player
 const FX_LIFE_MS = 6000;                                         // how long one stays on the table
@@ -142,6 +188,8 @@ function celebrate(t, h) {
 }
 const KEEP_ENDED_H = Number(process.env.KEEP_ENDED_H || 48);
 const ROUNDS_KEPT = Number(process.env.ROUNDS_KEPT || 10);
+// how long after a game ends its table may stand empty before it is cleared away
+const EMPTY_CLOSE_MS = Number(process.env.EMPTY_CLOSE_MS || 60000);
 
 const httpErr = (code, message) => Object.assign(new Error(message), { status: code });
 
@@ -178,7 +226,7 @@ function keepTable(t) {
 }
 // Everything about a table except the things that cannot be written down: the hand in progress,
 // the live timers, and the players, which are a Map.
-const NOT_SAVED = ['hand', 'players', 'fx', 'fxLast', 'clients', 'timer', 'nextTimer', 'startTimer', 'deadline'];
+const NOT_SAVED = ['hand', 'players', 'fx', 'fxLast', 'clients', 'timer', 'nextTimer', 'startTimer', 'deadline', 'runout', 'runoutTimers', 'seen', 'finalHand'];
 function saveTable(t) {
   const o = {};
   for (const k of Object.keys(t)) if (!NOT_SAVED.includes(k)) o[k] = t[k];
@@ -246,11 +294,39 @@ function handView(t, me) {
   const h = t.hand;
   if (!h) return null;
   const show = h.finished && h.result ? h.result.reveal || {} : {};
+  // The run-out: the hand is over as far as the portal is concerned, but the table is still
+  // watching the cards come. It is shown as a hand in play with nobody to act - the board as far
+  // as it has got, the cards of everybody still in face up, and nothing of who won or what.
+  const d = dealing(t);
+  if (d) {
+    const won = (h.result && h.result.won) || {};
+    return {
+      no: t.handNo, variant: h.variant, variantName: VARIANTS[h.variant].name, dealing: true,
+      street: d.upto >= 5 ? 'river' : d.upto === 4 ? 'turn' : d.upto === 3 ? 'flop' : 'preflop',
+      pot: h.pot, boards: h.boards.map((b) => b.slice(0, d.upto)), boardKind: h.boardKind,
+      currentBet: 0, finished: false,
+      button: h.players[h.buttonIdx] ? h.players[h.buttonIdx].seat : -1,
+      sb: h.sbIdx >= 0 && h.players[h.sbIdx] ? h.players[h.sbIdx].seat : -1,
+      bb: h.bbIdx >= 0 && h.players[h.bbIdx] ? h.players[h.bbIdx].seat : -1,
+      turnId: '', deadline: 0, result: null, runit: null,
+      lastAct: (h.acts && h.acts.length)
+        ? { n: h.acts.length, id: h.acts[h.acts.length - 1].id, k: h.acts[h.acts.length - 1].k, a: h.acts[h.acts.length - 1].a } : null,
+      players: h.players.map((p) => {
+        const open = show[p.id] ? show[p.id].cards || p.cards : null;      // tabled, as at any all-in
+        return { id: p.id, seat: p.seat, bet: 0, stack: p.stack - (won[p.id] || 0), folded: p.folded, allIn: p.allIn,
+          cards: (me && p.id === me.id) || open ? (open || p.cards) : p.cards.map(() => '??'),
+          shown: open ? open.slice() : null, willShow: null };
+      }),
+    };
+  }
   return {
     no: t.handNo, variant: h.variant, variantName: VARIANTS[h.variant].name,
     street: h.street, pot: h.pot, boards: h.boards, boardKind: h.boardKind,
     currentBet: h.currentBet, finished: h.finished,
     button: h.players[h.buttonIdx] ? h.players[h.buttonIdx].seat : -1,
+    // who posted the blinds, shown beside them like the button; a bomb pot has none
+    sb: h.sbIdx >= 0 && h.players[h.sbIdx] ? h.players[h.sbIdx].seat : -1,
+    bb: h.bbIdx >= 0 && h.players[h.bbIdx] ? h.players[h.bbIdx].seat : -1,
     turnId: h.turn >= 0 && !h.finished ? h.players[h.turn].id : '',
     deadline: t.deadline || 0,
     result: h.finished ? h.result : null,
@@ -279,6 +355,11 @@ function tableView(t, member) {
   const mine = t.byMember(member.id);
   const iRun = lobby.runs(t, member);
   const b = t.blinds();
+  // while a run-out is being dealt nothing gives the result away: chips as they stood before the
+  // hand was paid, and the table's log only as far as the last bet
+  const d = dealing(t);
+  const paid = d && t.hand && t.hand.result ? t.hand.result.won || {} : {};
+  const stood = (p) => (d ? p.stack - (paid[p.id] || 0) + ((t.hand.players.find((x) => x.id === p.id) || {}).invested || 0) : p.stack);
   return {
     now: Date.now(),
     code: t.code, title: t.title, format: t.format, play: t.plays(), formatName: t.formatName(),
@@ -300,14 +381,16 @@ function tableView(t, member) {
       const p = t.players.get(id);
       if (!p || p.out) return null;
       return {
-        id: p.id, seat, name: p.name, stack: p.stack, bought: p.bought,
-        away: t.format === 'tournament' ? !!p.absent : !!(p.away || p.dropped), offline: !!p.dropped, busted: !!p.busted, place: p.place || 0,
+        id: p.id, seat, name: p.name, stack: stood(p), bought: p.bought,
+        away: t.format === 'tournament' ? !!p.absent : !!(p.away || p.dropped), offline: !!p.dropped, busted: !d && !!p.busted, place: d ? 0 : p.place || 0,
         leaveAsk: !!p.leaveAsk, leaveOk: !!p.leaveOk,
         isAdmin: p.memberId === t.adminId, me: !!(mine && p.id === mine.id),
       };
     }),
-    me: mine ? { id: mine.id, memberId: mine.memberId, seat: mine.seat, stack: mine.stack, bought: mine.bought, away: t.format === 'tournament' ? !!mine.absent : !!mine.away, out: !!mine.out,
+    me: mine ? { id: mine.id, memberId: mine.memberId, seat: mine.seat, stack: stood(mine), bought: mine.bought, away: t.format === 'tournament' ? !!mine.absent : !!mine.away, out: !!mine.out,
       topUp: mine.topUp || 0, auto: !!mine.auto, inPlay: inPlay(t, mine),
+      // out of a tournament: where he finished, and out of how many
+      busted: !d && !!mine.busted, place: d ? 0 : mine.place || 0, field: t.list().length,
       canLeave: t.servedTime(mine), ahead: t.ahead(mine), forfeit: !!mine.forfeit, asked: !!mine.leaveAsk,
       freeAt: (t.settings.minMinutes || 0) ? (mine.joinedAt || t.createdAt) + t.settings.minMinutes * 60000 : 0 } : null,
     legal: mine && t.hand && !t.hand.finished ? (t.hand.legal(mine.id) || null) : null,
@@ -318,15 +401,18 @@ function tableView(t, member) {
     // still to come in this hand for it to apply to.
     pre: !!(mine && t.hand && !t.hand.finished && mine.pre === t.handNo),
     canPre: !!(mine && canPre(t, mine)),
-    hand: handView(t, mine),
+    dealing: !!d,
+    // a game that is over shows how it ended for as long as anybody stays to look
+    hand: t.status === 'ended' ? t.finalHand || null : handView(t, mine),
+    endWhy: t.status === 'ended' ? t.endWhy || '' : '',
     requests: iRun ? t.requests.slice() : [],
     leaveAsks: iRun ? t.seated().filter((p) => p.leaveAsk && !p.leaveOk).map((p) => ({ id: p.id, name: p.name })) : [],
     notes: t.notes.slice(-10),
     // the line for the hand just finished, if it earned one; gone as soon as the next is dealt
-    talk: t.talk && t.hand && t.hand.finished && t.talk.no === t.handNo ? { id: t.talk.id, kind: t.talk.kind, who: t.talk.who, dog: t.talk.dog, text: t.talk.text } : null,
+    talk: !d && t.talk && t.hand && t.hand.finished && t.talk.no === t.handNo ? { id: t.talk.id, kind: t.talk.kind, who: t.talk.who, dog: t.talk.dog, text: t.talk.text } : null,
     // and something one of the five dogs has to say about what just happened at the table
     aside: t.aside && Date.now() - t.aside.at < ASIDE_MS ? { id: t.aside.id, dog: t.aside.dog, text: t.aside.text } : null,
-    log: t.log.slice(-40),
+    log: (d && d.mark && t.log.lastIndexOf(d.mark) >= 0 ? t.log.slice(0, t.log.lastIndexOf(d.mark) + 1) : t.log).slice(-40),
     fx: (t.fx || []).filter((f) => Date.now() - f.at < FX_LIFE_MS).slice(-10),
     reactions: {
       throws: Object.keys(FX_THROW).map((k) => ({ k, icon: FX_THROW[k][0] })),
@@ -337,7 +423,7 @@ function tableView(t, member) {
 
 // ---------------------------------------------------------------- the clock
 function clearTimers(t) {
-  clearTimeout(t.startTimer); t.startTimer = null; clearTimeout(t.timer); clearTimeout(t.nextTimer); t.timer = null; t.nextTimer = null; }
+  clearTimeout(t.startTimer); t.startTimer = null; clearTimeout(t.timer); clearTimeout(t.nextTimer); t.timer = null; t.nextTimer = null; clearRunout(t); }
 
 const ABSENT_MS = Number(process.env.ABSENT_MS || 2500);
 const PRE_MS = Number(process.env.PRE_MS || 600);
@@ -555,18 +641,33 @@ function dogSays(t, dog, fill) {
 function afterAction(t) {
   const h = t.hand;
   if (!h) return;
+  // how much of the board is down while there is still betting to come: what the table has seen dealt
+  if (!h.finished) t.seen = { no: t.handNo, n: boardLen(h) };
   if (h.finished) {
+    // set before anything is paid or said, so that none of it reaches a phone ahead of the cards
+    const runout = startRunout(t, h);
     t.settle();
     takeSample(t);                   // where everybody stood at the end of this hand
     topUpAll(t);                     // only now: the hand has written everybody's stack back
     keepRound(t, h);
-    celebrate(t, h);
+    if (!runout) celebrate(t, h);            // otherwise when the last card has been seen
     tableTalk(t, h);
     broadcast(t);
     const winner = t.tourneyWinner();
-    if (winner) return endGame(t, `${winner.name} won the tournament`);
-    const wait = h.result && !h.result.uncontested ? SHOW_MS : NEXT_HAND_MS;
+    // the hand is shown for its usual time once the run-out, if there is one, is over
+    const wait = (h.result && !h.result.uncontested ? SHOW_MS : NEXT_HAND_MS) + runout;
     clearTimeout(t.nextTimer);
+    // The last hand of a tournament is not swept away for the results the moment it is over:
+    // it stays up as long as any hand does, and a little longer, because it is the one that
+    // everybody wants to look at.
+    if (winner && !LINGER) return endGame(t, `${winner.name} won the tournament`);
+    if (winner) {
+      t.say(`${winner.name} has every chip.`);
+      broadcast(t);
+      t.nextAt = Date.now() + wait + FINAL_MS;
+      t.nextTimer = setTimeout(() => endGame(t, `${winner.name} won the tournament`), wait + FINAL_MS);
+      return;
+    }
     // The table is wrapping up: either the game admin called the last few hands, or he asked to
     // close and the hand in progress was allowed to finish first. Either way it runs out here,
     // after the same pause that lets everybody see how the hand went.
@@ -576,11 +677,14 @@ function afterAction(t) {
         t.lastHands = 0;
         t.say('That was the last hand.');
         broadcast(t);
-        t.nextTimer = setTimeout(() => endGame(t, 'The last hand has been played'), wait);
+        const last = wait + (LINGER ? FINAL_MS : 0);
+        t.nextAt = Date.now() + last;
+        t.nextTimer = setTimeout(() => endGame(t, 'The last hand has been played'), last);
         return;
       }
       t.say(`${t.lastHands} more hand${t.lastHands === 1 ? '' : 's'} to go`);
     }
+    t.nextAt = Date.now() + wait;
     t.nextTimer = setTimeout(() => nextHand(t), wait);
     return;
   }
@@ -647,7 +751,9 @@ function nextHand(t) {
   for (const p of t.seated()) {
     if (p.leaveOk) t.stand(p, 'leaving early, blinds waived');
     else if (p.forfeit && t.servedTime(p)) t.stand(p, t.ahead(p) ? 'stayed to the end of his time and left' : 'is no longer ahead, so his blinds stop and he has left');
-    else if (t.format === 'tournament' && p.busted) t.stand(p, 'out');
+    // Out of chips in a tournament: his seat is given up, and that is all. He has not left - he
+    // is still in the room, watching, for as long as he cares to - so the table is not told he has.
+    else if (t.format === 'tournament' && p.busted) t.stand(p, 'out', true);
   }
   if (t.format === 'tournament') {
     const w = t.tourneyWinner();
@@ -783,9 +889,23 @@ function keepRound(t, h) {
 }
 
 // ---------------------------------------------------------------- ending a game
+// A game closed in the few seconds between two hands - by whoever runs it, or by its own clock -
+// does not cut short the hand everybody is still looking at: it closes when that hand has had
+// its time. True when the close has been put off like that.
+function closeAfterShowing(t, why) {
+  const left = (t.nextAt || 0) - Date.now() + FINAL_MS;      // it is the last hand now, and stays as one
+  if (!LINGER || !t.hand || !t.hand.finished || t.paused || left - FINAL_MS < 300) return false;
+  clearTimeout(t.nextTimer);
+  t.nextTimer = setTimeout(() => endGame(t, why), left);
+  return true;
+}
 function endGame(t, why) {
   if (t.status === 'ended') return;
   clearTimers(t);
+  // The table is not cleared the moment the game is over. Whoever is sitting at it goes on seeing
+  // how it finished - the last hand, as it lay - and gets up when he likes.
+  t.finalHand = t.hand && t.hand.finished ? handView(t, null) : null;
+  t.endWhy = why || 'The game has ended';
   t.status = 'ended';
   t.endedAt = Date.now();
   t.hand = null;
@@ -1439,8 +1559,10 @@ const routes = {
     else {
       if (!Number.isFinite(at) || at < Date.now() + 30000) throw httpErr(400, 'Pick a time that is still to come');
       if (at > Date.now() + 24 * 3600e3) throw httpErr(400, 'That is more than a day away');
+      // said for what it is: a finish put back is the game extended, and the table should hear that
+      const was = t.endAt || 0;
       t.endAt = at;
-      t.say(`${m.name} set the game to finish at ${new Date(at).toLocaleTimeString('en-IN', { timeStyle: 'short', timeZone: process.env.TZ_LABEL || 'Asia/Kolkata' })}`);
+      t.say(`${m.name} ${!was ? 'set the game to finish at' : at > was ? 'extended the game to' : 'brought the finish forward to'} ${new Date(at).toLocaleTimeString('en-IN', { timeStyle: 'short', timeZone: process.env.TZ_LABEL || 'Asia/Kolkata' })}`);
     }
     changed(); broadcast(t); broadcastLobby();
     return { endAt: t.endAt || 0 };
@@ -1459,6 +1581,11 @@ const routes = {
       t.lastHands = 1;
       t.say(`${m.name} is closing the game - this hand will be played out first`);
       changed(); broadcast(t); broadcastLobby();
+      return { record: '', afterHand: true };
+    }
+    if (closeAfterShowing(t, `${m.name} ended the game`)) {
+      t.say(`${m.name} is closing the game`);
+      changed(); broadcast(t);
       return { record: '', afterHand: true };
     }
     const rec = endGame(t, `${m.name} ended the game`);
@@ -1949,14 +2076,18 @@ const tick = setInterval(() => {
         if (!t.lastHands) t.lastHands = 1;
         t.say('Time is up. This hand is played out and then the game closes.');
         changed(); broadcast(t);
-      } else {
+      } else if (!closeAfterShowing(t, 'The game reached the time it was set to finish')) {
         endGame(t, 'The game reached the time it was set to finish');
       }
     }
     if (t.status !== 'ended' && !t.handNo && !t.paused && Date.now() - t.createdAt > OPEN_MINUTES * 60000) {
       endGame(t, `Nobody started this game within ${OPEN_MINUTES} minutes, so it closed itself`);
     }
-    if (t.status === 'ended' && !keepTable(t)) lobby.forget(t.code);
+    // A finished game's table is kept while anybody is still at it, and goes when the last of
+    // them has left - the game itself is in History. (One nobody ever came back to goes after
+    // two days, as before.)
+    const empty = t.status === 'ended' && Date.now() - (t.endedAt || 0) > EMPTY_CLOSE_MS && ![...feeds].some((c) => c.code === t.code);
+    if (t.status === 'ended' && (!keepTable(t) || empty)) { lobby.forget(t.code); if (empty) { changed(); broadcastLobby(); } }
   }
 }, 10000);
 if (tick.unref) tick.unref();

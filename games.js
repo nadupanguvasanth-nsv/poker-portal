@@ -168,11 +168,11 @@ class Table {
     if (this.format === 'tournament') this.give(p, this.settings.minBuyin, 'stack');
     return p;
   }
-  stand(p, why) {
+  stand(p, why, quiet) {
     if (!p) return;
     p.out = true;
     this.seats[p.seat] = null;
-    this.say(`${p.name} left${why ? ' (' + why + ')' : ''}`);
+    if (!quiet) this.say(`${p.name} left${why ? ' (' + why + ')' : ''}`);
   }
 
   // Whether somebody has stayed as long as they said they would. A player who has lost everything
