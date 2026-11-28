@@ -323,7 +323,7 @@ function tableView(t, member) {
     leaveAsks: iRun ? t.seated().filter((p) => p.leaveAsk && !p.leaveOk).map((p) => ({ id: p.id, name: p.name })) : [],
     notes: t.notes.slice(-10),
     // the line for the hand just finished, if it earned one; gone as soon as the next is dealt
-    talk: t.talk && t.hand && t.hand.finished && t.talk.no === t.handNo ? { id: t.talk.id, kind: t.talk.kind, who: t.talk.who, text: t.talk.text } : null,
+    talk: t.talk && t.hand && t.hand.finished && t.talk.no === t.handNo ? { id: t.talk.id, kind: t.talk.kind, who: t.talk.who, dog: t.talk.dog, text: t.talk.text } : null,
     // and something one of the five dogs has to say about what just happened at the table
     aside: t.aside && Date.now() - t.aside.at < ASIDE_MS ? { id: t.aside.id, dog: t.aside.dog, text: t.aside.text } : null,
     log: t.log.slice(-40),
@@ -512,7 +512,8 @@ function topUpAll(t) {
 }
 
 // The line somebody would have said out loud. Chosen once, here, so every phone at the table
-// shows the same words under the same name - and chosen only from what the table has seen.
+// shows the same words - under the winner's name, or beside one of the dogs and under no name -
+// and chosen only from what the table has seen.
 function tableTalk(t, h) {
   t.talk = null;
   if (!h.result || process.env.TABLE_TALK === 'off') return;
@@ -526,7 +527,7 @@ function tableTalk(t, h) {
   const who = t.players.get(said.who);
   if (!who) return;
   t.lastTalk = said.text;
-  t.talk = { id: t.code + ':' + t.handNo, no: t.handNo, kind: said.kind, who: who.name, text: said.text };
+  t.talk = { id: t.code + ':' + t.handNo, no: t.handNo, kind: said.kind, who: said.dog ? '' : who.name, dog: said.dog || '', text: said.text };
 }
 
 // The five dogs from the sign-in screen have opinions about the table as well: one about somebody
@@ -688,15 +689,39 @@ function handTier(h) {
   return { tier: best, label };
 }
 
+// The part of the biggest bet that nobody matched, and whose it was.
+function uncalledBet(h) {
+  const put = h.players.map((p) => ({ id: p.id, a: p.invested || 0 })).sort((x, y) => y.a - x.a);
+  return put.length > 1 && put[0].a > put[1].a ? { id: put[0].id, amount: put[0].a - put[1].a } : null;
+}
+
 function keepRound(t, h) {
   if (!h.result) return;
   const m = handTier(h);
+  // A bet nobody called goes back to whoever made it. It was never in the pot and he did not win
+  // it, so the record of the hand leaves it out of both: the pot is what was actually played for.
+  const back = uncalledBet(h);
+  const won = Object.assign({}, h.result.won || {});
+  if (back && (won[back.id] || 0) >= back.amount) { won[back.id] -= back.amount; if (!won[back.id]) delete won[back.id]; }
+  // who took what on each board - and the returned bet, which the engine hands back in equal
+  // parts across the boards, comes off each of them in the same way
+  const per = (h.result.boardResults || []).map((b) => Object.assign({}, b.winners || {}));
+  if (back && per.length) {
+    const each = Math.floor(back.amount / per.length);
+    per.forEach((w, i) => {
+      const part = each + (i < back.amount % per.length ? 1 : 0);
+      if ((w[back.id] || 0) >= part) { w[back.id] -= part; if (!w[back.id]) delete w[back.id]; }
+    });
+  }
   const rec = {
-    no: t.handNo, at: Date.now(), variant: h.variant, pot: h.pot,
+    no: t.handNo, at: Date.now(), variant: h.variant, pot: h.pot - (back ? back.amount : 0),
     tier: m.tier, label: m.label,
-    boards: h.boards, acts: h.acts,
+    // kind says what several boards are: the same hand run out more than once ('runs'), or the
+    // separate flops of a bomb pot ('boards'). per is who took what on each of them.
+    boards: h.boards, kind: h.boardKind, per,
+    acts: h.acts,
     players: h.players.map((p) => ({ id: p.id, seat: p.seat, name: (t.players.get(p.id) || {}).name || '', start: p.start })),
-    reveal: h.result.reveal || {}, won: h.result.won || {},
+    reveal: h.result.reveal || {}, won,
   };
   t.rounds.push(rec);
 
@@ -726,7 +751,9 @@ function keepRound(t, h) {
           if (!ok) console.log('study: hand ' + rec.no + ' had an action the record could not place, and it was left out');
           return ok;
         }),
-      w: rec.players.map((x) => (rec.won || {})[x.id] || 0),
+      // as the hand paid it out, a returned bet included: whatever writes the hand out for a
+      // study tool works the uncalled part out for itself and takes it off once
+      w: rec.players.map((x) => (h.result.won || {})[x.id] || 0),
       // What each man had in front of him as the hand began. Four numbers a hand, which is
       // nothing, and without them a hand written out for an outside tool says everybody sat
       // down with no chips - so the tool cannot tell a pot worth twenty blinds from one worth
@@ -737,6 +764,8 @@ function keepRound(t, h) {
       // honestly make about a decision - whether the price was there - which cannot be worked out
       // without knowing what the man actually held. Kept per seat, so it is a handful of bytes.
       b: (h.boards[0] || []).slice(),
+      // the other run-outs, when the hand was run more than once
+      rb: h.boardKind === 'runs' && h.boards.length > 1 ? h.boards.slice(1).map((x) => x.slice()) : undefined,
       c: rec.players.map((x) => ((h.players.find((y) => y.id === x.id) || {}).cards || []).slice()),
       ai: h.allIn ? {
         b: h.allIn.board,
@@ -1243,6 +1272,7 @@ const routes = {
       // what a hand means.
       button: buttonSeat(h),
       boards: [h.board || []],
+      runs: h.runs || null,          // every run-out, when the hand was run more than once
       acts: h.acts,
       players: h.players.map((p) => ({
         id: p.id, seat: p.seat, start: p.start || 0,

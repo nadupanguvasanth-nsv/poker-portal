@@ -41,7 +41,7 @@ function expand(rec) {
   }
   const hole = {};
   (rec.c || []).forEach((cs, i) => { if (cs && cs.length) hole[String(i)] = cs; });
-  return { no: rec.no, pot: rec.pot, bb: rec.bb || 0, players, acts, won, reveal, allIn, board: rec.b || [], hole };
+  return { no: rec.no, pot: rec.pot, bb: rec.bb || 0, players, acts, won, reveal, allIn, board: rec.b || [], runs: rec.rb && rec.rb.length ? [rec.b || []].concat(rec.rb) : null, hole };
 }
 
 const RANKS = '23456789TJQKA';

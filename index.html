@@ -161,10 +161,11 @@ body.four .card.s-c{color:#1c8a3c}
   box-shadow:0 8px 22px rgba(0,0,0,.6);animation:sayin .22s ease-out}
 .saybar .who{font-family:'Inter',sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;color:#d8b45c}
 .saybar .what{font-size:14px;color:#f2efe6;margin-top:2px;white-space:normal}
-.saybar.dog{display:flex;align-items:center;gap:11px;text-align:left;padding:7px 12px 7px 8px}
+.saybar.talk.dog{text-align:left;padding:12px 14px 12px 126px;min-height:76px;display:flex;align-items:center}
 .saybar.dog .said{flex:1;min-width:0}
 .saybar.up{bottom:auto;top:62px}
-.dogclip{flex:none;width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid #d8b45c;background:#17130c}
+.dogclip{position:absolute;left:8px;bottom:8px;width:104px;height:104px;border-radius:50%;object-fit:cover;border:2px solid #d8b45c;background:#17130c}
+.saybar.up .dogclip{bottom:auto;top:8px}
 .party{position:relative;margin-bottom:20px}
 .party .frame{aspect-ratio:960/456;border-radius:14px;overflow:hidden;background:#0f3d2e url(/poster.jpg?v=3) center/cover}
 .party video{display:block;width:100%;height:100%;object-fit:cover}
@@ -1467,8 +1468,7 @@ function historyList() {
           + '<div class="muted small">in ' + fmt(p.invested) + ' &middot; out ' + fmt(p.final) + '</div></div>'
           + '<div style="font-weight:700;color:' + (p.net > 0 ? '#7ddba0' : p.net < 0 ? '#f08a8f' : '#a3aba5') + '">' + (p.net > 0 ? '+' : '') + fmt(p.net) + '</div>'
           + (S.me && S.me.isAdmin
-            ? '<a class="rolechip" style="text-decoration:none;display:flex;align-items:center" target="_blank" rel="noopener" href="/api/score-sheet?token='
-              + encodeURIComponent(S.token) + '&id=' + g.id + '&who=' + encodeURIComponent(p.id) + '">PDF</a>'
+            ? '<button class="rolechip" onclick="scoreSheet(\'' + g.id + '\',\'' + esc(p.id) + '\')">PDF</button>'
             : '')
           + '</div>';
       });
@@ -1490,7 +1490,7 @@ function historyList() {
         h += '<button class="btn ghost" style="margin-top:12px" onclick="openReview(\'' + g.id + '\')">Look at the night</button>'
           + '<button class="btn ghost" style="margin-top:8px" onclick="exportHands(\'' + g.id + '\')">Export the Texas hands</button>';
       }
-      h += '<a class="btn ghost" style="margin-top:12px;display:flex;align-items:center;justify-content:center;text-decoration:none" target="_blank" rel="noopener" href="/api/score-sheet?token=' + encodeURIComponent(S.token) + '&id=' + g.id + '">Score sheet (PDF)</a>';
+      h += '<button class="btn ghost" id="sheetbtn" style="margin-top:12px" onclick="scoreSheet(\'' + g.id + '\')">Score sheet (PDF)</button>';
       if (g.replays) h += '<button class="btn ghost" style="margin-top:8px" onclick="loadReplay(\'' + g.id + '\')">Best ' + g.replays + ' hands</button>';
       // Trial games and games that went wrong should not sit in the records for ever. Only the
       // portal admin can throw one away, and it goes for everybody who played in it.
@@ -1842,7 +1842,7 @@ function authSection() {
   var has = S.me.twofa, h = '<div class="h2">TWO-STEP SIGN-IN</div><div class="evc" id="authbox">';
   if (S.auth) {
     return '<div class="h2">TWO-STEP SIGN-IN</div>' + authSteps(S.auth, 'authConfirm()')
-      + '<button class="btn ghost" style="margin-top:8px" onclick="authLater()">Not now</button>'
+      + '<button class="btn ghost" id="authcancel" style="margin-top:8px" onclick="authCancel()">Not now</button>'
       + (has ? '' : '<button class="btn ghost" id="authfresh" style="margin-top:8px" onclick="authBegin(true)">Start again with a new key</button>');
   }
   // Half-way through linking when the phone went off to the authenticator app and reloaded the
@@ -1878,7 +1878,9 @@ function authLinking(on) {
   } catch (e) { /* private browsing: it only means no picking up after a reload */ }
   return false;
 }
-function authLater() { authLinking(false); S.auth = null; render(); }
+// Leaving the steps without linking one. (Not authLater, which is the card on the Tables page
+// being put off: two functions of one name, and the later one wins.)
+function authCancel() { authLinking(false); S.auth = null; render(); }
 function authBegin(fresh) {
   var code = S.authAsk ? codeTyped('in_authold') : '';
   if (S.authAsk && code.length !== 6) return toast('The 6-digit code from your authenticator', true);
@@ -1954,6 +1956,26 @@ function ownerLine() {
     + '<a href="#" onclick="S.book=\'terms\';render();return false" style="color:#a3aba5">Terms and ownership</a>'
     + ' &middot; <a href="#" id="fairlink" onclick="S.book=\'fair\';render();return false" style="color:#a3aba5">How the cards are dealt</a>'
     + '<div id="chipsline" style="margin-top:10px">Played with virtual chips only. Chips have no money value.</div></div>';
+}
+// The score sheet is a PDF. Opening it as a page is a trap on an iPhone: a portal added to the home
+// screen has no address bar and no back button, so a PDF opened in it leaves nowhere to go but
+// closing the whole thing. So it is fetched and handed to the phone's own share sheet - save it,
+// print it, send it - and on a computer, which has no such sheet, simply downloaded.
+function scoreSheet(id, who) {
+  toast('Getting the score sheet\u2026');
+  fetch('/api/score-sheet?token=' + encodeURIComponent(S.token) + '&id=' + encodeURIComponent(id) + (who ? '&who=' + encodeURIComponent(who) : ''))
+    .then(function (r) { if (!r.ok) throw new Error('The score sheet could not be made'); return r.blob(); })
+    .then(function (blob) {
+      var name = 'smart-buddies-score-' + String(id).slice(0, 4) + '.pdf', file = null;
+      try { file = new File([blob], name, { type: 'application/pdf' }); } catch (e) { /* an old browser: download it */ }
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        return navigator.share({ files: [file], title: 'Smart Buddies score sheet' }).catch(function () { /* he closed the sheet */ });
+      }
+      var a = document.createElement('a'), url = URL.createObjectURL(blob);
+      a.href = url; a.download = name; document.body.appendChild(a); a.click();
+      setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 4000);
+    })
+    .catch(function (e) { toast(e.message || 'The score sheet could not be made', true); });
 }
 // ---- chips only ----
 // Said once here, and used wherever it has to be said: at every sign-in, on the sign-in screen,
@@ -2622,7 +2644,7 @@ function spotSheet() {
     var gap = (st.needed !== null && st.equity !== null) ? st.equity - st.needed : null;
     h += '<div class="evc" style="margin-top:6px;padding:10px">'
       + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
-      + '<div style="font-size:13px;font-weight:600">' + (STREETS_P[st.street] || st.street) + ' &middot; ' + esc(ACT_WORD[st.did] || st.did)
+      + '<div style="font-size:13px;font-weight:600">' + (STREETS_P[st.street] || st.street) + ' &middot; ' + esc(STUDY_WORD[st.did] || st.did)
       + (st.did === 'call' && st.toCall ? ' ' + bbPlain(st.toCall, sp.bb)
         : st.amount ? ' to ' + bbPlain(st.amount, sp.bb) : '') + '</div>'
       + (st.equity === null ? '' : '<div style="text-align:right;flex:none"><div style="font-weight:700;color:'
@@ -2664,7 +2686,9 @@ function spotSheet() {
 }
 
 var STREETS_P = { preflop: 'Before the flop', flop: 'Flop', turn: 'Turn', river: 'River' };
-var ACT_WORD = { call: 'called', raise: 'raised to', bet: 'bet', check: 'checked', fold: 'folded', allin: 'all in' };
+// (Its own name: the table has an ACT_WORD too, for the word that flashes over a seat, and the
+// later of two with one name is the one that is used.)
+var STUDY_WORD = { call: 'called', raise: 'raised to', bet: 'bet', check: 'checked', fold: 'folded', allin: 'all in' };
 
 // A night, written out for a study tool to read. It comes back as text and goes straight to a
 // file - on a phone that lands in Downloads, which is near enough to anywhere you want it.
@@ -4467,7 +4491,8 @@ function nextSaid() {
 
 // ---- table talk ----
 // The portal sends one line with a finished hand when the hand earned one. It is shown once, in
-// the same place as anything else said at the table, under the name of whoever won.
+// the same place as anything else said at the table: under the name of whoever won, or beside
+// the dog that said it.
 var TALK_FOR_MS = 3800;
 try { S.talk = localStorage.getItem('sb-talk') !== '0'; } catch (e) { S.talk = true; }
 function toggleTalk() {
@@ -4482,7 +4507,7 @@ function watchTalk() {
   if (!t || t.id === S.talkSeen) return;
   S.talkSeen = t.id;
   if (!S.talk) return;
-  S.sayQ = (S.sayQ || []).concat([{ fromName: t.who, text: t.text, talk: true, kind: t.kind }]);
+  S.sayQ = (S.sayQ || []).concat([{ fromName: t.dog ? '' : t.who, text: t.text, talk: true, dog: DOG_NAME[t.dog] ? t.dog : '' }]);
   if (!S.sayShow) nextSaid();
 }
 // And what one of the five dogs has to say about the table: somebody sitting down mid-game, the
@@ -4493,23 +4518,22 @@ function watchAside() {
   if (!a || a.id === S.asideSeen) return;
   S.asideSeen = a.id;
   if (!S.talk || !DOG_NAME[a.dog]) return;
-  S.sayQ = (S.sayQ || []).concat([{ fromName: DOG_NAME[a.dog], text: a.text, talk: true, dog: a.dog }]);
+  S.sayQ = (S.sayQ || []).concat([{ text: a.text, talk: true, dog: a.dog, up: true }]);
   if (!S.sayShow) nextSaid();
 }
-// Which of the five turns up beside a line, by the kind of moment it was: Ace for the big ones,
-// Captain when somebody goes broke, Major for patience and aces, Duchess for the river and a
-// shared pot, Doc for a bluff and the hand nobody should win with.
+// A dog's line comes with the dog's face, close up and talking, and with no name: the face says
+// who. A player's line comes under the player's name and with no dog.
 var DOG_NAME = { ace: 'Ace', captain: 'Captain Coffee', major: 'Major', duchess: 'Duchess', doc: 'Doc' };
-var DOG_FOR = { big: 'ace', monster: 'ace', royal: 'ace', bust: 'captain', patience: 'major', ace: 'major', river: 'duchess', split: 'duchess', steal: 'doc', seventwo: 'doc' };
 function sayBar() {
   var m = S.sayShow;
   if (!m) return '';
-  var dog = m.talk ? (m.dog || DOG_FOR[m.kind]) : '';
-  // A line for a hand just finished has the bottom of the table to itself. A dog's remark comes
-  // while a hand is being played, so it goes across the top, clear of the betting buttons.
-  return '<div class="saybar' + (m.talk ? ' talk' : '') + (dog ? ' dog' : '') + (m.dog ? ' up' : '') + '">'
-    + (dog ? '<img class="dogclip" id="dogclip" src="/dog-' + dog + '.webp" alt="" width="56" height="56">' : '')
-    + '<div class="said"><div class="who">' + esc(m.fromName || '') + '</div>'
+  var dog = m.talk && m.dog || '';
+  // A line for a hand just finished has the bottom of the table to itself. A dog's remark on the
+  // table itself comes while a hand is being played, so it goes across the top, clear of the
+  // betting buttons.
+  return '<div class="saybar' + (m.talk ? ' talk' : '') + (dog ? ' dog' : '') + (m.up ? ' up' : '') + '">'
+    + (dog ? '<img class="dogclip" id="dogclip" src="/dog-' + dog + '.webp?v=4" alt="' + DOG_NAME[dog] + '" width="104" height="104">' : '')
+    + '<div class="said">' + (dog ? '' : '<div class="who">' + esc(m.fromName || '') + '</div>')
     + '<div class="what">' + (m.talk ? '&ldquo;' + esc(m.text) + '&rdquo;' : esc(m.text)) + '</div></div></div>';
 }
 
@@ -4595,17 +4619,21 @@ function replaySheet() {
     + '<button class="btn ghost" style="margin-top:14px" onclick="S.replay=null;render()">Back</button></div>';
 
   var g = rounds[Math.min(r.i, rounds.length - 1)];
-  var step = r.step === undefined ? (g.acts || []).length : r.step;
+  var total = (g.acts || []).length;
+  var step = r.step === undefined ? total : r.step;
   var acts = (g.acts || []).slice(0, step);
   var street = acts.length ? acts[acts.length - 1].s : 'preflop';
-  var upto = { preflop: 0, flop: 3, turn: 4, river: 5 }[street] || 0;
+  // At the last move the hand is over, and whatever cards were still to come have come: a hand
+  // that went all in on the flop has a turn and a river, and they are shown.
+  var over = step >= total;
+  var upto = over ? 5 : ({ preflop: 0, flop: 3, turn: 4, river: 5 }[street] || 0);
 
   var h = '<div class="sheet" style="z-index:50">';
   h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
     + '<div><div class="disp" style="font-size:26px;line-height:1.1">Hand ' + g.no + '</div>'
     + '<div class="muted small">' + esc(VARIANT_NAME(g.variant)) + ' &middot; ' + fmt(g.pot) + ' in the pot'
     + (g.label ? ' &middot; <span class="gold">' + esc(g.label) + '</span>' : '') + '</div></div>'
-    + '<button class="rolechip" onclick="S.replay=null;render()">Close</button></div>';
+    + '<button class="rolechip" id="replayclose" onclick="S.replay=null;render()">Close</button></div>';
 
   // which of the kept hands
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">';
@@ -4616,12 +4644,39 @@ function replaySheet() {
   });
   h += '</div>';
 
-  // the board as it stood at this point
-  h += '<div class="evc" style="margin-top:12px"><div class="muted small">' + (STREETS[street] || '') + '</div>'
-    + '<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">'
-    + (g.boards || []).map(function (b) {
-      return b.slice(0, upto).map(function (c) { return cardHtml(c, 'md'); }).join('');
-    }).join('<div style="width:10px"></div>') + '</div></div>';
+  // The board as it stood at this point. One deck, always: when a hand is run more than once the
+  // cards already on the table are the same for every run, so they are shown once, and each run
+  // then has only its own cards to come. A bomb pot's separate flops each get a row of their own.
+  var boards = g.boards || [], name0 = {};
+  (g.players || []).forEach(function (p) { name0[p.id] = p.name; });
+  var shared = 5;
+  if (boards.length > 1) { shared = 0; while (shared < 5 && boards.every(function (b) { return b[shared] !== undefined && b[shared] === boards[0][shared]; })) shared += 1; }
+  var isRuns = boards.length > 1 && (g.kind ? g.kind === 'runs' : shared > 0 || (S.variants || []).filter(function (x) { return x.id === g.variant; }).every(function (x) { return x.boards === 1; }));
+  var cardsOf = function (list) { return list.map(function (c) { return cardHtml(c, 'md'); }).join(''); };
+  var took = function (i) {
+    var w = over && g.per && g.per[i] ? Object.keys(g.per[i]).filter(function (id) { return g.per[i][id] > 0; }) : [];
+    return w.length ? '<div class="gold small" style="margin-top:3px">' + w.map(function (id) { return esc(name0[id] || '?') + ' ' + fmt(g.per[i][id]); }).join(' &middot; ') + '</div>' : '';
+  };
+  h += '<div class="evc" id="replayboard" style="margin-top:12px"><div class="muted small">' + (over && boards[0] && boards[0].length ? 'The board, as it finished' : (STREETS[street] || '')) + '</div>';
+  if (boards.length <= 1) {
+    h += '<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">' + cardsOf((boards[0] || []).slice(0, upto)) + '</div>';
+  } else if (isRuns) {
+    if (shared > 0) h += '<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">' + cardsOf(boards[0].slice(0, Math.min(shared, upto))) + '</div>';
+    if (upto > shared) {
+      h += '<div class="muted small" style="margin-top:10px;white-space:normal">Run ' + (boards.length === 2 ? 'twice' : boards.length + ' times') + ' from the one deck'
+        + (shared ? ': the cards above are shared, and each run has its own to come.' : ': each run has a board of its own.') + '</div>';
+      boards.forEach(function (b, i) {
+        h += '<div class="runrow" style="margin-top:8px"><div class="h2" style="margin:0 0 4px">RUN ' + (i + 1) + '</div>'
+          + '<div style="display:flex;gap:4px;flex-wrap:wrap">' + cardsOf(b.slice(shared, upto)) + '</div>' + took(i) + '</div>';
+      });
+    }
+  } else {
+    boards.forEach(function (b, i) {
+      h += '<div class="runrow" style="margin-top:8px"><div class="h2" style="margin:0 0 4px">BOARD ' + (i + 1) + '</div>'
+        + '<div style="display:flex;gap:4px;flex-wrap:wrap">' + cardsOf(b.slice(0, upto)) + '</div>' + took(i) + '</div>';
+    });
+  }
+  h += '</div>';
 
   // everyone in the hand, with the cards they showed
   h += '<div class="h2">THE HAND</div>';
@@ -4645,11 +4700,13 @@ function replaySheet() {
   });
   h += '</div>';
 
-  var total = (g.acts || []).length;
+  // Stepping through the moves, and - separately, so that nobody takes one for the other - the
+  // way out, which is at the foot of the page as well as the head of it.
   h += '<div style="display:flex;gap:8px;margin-top:12px">'
-    + '<button class="btn ghost" style="flex:1" onclick="replayStep(-1)">&#8592; Back</button>'
-    + '<button class="btn ghost" style="flex:1" onclick="replayStep(1)">Next &#8594;</button></div>'
-    + '<div class="muted small" style="margin-top:6px;text-align:center">' + acts.length + ' of ' + total + ' moves</div>';
+    + '<button class="btn ghost" style="flex:1" onclick="replayStep(-1)">&#8592; Move before</button>'
+    + '<button class="btn ghost" style="flex:1" onclick="replayStep(1)">Next move &#8594;</button></div>'
+    + '<div class="muted small" style="margin-top:6px;text-align:center">' + acts.length + ' of ' + total + ' moves</div>'
+    + '<button class="btn" id="replayback" style="margin-top:14px" onclick="S.replay=null;render()">Back to the game</button>';
   return h + '</div>';
 }
 function runItVote(v) {

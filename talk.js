@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Vashanth Somasundaram. All rights reserved. See LICENSE.
 // Table talk: the one line somebody would have said out loud when a hand ends.
 //
-// It is put in the mouth of a player at the table - the one who took the pot - and it is chosen
+// It is put in the mouth of a player at the table - the one who took the pot - or of one of the
+// five dogs looking on, and it is chosen
 // from nothing but what the whole table has already seen: the cards turned over at a showdown,
 // the bets that were made, who has chips left. A hand won without a showdown says nothing about
 // the cards that won it, because nobody saw them.
@@ -65,6 +66,69 @@ const LINES = {
     'Chips and a chair. That is all I ask for.',
   ],
 };
+// Half the time it is not a player who speaks but one of the five dogs, and a dog says what a dog
+// would say. Which of them, by the kind of moment: Ace for the big ones, Captain Coffee when
+// somebody goes broke, Major for patience and aces, Duchess for the river and a shared pot, Doc
+// for a bluff and the hand nobody should win with. A dog's line names nobody.
+const DOG_FOR = { big: 'ace', monster: 'ace', royal: 'ace', bust: 'captain', patience: 'major', ace: 'major', river: 'duchess', split: 'duchess', steal: 'doc', seventwo: 'doc' };
+const DOG_LINES = {
+  royal: [
+    'A royal flush! I am wagging everything.',
+    'Even I would sit and stay for that.',
+    'Ten to the ace. I need a lie down.',
+  ],
+  monster: [
+    'I have seen squirrels less surprising.',
+    'Somebody check that deck for treats.',
+    'Catch me if you can! Nobody can catch that.',
+  ],
+  seventwo: [
+    'Seven-two. Medically, that should not work.',
+    'I prescribe that hand to nobody.',
+    'Impossible. I checked twice. Then again, I am a dog.',
+  ],
+  bust: [
+    'Another one bites the kibble.',
+    'Mayday, mayday. Stack going down.',
+    'This is your captain. We have lost a passenger.',
+    'Fasten your seat belts. Or don\u2019t. I\u2019m a pug.',
+  ],
+  river: [
+    'Darling, that river was simply rude.',
+    'One card, and the whole room gasps. Delicious.',
+    'The river has no manners at all.',
+    'I felt that one in my ears.',
+  ],
+  ace: [
+    'An ace. Ears up, everybody.',
+    'Aces. In my day we saluted them.',
+    'Let me think about that. Yes. An ace wins.',
+  ],
+  steal: [
+    'I ran the numbers. Then I chased my tail.',
+    'Trust me, I know. That was a bluff. Or not.',
+    'My diagnosis: nobody had anything.',
+    'I smelled fear. Or possibly ham.',
+  ],
+  split: [
+    'Sharing. How terribly civilised.',
+    'Half each. Nobody growl.',
+    'A split. I never do that with biscuits.',
+  ],
+  patience: [
+    'Patience. I once waited three hours for a biscuit.',
+    'Sit. Stay. Collect.',
+    'Good dog. I mean, good fold. Many good folds.',
+  ],
+  big: [
+    'That pot is bigger than my food bowl.',
+    'Big pot! Is any of it edible?',
+    'I would chase that pot down the street.',
+    'So many chips. Not one of them chewable.',
+  ],
+};
+const dogShare = () => Number(process.env.DOG_SHARE || 0.5);
+
 // The rare moments always get their line. The everyday ones only now and then, or the table
 // would be talking over every hand.
 const ALWAYS = { royal: 1, monster: 1, seventwo: 1, bust: 1, river: 1 };
@@ -150,16 +214,18 @@ function moment(h, info) {
   return null;
 }
 
-// The line itself. `last` is the one said before, so the same words never come twice running;
-// `rnd` is the dice, handed in so a test can load them.
+// The line itself: a player's, under his name, or a dog's, under nobody's. `last` is the one said
+// before, so the same words never come twice running; `rnd` is the dice, handed in so a test can
+// load them.
 function choose(h, info, last, rnd) {
   const roll = rnd || Math.random;
   const m = moment(h, info);
   if (!m) return null;
   if (!ALWAYS[m.kind] && roll() >= SOMETIMES) return null;
-  const pool = LINES[m.kind].filter((x) => x !== last);
+  const dog = roll() < dogShare() ? DOG_FOR[m.kind] : '';
+  const pool = (dog ? DOG_LINES : LINES)[m.kind].filter((x) => x !== last);
   const text = pool[Math.floor(roll() * pool.length) % pool.length];
-  return { kind: m.kind, who: m.who, text };
+  return { kind: m.kind, who: m.who, dog, text };
 }
 
-module.exports = { choose, moment, aheadOnTurn, LINES, PATIENT_AFTER, BIG_BBS };
+module.exports = { choose, moment, aheadOnTurn, LINES, DOG_LINES, DOG_FOR, PATIENT_AFTER, BIG_BBS };

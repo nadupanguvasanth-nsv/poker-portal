@@ -136,18 +136,26 @@ function handText(rec, opts) {
   out += say(byStreet.preflop);
 
   const board = (rec.boards && rec.boards[0]) || rec.board || [];
-  if (byStreet.flop.length || board.length >= 3) {
-    out += `*** FLOP *** [${cards(board.slice(0, 3))}]\n`;
-    out += say(byStreet.flop);
-  }
-  if (byStreet.turn.length || board.length >= 4) {
-    out += `*** TURN *** [${cards(board.slice(0, 3))}] [${card(board[3])}]\n`;
-    out += say(byStreet.turn);
-  }
-  if (byStreet.river.length || board.length >= 5) {
-    out += `*** RIVER *** [${cards(board.slice(0, 4))}] [${card(board[4])}]\n`;
-    out += say(byStreet.river);
-  }
+  // A hand run out more than once shares whatever was on the table when the betting stopped; each
+  // run then has its own cards to come. Those are written as FIRST / SECOND / THIRD streets, so
+  // that a reader does not take the first run for the whole hand.
+  const runs = rec.runs && rec.runs.length > 1 ? rec.runs : null;
+  let shared = 5;
+  if (runs) { shared = 0; while (shared < 5 && runs.every((r) => r[shared] === runs[0][shared])) shared += 1; }
+  const NTH = ['FIRST ', 'SECOND ', 'THIRD '];
+  const street = (name, n, b, nth) => {
+    const tag = nth === undefined ? '' : NTH[nth];
+    if (n === 3) return `*** ${tag}FLOP *** [${cards(b.slice(0, 3))}]\n`;
+    return `*** ${tag}${name} *** [${cards(b.slice(0, n - 1))}] [${card(b[n - 1])}]\n`;
+  };
+  if (byStreet.flop.length || (board.length >= 3 && shared >= 3)) { out += street('FLOP', 3, board); out += say(byStreet.flop); }
+  if (byStreet.turn.length || (board.length >= 4 && shared >= 4)) { out += street('TURN', 4, board); out += say(byStreet.turn); }
+  if (byStreet.river.length || (board.length >= 5 && shared >= 5)) { out += street('RIVER', 5, board); out += say(byStreet.river); }
+  if (runs) runs.forEach((b, i) => {
+    if (shared < 3 && b.length >= 3) out += street('FLOP', 3, b, i);
+    if (shared < 4 && b.length >= 4) out += street('TURN', 4, b, i);
+    if (shared < 5 && b.length >= 5) out += street('RIVER', 5, b, i);
+  });
 
   const reveal = rec.reveal || {};
   const shown = Object.keys(reveal).filter((k) => reveal[k] && reveal[k].cards);
@@ -173,7 +181,10 @@ function handText(rec, opts) {
   // The summary. Nothing reads every line of it, but a hand without one looks truncated.
   out += '*** SUMMARY ***\n';
   out += `Total pot ${amt(pot)} | Rake 0\n`;
-  if (board.length >= 3) out += `Board [${cards(board)}]\n`;
+  if (runs) {
+    out += `Hand was run ${['', '', 'twice', 'three times'][runs.length] || runs.length + ' times'}\n`;
+    runs.forEach((b, i) => { out += `${NTH[i]}Board [${cards(b)}]\n`; });
+  } else if (board.length >= 3) out += `Board [${cards(board)}]\n`;
   for (const p of players) {
     const line = `Seat ${p.seat + 1}: ${nameOf(p.id)}`;
     const w = won[p.id] || 0;
