@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Vashanth Somasundaram. All rights reserved. See LICENSE.
 // Table talk: the one line somebody would have said out loud when a hand ends.
 //
-// It is put in the mouth of a player at the table - the one who took the pot - or of one of the
-// five dogs looking on, and it is chosen
+// It is put in the mouth of the player who took the pot, or of one of the five dogs looking on -
+// and a dog comes up with it either way - and it is chosen
 // from nothing but what the whole table has already seen: the cards turned over at a showdown,
 // the bets that were made, who has chips left. A hand won without a showdown says nothing about
 // the cards that won it, because nobody saw them.
@@ -66,10 +66,13 @@ const LINES = {
     'Chips and a chair. That is all I ask for.',
   ],
 };
-// Half the time it is not a player who speaks but one of the five dogs, and a dog says what a dog
-// would say. Which of them, by the kind of moment: Ace for the big ones, Captain Coffee when
-// somebody goes broke, Major for patience and aces, Duchess for the river and a shared pot, Doc
-// for a bluff and the hand nobody should win with. A dog's line names nobody.
+// Every line comes with one of the five dogs. Half the time the line is the winner's and the dog
+// lends him its rank - "Captain Rash", "Duchess Sundar" - and half the time the dog speaks for
+// itself, under its own name, and says what a dog would say. Which dog, by the kind of moment: Ace
+// for the big ones, Captain Coffee when somebody goes broke, Major for patience and aces, Duchess
+// for the river and a shared pot, Doc for a bluff and the hand nobody should win with.
+const DOG_NAME = { ace: 'Ace', captain: 'Captain Coffee', major: 'Major', duchess: 'Duchess', doc: 'Doc' };
+const DOG_RANK = { ace: 'Ace', captain: 'Captain', major: 'Major', duchess: 'Duchess', doc: 'Doc' };
 const DOG_FOR = { big: 'ace', monster: 'ace', royal: 'ace', bust: 'captain', patience: 'major', ace: 'major', river: 'duchess', split: 'duchess', steal: 'doc', seventwo: 'doc' };
 const DOG_LINES = {
   royal: [
@@ -214,18 +217,20 @@ function moment(h, info) {
   return null;
 }
 
-// The line itself: a player's, under his name, or a dog's, under nobody's. `last` is the one said
-// before, so the same words never come twice running; `rnd` is the dice, handed in so a test can
-// load them.
+// The line itself, and who says it: `own` when the dog speaks for itself, otherwise the winner
+// under the dog's rank. `last` is the one said before, so the same words never come twice
+// running; `rnd` is the dice, handed in so a test can load them.
 function choose(h, info, last, rnd) {
   const roll = rnd || Math.random;
   const m = moment(h, info);
   if (!m) return null;
   if (!ALWAYS[m.kind] && roll() >= SOMETIMES) return null;
-  const dog = roll() < dogShare() ? DOG_FOR[m.kind] : '';
-  const pool = (dog ? DOG_LINES : LINES)[m.kind].filter((x) => x !== last);
+  const own = roll() < dogShare();
+  const pool = (own ? DOG_LINES : LINES)[m.kind].filter((x) => x !== last);
   const text = pool[Math.floor(roll() * pool.length) % pool.length];
-  return { kind: m.kind, who: m.who, dog, text };
+  return { kind: m.kind, who: m.who, dog: DOG_FOR[m.kind], own, text };
 }
+// What goes over the line: the dog's own name, or its rank and the player's name.
+const header = (said, name) => (said.own ? DOG_NAME[said.dog] : DOG_RANK[said.dog] + ' ' + name);
 
-module.exports = { choose, moment, aheadOnTurn, LINES, DOG_LINES, DOG_FOR, PATIENT_AFTER, BIG_BBS };
+module.exports = { choose, header, moment, aheadOnTurn, LINES, DOG_LINES, DOG_FOR, DOG_NAME, DOG_RANK, PATIENT_AFTER, BIG_BBS };

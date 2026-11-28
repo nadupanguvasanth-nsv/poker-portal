@@ -163,10 +163,20 @@ body.four .card.s-c{color:#1c8a3c}
 .saybar .what{font-size:14px;color:#f2efe6;margin-top:2px;white-space:normal}
 .saybar.talk.dog{text-align:left;padding:12px 14px 12px 126px;min-height:76px;display:flex;align-items:center}
 .saybar.dog .said{flex:1;min-width:0}
+.saybar.dog .who{text-transform:uppercase}
 .saybar.up{bottom:auto;top:62px}
-.dogclip{position:absolute;left:8px;bottom:8px;width:104px;height:104px;border-radius:50%;object-fit:cover;border:2px solid #d8b45c;background:#17130c}
-.saybar.up .dogclip{bottom:auto;top:8px}
-.party{position:relative;margin-bottom:20px}
+.dogclip{position:absolute;left:8px;top:8px;width:104px;height:104px;border-radius:50%;object-fit:cover;object-position:50% 12%;border:2px solid #d8b45c;background:#17130c}
+/* The dog that comes up between hands, and its card. Outside #stage, like the fireworks, so a
+   redraw does not restart it; nothing in it takes a tap, so whatever is under it still works. */
+#dogpop{position:absolute;left:0;top:0;width:390px;height:844px;overflow:hidden;pointer-events:none;z-index:40;display:none}
+#dogbig{position:absolute;left:-10px;bottom:0;width:216px;height:216px;transform-origin:50% 100%;animation:dogup .42s cubic-bezier(.2,1.25,.4,1) both}
+#dogpop .note{position:absolute;left:196px;right:10px;bottom:34px;padding:10px 12px 11px;border-radius:14px;background:#f4ecd8;border:1.5px solid #d8b45c;box-shadow:0 6px 18px rgba(0,0,0,.55);transform-origin:0 80%;animation:noteup .2s .3s ease-out both}
+#dogpop .note:before{content:'';position:absolute;left:-10px;bottom:22px;border-right:10px solid #f4ecd8;border-top:8px solid transparent;border-bottom:8px solid transparent}
+#dogpop .who{font-family:'Inter',sans-serif;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#7a5810;overflow-wrap:anywhere}
+#dogpop .what{margin-top:3px;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:700;font-size:17px;line-height:1.22;color:#1a1408}
+@keyframes dogup{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes noteup{from{transform:scale(0)}to{transform:scale(1)}}
+.party{position:relative;margin:22px 0 24px}
 .party .frame{aspect-ratio:960/456;border-radius:14px;overflow:hidden;background:#0f3d2e url(/poster.jpg?v=3) center/cover}
 .party video{display:block;width:100%;height:100%;object-fit:cover}
 /* What they say goes inside the picture, over the table in front of whoever is speaking, with the
@@ -246,7 +256,7 @@ body.four .card.s-c{color:#1c8a3c}
 </head>
 <body>
 <div id="safe"></div>
-<div id="wrap"><div id="stage"></div><canvas id="sky" width="390" height="844"></canvas><div id="shout"></div></div>
+<div id="wrap"><div id="stage"></div><div id="dogpop"></div><canvas id="sky" width="390" height="844"></canvas><div id="shout"></div></div>
 <div id="turn"><div><div class="disp" style="font-size:30px;line-height:1.1">Turn your phone<br>upright</div>
 <div class="muted small" style="margin-top:10px;white-space:normal">The table is dealt tall, so it needs the long way up.</div></div></div>
 <script>
@@ -4011,6 +4021,7 @@ function render() {
   applyFour();
   tuneMusic();                               // left the table, signed out: it stops with the screen
   partyOn();                                 // the film on the sign-in screen, and nowhere else
+  dogPop();                                  // the dog that comes up with a line of table talk
   if (key === render.key) {
     var panes = stage.querySelectorAll('.sheet');
     if (panes.length === was.length) for (var i = 0; i < panes.length; i++) if (was[i]) panes[i].scrollTop = was[i];
@@ -4031,7 +4042,19 @@ function inset() {
   if (!el) return { t: 0, r: 0, b: 0, l: 0 };
   var cs = getComputedStyle(el);
   var n = function (v) { var x = parseFloat(v); return x > 0 ? x : 0; };
-  return { t: n(cs.paddingTop), r: n(cs.paddingRight), b: n(cs.paddingBottom), l: n(cs.paddingLeft) };
+  var pad = { t: n(cs.paddingTop), r: n(cs.paddingRight), b: n(cs.paddingBottom), l: n(cs.paddingLeft) };
+  // Opened from the home screen, an iPhone draws the page right up under its clock and battery
+  // line, and now and then it reports no safe area at all - so the top of every page sat under
+  // that line, dimmed, with its buttons out of reach. When the page fills the whole screen and
+  // the phone says there is nothing to keep clear of, the phone is wrong: keep clear anyway.
+  var sw = Math.min(screen.width, screen.height), sh = Math.max(screen.width, screen.height);
+  if (window.navigator.standalone === true && window.innerHeight > window.innerWidth && window.innerHeight >= sh - 2) {
+    var notched = sh >= 812 && sw <= 440;                 // every iPhone without a home button
+    var island = sh === 852 || sh === 874 || sh >= 932;   // the ones with the Dynamic Island sit lower
+    if (pad.t < 20) pad.t = notched ? (island ? 59 : 50) : 20;
+    if (notched && pad.b < 20) pad.b = 34;
+  }
+  return pad;
 }
 
 function fit() {
@@ -4052,6 +4075,9 @@ function fit() {
 }
 window.addEventListener('resize', fit);
 window.addEventListener('orientationchange', function () { setTimeout(fit, 120); });
+// and measure again once the phone has settled, and whenever the app is brought back to the front
+window.addEventListener('pageshow', function () { setTimeout(fit, 300); setTimeout(fit, 1200); });
+document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(fit, 120); });
 
 // ---------------------------------------------------------------- go
 // ---- the celebration ----
@@ -4491,8 +4517,7 @@ function nextSaid() {
 
 // ---- table talk ----
 // The portal sends one line with a finished hand when the hand earned one. It is shown once, in
-// the same place as anything else said at the table: under the name of whoever won, or beside
-// the dog that said it.
+// with one of the dogs: under its rank and the name of whoever won, or under the dog's own name.
 var TALK_FOR_MS = 3800;
 try { S.talk = localStorage.getItem('sb-talk') !== '0'; } catch (e) { S.talk = true; }
 function toggleTalk() {
@@ -4507,7 +4532,7 @@ function watchTalk() {
   if (!t || t.id === S.talkSeen) return;
   S.talkSeen = t.id;
   if (!S.talk) return;
-  S.sayQ = (S.sayQ || []).concat([{ fromName: t.dog ? '' : t.who, text: t.text, talk: true, dog: DOG_NAME[t.dog] ? t.dog : '' }]);
+  S.sayQ = (S.sayQ || []).concat([{ fromName: t.who, text: t.text, talk: true, dog: DOG_NAME[t.dog] ? t.dog : '' }]);
   if (!S.sayShow) nextSaid();
 }
 // And what one of the five dogs has to say about the table: somebody sitting down mid-game, the
@@ -4518,23 +4543,43 @@ function watchAside() {
   if (!a || a.id === S.asideSeen) return;
   S.asideSeen = a.id;
   if (!S.talk || !DOG_NAME[a.dog]) return;
-  S.sayQ = (S.sayQ || []).concat([{ text: a.text, talk: true, dog: a.dog, up: true }]);
+  S.sayQ = (S.sayQ || []).concat([{ fromName: DOG_NAME[a.dog], text: a.text, talk: true, dog: a.dog, up: true }]);
   if (!S.sayShow) nextSaid();
 }
-// A dog's line comes with the dog's face, close up and talking, and with no name: the face says
-// who. A player's line comes under the player's name and with no dog.
+// A line of table talk comes with one of the five dogs, cut out and moving. For a hand just
+// finished the dog comes up from the bottom of the screen, about a quarter of it tall, with the
+// line on a card beside it: headed with its rank and the winner's name ("Captain Rash") or with
+// its own name when it speaks for itself. A dog's remark on the table itself comes while a hand
+// is being played, so it goes across the top in a small round frame, clear of the betting buttons.
 var DOG_NAME = { ace: 'Ace', captain: 'Captain Coffee', major: 'Major', duchess: 'Duchess', doc: 'Doc' };
 function sayBar() {
   var m = S.sayShow;
   if (!m) return '';
   var dog = m.talk && m.dog || '';
-  // A line for a hand just finished has the bottom of the table to itself. A dog's remark on the
-  // table itself comes while a hand is being played, so it goes across the top, clear of the
-  // betting buttons.
-  return '<div class="saybar' + (m.talk ? ' talk' : '') + (dog ? ' dog' : '') + (m.up ? ' up' : '') + '">'
-    + (dog ? '<img class="dogclip" id="dogclip" src="/dog-' + dog + '.webp?v=4" alt="' + DOG_NAME[dog] + '" width="104" height="104">' : '')
-    + '<div class="said">' + (dog ? '' : '<div class="who">' + esc(m.fromName || '') + '</div>')
+  // the dog that comes up lives outside the stage (see dogPop); this only marks that it is wanted
+  if (dog && !m.up) return '<i id="dogslot" hidden></i>';
+  return '<div class="saybar' + (m.talk ? ' talk' : '') + (dog ? ' dog up' : '') + '">'
+    + (dog ? '<img class="dogclip" id="dogclip" src="/dog-' + dog + '.webp?v=5" alt="" width="104" height="104">' : '')
+    + '<div class="said"><div class="who">' + esc(m.fromName || '') + '</div>'
     + '<div class="what">' + (m.talk ? '&ldquo;' + esc(m.text) + '&rdquo;' : esc(m.text)) + '</div></div></div>';
+}
+// The dog and its card are kept outside the stage, so the table redrawing under them - it does,
+// every time anything happens - does not send the dog back down to come up again.
+function dogPop() {
+  var el = document.getElementById('dogpop');
+  if (!el) return;
+  // the five are fetched once, the first time a table is on the screen, so that a dog is there
+  // the moment its card is and not a second behind it
+  if (S.screen === 'table' && !dogPop.kept) {
+    dogPop.kept = Object.keys(DOG_NAME).map(function (d) { var i = new Image(); i.src = '/dog-' + d + '.webp?v=5'; return i; });
+  }
+  var m = document.getElementById('dogslot') ? S.sayShow : null;
+  var key = m ? m.dog + '|' + m.fromName + '|' + m.text : '';
+  if (el.getAttribute('data-k') === key) return;
+  el.setAttribute('data-k', key);
+  el.style.display = m ? 'block' : 'none';
+  el.innerHTML = m ? '<img id="dogbig" src="/dog-' + m.dog + '.webp?v=5" alt="" width="216" height="216">'
+    + '<div class="note"><div class="who">' + esc(m.fromName || '') + '</div><div class="what">&ldquo;' + esc(m.text) + '&rdquo;</div></div>' : '';
 }
 
 // ---- the move just made ----

@@ -512,8 +512,8 @@ function topUpAll(t) {
 }
 
 // The line somebody would have said out loud. Chosen once, here, so every phone at the table
-// shows the same words - under the winner's name, or beside one of the dogs and under no name -
-// and chosen only from what the table has seen.
+// shows the same words and the same dog - headed with the dog's rank and the winner's name, or
+// with the dog's own name when it speaks for itself - and chosen only from what the table has seen.
 function tableTalk(t, h) {
   t.talk = null;
   if (!h.result || process.env.TABLE_TALK === 'off') return;
@@ -527,7 +527,7 @@ function tableTalk(t, h) {
   const who = t.players.get(said.who);
   if (!who) return;
   t.lastTalk = said.text;
-  t.talk = { id: t.code + ':' + t.handNo, no: t.handNo, kind: said.kind, who: said.dog ? '' : who.name, dog: said.dog || '', text: said.text };
+  t.talk = { id: t.code + ':' + t.handNo, no: t.handNo, kind: said.kind, who: talk.header(said, who.name), dog: said.dog, own: said.own, text: said.text };
 }
 
 // The five dogs from the sign-in screen have opinions about the table as well: one about somebody
